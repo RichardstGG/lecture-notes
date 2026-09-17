@@ -1,4 +1,4 @@
-"""設定載入：config/default.toml → courses/<課名>.toml → 指令列覆寫。"""
+"""設定載入：config/default.toml → config/local.toml（本機）→ courses/<課名>.toml → 指令列覆寫。"""
 import copy
 import json
 import re
@@ -8,6 +8,7 @@ from pathlib import Path
 
 APP_ROOT = Path(__file__).resolve().parent.parent
 DEFAULT_FILE = APP_ROOT / "config" / "default.toml"
+LOCAL_FILE = APP_ROOT / "config" / "local.toml"          # 這台電腦專屬（不進 git）：麥克風、路徑等
 TEMPLATE_FILE = APP_ROOT / "config" / "template.toml"
 COURSES_DIR = APP_ROOT / "courses"
 
@@ -85,13 +86,28 @@ def course_path(arg):
     return COURSES_DIR / f"{arg}.toml", arg
 
 
-def create_course_file(name, path=None):
+EXAMPLES_DIR = COURSES_DIR / "examples"
+
+
+def create_course_file(name, path=None, from_example=None):
+    """從範本（或 courses/examples/ 的範例）建立課程設定檔。"""
     path = Path(path) if path else COURSES_DIR / f"{name}.toml"
     if path.exists():
         raise ConfigError(f"課程設定檔已存在：{path}")
+    if from_example:
+        src = Path(from_example).expanduser()
+        if not src.is_file():
+            src = EXAMPLES_DIR / f"{from_example.removesuffix('.toml')}.toml"
+        if not src.is_file():
+            names = ", ".join(p.stem for p in EXAMPLES_DIR.glob("*.toml")) or "無"
+            raise ConfigError(f"找不到範例 {from_example}（可用：{names}）")
+        text = re.sub(r'(?m)^name\s*=\s*".*"', f"name = {json.dumps(name, ensure_ascii=False)}",
+                      src.read_text(encoding="utf-8"), count=1)
+        text = re.sub(r"(?m)^# ===== 課程設定：.*=====$", f"# ===== 課程設定：{name} =====", text, count=1)
+    else:
+        text = TEMPLATE_FILE.read_text(encoding="utf-8").replace("{name}", name)
     path.parent.mkdir(parents=True, exist_ok=True)
-    path.write_text(TEMPLATE_FILE.read_text(encoding="utf-8").replace("{name}", name),
-                    encoding="utf-8")
+    path.write_text(text, encoding="utf-8")
     return path
 
 
@@ -131,6 +147,22 @@ def dump_toml(data, header=""):
 
     walk(data, [])
     return "\n".join(lines).lstrip("\n") + "\n"
+
+
+def set_local(dotted, value):
+    """修改 config/local.toml 的一個設定（lec devices --save、UI 用）。會重寫檔案，註解不保留。"""
+    data = load_toml(LOCAL_FILE) if LOCAL_FILE.exists() else {}
+    parts = dotted.split(".")
+    cur = data
+    for p in parts[:-1]:
+        cur = cur.setdefault(p, {})
+    cur[parts[-1]] = value
+    LOCAL_FILE.parent.mkdir(parents=True, exist_ok=True)
+    tmp = LOCAL_FILE.with_suffix(".toml.tmp")
+    tmp.write_text(dump_toml(data, "這台電腦專屬的設定（不進 git）；由 lec 寫入，也可手動編輯"),
+                   encoding="utf-8")
+    tmp.replace(LOCAL_FILE)
+    return LOCAL_FILE
 
 
 # ---------------------------------------------------------------- 設定物件
@@ -221,6 +253,10 @@ def load(course_arg=None, sets=(), model=None, source=None, create_missing=False
     default = load_toml(DEFAULT_FILE)
     data = copy.deepcopy(default)
     warnings, created, cfile, name = [], False, None, None
+    if LOCAL_FILE.exists():
+        over = load_toml(LOCAL_FILE)
+        warnings += [f"local.toml：未知的設定項目 {k}（拼錯了嗎？）" for k in _unknown_keys(default, over)]
+        data = deep_merge(data, over)
 
     if course_file is not None:
         cfile, name = Path(course_file), None

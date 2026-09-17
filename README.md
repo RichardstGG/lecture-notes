@@ -2,42 +2,51 @@
 
 課堂錄音 → whisper.cpp 即時逐字稿 → llama.cpp 每 5 分鐘總結 → Obsidian Markdown。
 
-## 安裝與目錄結構
+## 安裝
 
-所有東西都放在 app 根目錄（`~/lecture-notes`）底下，設定裡的相對路徑都以這裡為基準：
+需要：Linux（PulseAudio / PipeWire）、Python 3.11+、ffmpeg、curl；GPU 建議支援 Vulkan。
+
+```bash
+git clone <repo> ~/lecture-notes && cd ~/lecture-notes
+sudo apt install ffmpeg curl pulseaudio-utils opencc \
+                 git cmake build-essential pkg-config libvulkan-dev glslc vulkan-tools
+./setup_engines.sh              # 依 engines.lock 取得並編譯 whisper.cpp / llama.cpp、下載 whisper 模型
+# 把 Qwen3-8B-Q4_K_M.gguf 放到 ./models/
+ln -s ~/lecture-notes/lec ~/.local/bin/lec
+lec devices                     # 找到麥克風編號
+lec devices --test 56           # 錄 3 秒看音量
+lec devices --save 56           # 寫入 config/local.toml
+lec doctor                      # 全部 ✔ 就可以上課了
+```
+
+### 目錄結構
 
 ```
 ~/lecture-notes/
-├─ lec, core/, config/, courses/, prompts/     程式與設定（進 git）
-├─ whisper.cpp/   build/bin/whisper-server、models/ggml-large-v3-turbo.bin
-├─ llama.cpp/     build/bin/llama-server
-├─ models/        Qwen3-8B-Q4_K_M.gguf、Qwen3-4B-Q4_K_M.gguf
-└─ outputs/       <課名>_<YYYYMMDD>/        每堂課的輸出
+├─ lec, core/, prompts/          程式
+├─ config/default.toml           全域預設（進 git）
+├─ config/local.toml             這台電腦專屬：麥克風、路徑…（不進 git，範例 local.example.toml）
+├─ courses/<課名>.toml            你的課程設定（不進 git）
+├─ courses/examples/             課程設定範例（進 git）
+├─ engines.lock                  已測試的 whisper.cpp / llama.cpp 版本（進 git）
+├─ whisper.cpp/  llama.cpp/      由 setup_engines.sh 取得與編譯（不進 git）
+├─ models/                       LLM 模型 .gguf（不進 git）
+└─ outputs/<課名>_<YYYYMMDD>/     每堂課的輸出（不進 git）
 ```
 
-`whisper.cpp/`、`llama.cpp/`、`models/`、`outputs/` 已列在 `.gitignore`。
+### whisper.cpp / llama.cpp 版本
 
-```bash
-chmod +x ~/lecture-notes/lec
-ln -s ~/lecture-notes/lec ~/.local/bin/lec     # 之後任何地方都能打 lec
-sudo apt install opencc                        # 選用：台灣繁體用語轉換
-```
+| 指令 | 說明 |
+|---|---|
+| `./setup_engines.sh` | checkout `engines.lock` 的版本並編譯；同版本已編好就略過 |
+| `./setup_engines.sh --update` | 升級到最新版，編譯成功後寫回 `engines.lock`（測試沒問題再 commit） |
+| `./setup_engines.sh --rebuild` | 版本不變，強制重新編譯 |
+| `./setup_engines.sh --lock` | 不編譯，把目前的版本記進 `engines.lock` |
+| `./setup_engines.sh --import-models <資料夾>` | 從其他位置搬入已下載的模型 |
+| `VULKAN=OFF ./setup_engines.sh` | 編純 CPU 版 |
 
-需要：Python 3.11+、ffmpeg、curl。
-
-**編譯 whisper.cpp / llama.cpp（在專案目錄下）**
-
-```bash
-sudo apt install git cmake build-essential pkg-config curl libvulkan-dev glslc vulkan-tools
-./setup_engines.sh              # clone（已存在就沿用）→ 清掉 build → Vulkan 靜態編譯 → 集中模型
-./setup_engines.sh --update     # 之後要更新版本：git pull 再重新編譯
-./setup_engines.sh llama        # 只重編其中一個（whisper / llama）
-```
-
-- 以 `BUILD_SHARED_LIBS=OFF` 靜態連結，整個專案資料夾搬到哪裡都能執行。
-- whisper 模型：優先從 `~/whisper.cpp/models/` 搬過來，沒有才下載；LLM：把 `~/models/*.gguf` 搬進 `./models/`。舊資料夾不會被刪。
-- 基準測試：`./bench_llm.sh [逐字稿.md] [第幾段]`，結果在 `outputs/_llm-bench/`。
-舊的 `lecture.sh`、`live_transcribe.py`、`config.env` 已被取代，可以刪除（`bench_llm.sh` 保留）。
+以 `BUILD_SHARED_LIBS=OFF` 靜態連結，整個專案資料夾搬到哪裡都能執行。
+基準測試：`./bench_llm.sh [逐字稿.md] [第幾段]`，結果在 `outputs/_llm-bench/`。
 
 `--file` 可用任何 ffmpeg 能解碼的檔案：mp3、m4a/aac、wav、flac、ogg/opus、wma、webm，以及 mp4/mkv/mov 等影片（自動取音軌）。
 
@@ -52,7 +61,9 @@ sudo apt install git cmake build-essential pkg-config curl libvulkan-dev glslc v
 | `lec summarize <資料夾>` | 補做尚未完成的總結 |
 | `lec summarize <資料夾> --redo 00:05:02` | 重做某一段（`--redo all` 全部重做，舊檔備份為 .bak） |
 | `lec config 課名` | 印出合併後的設定 |
-| `lec courses` / `lec new 課名` | 列出 / 建立課程設定檔 |
+| `lec courses` / `lec new 課名 [--from 範例]` | 列出 / 建立課程設定檔 |
+| `lec devices [--test N] [--save N]` | 列出 / 測試 / 設定麥克風 |
+| `lec doctor [課名] [--mic]` | 檢查環境（回報問題請附上輸出，`--json` 給 UI） |
 | `lec status` / `lec stop` | 查看 / 停止目前的執行（`--json`、`--force`） |
 
 Ctrl+C 行為：
@@ -62,7 +73,7 @@ Ctrl+C 行為：
 
 ## 設定
 
-合併順序：`config/default.toml` → `courses/<課名>.toml` → 指令列。
+合併順序：`config/default.toml` → `config/local.toml` → `courses/<課名>.toml` → 指令列。
 課程設定檔只要寫跟預設不同的項目，最常用的是：
 
 ```toml
@@ -98,7 +109,7 @@ extra_instructions = "本課程著重網路概念，重點請保留協定名稱�
 
 ## 給 UI 的介面（UI 不 import core）
 
-- **設定**：讀寫 `courses/*.toml`；`lec courses --json` 列出課程；`lec config 課名` 看合併結果。
+- **設定**：讀寫 `courses/*.toml`、`config/local.toml`；`lec courses --json` 列出課程；`lec config 課名` 看合併結果；`lec devices --json` 列出麥克風；`lec doctor --json` 環境檢查。
 - **啟動 / 停止**：subprocess 執行 `lec run …`；停止送 SIGINT 給 `lec status --json` 的 `pid`（或執行 `lec stop`）。
 - **狀態**：`~/.local/state/lecture-notes/run.json`（是否執行中、輸出資料夾）、`<資料夾>/status.json`：
 
@@ -123,4 +134,6 @@ core/servers.py     whisper-server / llama-server 啟動、沿用、關閉
 core/transcribe.py  VAD 切段＋即時轉錄（原 live_transcribe.py）
 core/summarize.py   分段總結、驗證、notes.md
 core/status.py      status.json / events.jsonl / 執行鎖
+core/devices.py     錄音來源列表與音量測試
+core/doctor.py      環境檢查
 ```

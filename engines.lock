@@ -1,0 +1,6 @@
+# 已測試的 whisper.cpp / llama.cpp 版本；./setup_engines.sh 會 checkout 這些 commit
+# 升級：./setup_engines.sh --update（編譯成功後自動更新本檔）
+# WHISPER_REF: 2026-09-15 whisper : fix int overflow in whisper_full_parallel chunk o
+WHISPER_REF=da54572229bcf64ba367d96c7ef15770376c4280
+# LLAMA_REF: 2026-09-16 [SYCL] Fix function signature for `ggml_backend_sycl_split_
+LLAMA_REF=aa39d7a3e145a88202793a89462d65e94a5fc25f

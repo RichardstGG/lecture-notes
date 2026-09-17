@@ -3,5 +3,11 @@ outputs/
 models/
 whisper.cpp/
 llama.cpp/
+
+# 這台電腦專屬的設定與個人課程（範例放在 courses/examples/）
+config/local.toml
+config/*.tmp
+courses/*.toml
+
 __pycache__/
 *.pyc

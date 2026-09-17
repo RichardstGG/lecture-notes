@@ -1,11 +1,14 @@
 #!/usr/bin/env bash
-# 在專案目錄下取得並編譯 whisper.cpp / llama.cpp（Vulkan），並把模型集中到專案目錄
+# 在專案目錄下取得並編譯 whisper.cpp / llama.cpp（Vulkan），版本鎖定在 engines.lock
 #
 # 用法：
-#   ./setup_engines.sh              # whisper + llama 都處理
-#   ./setup_engines.sh whisper      # 只處理 whisper.cpp
-#   ./setup_engines.sh llama        # 只處理 llama.cpp
-#   ./setup_engines.sh --update     # 先 git pull 到最新版再重新編譯
+#   ./setup_engines.sh                  # 依 engines.lock 的版本取得並編譯（已編好同版本就略過）
+#   ./setup_engines.sh whisper|llama    # 只處理其中一個
+#   ./setup_engines.sh --update         # 升級到最新版，編譯成功後寫回 engines.lock
+#   ./setup_engines.sh --rebuild        # 版本沒變也強制重新編譯
+#   ./setup_engines.sh --lock           # 不編譯，只把目前 checkout 的版本記進 engines.lock
+#   ./setup_engines.sh --import-models ~/舊資料夾   # 從其他位置搬入已下載的模型
+#   VULKAN=OFF ./setup_engines.sh       # 編純 CPU 版
 #
 # 結果：
 #   ./whisper.cpp/build/bin/whisper-server、./whisper.cpp/models/ggml-large-v3-turbo.bin
@@ -20,23 +23,70 @@ cd "$ROOT"
 WHISPER_REPO="https://github.com/ggml-org/whisper.cpp.git"
 LLAMA_REPO="https://github.com/ggml-org/llama.cpp.git"
 WHISPER_MODEL="large-v3-turbo"
-VULKAN="${VULKAN:-ON}"                 # VULKAN=OFF ./setup_engines.sh 可編純 CPU 版
+LOCK_FILE="$ROOT/engines.lock"
+VULKAN="${VULKAN:-ON}"
 JOBS="${JOBS:-$(nproc)}"
-OLD_HOME_DIRS=("$HOME/whisper.cpp" "$HOME/llama.cpp" "$HOME/models")   # 舊安裝位置（只搬模型，不刪）
+WHISPER_ARGS=(-DWHISPER_BUILD_TESTS=OFF -DWHISPER_SDL2=OFF)
+WHISPER_TARGETS=(whisper-server whisper-cli)
+LLAMA_ARGS=(-DLLAMA_OPENSSL=OFF -DLLAMA_BUILD_TESTS=OFF -DLLAMA_BUILD_EXAMPLES=OFF)
+LLAMA_TARGETS=(llama-server llama-bench)
 
-DO_WHISPER=1; DO_LLAMA=1; UPDATE=0
-for a in "$@"; do
-  case "$a" in
+DO_WHISPER=1; DO_LLAMA=1; UPDATE=0; REBUILD=0; LOCK_ONLY=0; IMPORT_DIR=""
+while (( $# )); do
+  case "$1" in
     whisper) DO_LLAMA=0 ;;
     llama)   DO_WHISPER=0 ;;
-    --update) UPDATE=1 ;;
-    -h|--help) sed -n '2,15p' "$0"; exit 0 ;;
-    *) echo "未知參數：$a" >&2; exit 1 ;;
+    --update)  UPDATE=1 ;;
+    --rebuild) REBUILD=1 ;;
+    --lock)    LOCK_ONLY=1 ;;
+    --import-models) IMPORT_DIR="${2:?--import-models 需要資料夾}"; shift ;;
+    -h|--help) sed -n '2,19p' "$0"; exit 0 ;;
+    *) echo "未知參數：$1（見 --help）" >&2; exit 1 ;;
   esac
+  shift
 done
 
 step() { echo; echo "==== $* ===="; }
 die()  { echo "✖ $*" >&2; exit 1; }
+
+# ---------------------------------------------------------------- engines.lock
+lock_get() {   # $1 = KEY
+  [[ -f "$LOCK_FILE" ]] || return 0
+  sed -n "s/^$1=\([0-9a-f]\{7,40\}\).*/\1/p" "$LOCK_FILE" | head -1
+}
+lock_set() {   # $1 = KEY，$2 = 目錄
+  local key="$1" dir="$2" sha desc
+  sha="$(git -C "$dir" rev-parse HEAD)"
+  desc="$(git -C "$dir" log -1 --format='%cs %s' | cut -c1-70)"
+  [[ -f "$LOCK_FILE" ]] || printf '%s\n' \
+    "# 已測試的 whisper.cpp / llama.cpp 版本；./setup_engines.sh 會 checkout 這些 commit" \
+    "# 升級：./setup_engines.sh --update（編譯成功後自動更新本檔）" > "$LOCK_FILE"
+  local tmp; tmp="$(mktemp)"
+  grep -v "^$key=" "$LOCK_FILE" | grep -v "^# $key: " > "$tmp" || true
+  printf '# %s: %s\n%s=%s\n' "$key" "$desc" "$key" "$sha" >> "$tmp"
+  mv "$tmp" "$LOCK_FILE"
+  echo "▶ engines.lock：$key=${sha:0:9}（$desc）"
+}
+
+build_stamp() {   # $1 = 目錄，其餘 = cmake 參數
+  local dir="$1"; shift
+  echo "$(git -C "$dir" rev-parse HEAD) VULKAN=$VULKAN $*"
+}
+
+if (( LOCK_ONLY )); then
+  # 把「目前 checkout 且已編好」的版本記為已測試，之後不會因為缺少編譯紀錄而重編
+  for pair in "whisper.cpp WHISPER_REF $DO_WHISPER" "llama.cpp LLAMA_REF $DO_LLAMA"; do
+    read -r dir key on <<< "$pair"
+    (( on )) || continue
+    if [[ ! -d "$dir/.git" ]]; then echo "⚠ 沒有 $dir"; continue; fi
+    lock_set "$key" "$ROOT/$dir"
+    if [[ -d "$dir/build/bin" ]]; then
+      if [[ "$dir" == whisper.cpp ]]; then build_stamp "$ROOT/$dir" "${WHISPER_ARGS[@]}"
+      else build_stamp "$ROOT/$dir" "${LLAMA_ARGS[@]}"; fi > "$dir/build/.lec-build"
+    fi
+  done
+  exit 0
+fi
 
 # ---------------------------------------------------------------- 前置檢查
 step "檢查編譯工具"
@@ -48,46 +98,62 @@ if [[ "$VULKAN" == "ON" ]]; then
 fi
 if (( ${#missing[@]} )); then
   echo "缺少：${missing[*]}"
-  echo "Debian 13 請執行："
+  echo "Debian / Ubuntu 請執行："
   echo "  sudo apt install git cmake build-essential pkg-config curl libvulkan-dev glslc vulkan-tools"
   exit 1
 fi
 echo "✔ 工具齊全（Vulkan=$VULKAN，平行 $JOBS 工作）"
 
-# 取得或更新原始碼：$1 = 目錄，$2 = repo
+# 取得原始碼並切到指定版本：$1 = 目錄，$2 = repo，$3 = commit（空 = 最新）
 fetch_repo() {
-  local dir="$1" repo="$2"
-  if [[ -d "$dir/.git" ]]; then
-    echo "▶ $dir 已存在"
-    if (( UPDATE )); then
-      git -C "$dir" pull --ff-only
-    fi
-    echo "  版本：$(git -C "$dir" log -1 --format='%h %cs %s' | cut -c1-80)"
-  elif [[ -e "$dir" ]]; then
+  local dir="$1" repo="$2" ref="$3"
+  if [[ -e "$dir" && ! -d "$dir/.git" ]]; then
     die "$dir 存在但不是 git repo，請先改名或移走後再執行"
-  else
-    echo "▶ 下載 $repo"
-    git clone --depth 1 "$repo" "$dir"
   fi
+  if [[ ! -d "$dir/.git" ]]; then
+    echo "▶ 下載 $repo"
+    git init -q "$dir"
+    git -C "$dir" remote add origin "$repo"
+  fi
+  local head; head="$(git -C "$dir" rev-parse -q --verify HEAD 2>/dev/null || true)"
+  if [[ -n "$ref" && "$head" == "$ref"* ]]; then
+    echo "▶ 已是鎖定版本 ${ref:0:9}"
+  elif [[ -n "$ref" ]]; then
+    echo "▶ 切換到鎖定版本 ${ref:0:9}"
+    git -C "$dir" fetch -q --depth 1 origin "$ref"
+    git -C "$dir" -c advice.detachedHead=false checkout -q FETCH_HEAD
+  else
+    echo "▶ 取得最新版"
+    git -C "$dir" fetch -q --depth 1 origin HEAD
+    git -C "$dir" -c advice.detachedHead=false checkout -q FETCH_HEAD
+  fi
+  echo "  版本：$(git -C "$dir" log -1 --format='%h %cs %s' | cut -c1-80)"
 }
 
-# 編譯：$1 = 目錄，其餘 = cmake 參數，最後用 -- 分隔 target
+# 編譯：$1 = 目錄，其餘 = cmake 參數，-- 之後是 target
 build_repo() {
   local dir="$1"; shift
   local args=() targets=()
   while (( $# )); do [[ "$1" == "--" ]] && { shift; targets=("$@"); break; }; args+=("$1"); shift; done
-  echo "▶ 清除舊的 build（避免沿用搬家前的 CMake 快取）"
+  local stamp="$dir/build/.lec-build" want
+  want="$(build_stamp "$dir" "${args[@]}")"
+  local have_all=1 t
+  for t in "${targets[@]}"; do [[ -x "$dir/build/bin/$t" ]] || have_all=0; done
+  if (( ! REBUILD && have_all )) && [[ -f "$stamp" && "$(cat "$stamp")" == "$want" ]]; then
+    echo "▶ 已編譯過相同版本，略過（要重編請加 --rebuild）"
+    return
+  fi
+  echo "▶ 清除舊的 build"
   rm -rf "$dir/build"
   cmake -S "$dir" -B "$dir/build" -DCMAKE_BUILD_TYPE=Release -DBUILD_SHARED_LIBS=OFF \
     -DGGML_VULKAN="$VULKAN" "${args[@]}"
-  local t
   for t in "${targets[@]}"; do
     echo "▶ 編譯 $t"
     cmake --build "$dir/build" --config Release -j "$JOBS" --target "$t"
   done
+  echo "$want" > "$stamp"
 }
 
-# 確認執行檔沒有依賴找不到的函式庫，並顯示有沒有連到 Vulkan
 check_bin() {
   local bin="$1"
   [[ -x "$bin" ]] || die "編譯後找不到 $bin"
@@ -95,38 +161,37 @@ check_bin() {
     ldd "$bin" | grep "not found"
     die "$bin 有找不到的函式庫"
   fi
-  if ldd "$bin" | grep -q libvulkan; then
-    echo "✔ $(basename "$bin")（已連結 Vulkan）"
-  else
-    echo "✔ $(basename "$bin")（純 CPU）"
-  fi
+  if ldd "$bin" | grep -q libvulkan; then echo "✔ $(basename "$bin")（已連結 Vulkan）"
+  else echo "✔ $(basename "$bin")（純 CPU）"; fi
 }
 
-# 把舊位置的檔案搬進來（同一個檔案系統上 mv 是瞬間完成）
-adopt_file() {
-  local dest="$1"; shift
-  [[ -f "$dest" ]] && return 0
-  local src
-  for src in "$@"; do
-    if [[ -f "$src" ]]; then
-      mkdir -p "$(dirname "$dest")"
-      echo "▶ 搬移 $src → $dest"
-      mv -n "$src" "$dest"
-      return 0
-    fi
-  done
-  return 1
+# 從 --import-models 指定的資料夾找模型搬進來：$1 = 目的地，$2 = 檔名
+import_model() {
+  local dest="$1" name="$2" src
+  [[ -f "$dest" || -z "$IMPORT_DIR" ]] && return 0
+  src="$(find "$IMPORT_DIR" -maxdepth 4 -type f -name "$name" 2>/dev/null | head -1)"
+  [[ -n "$src" ]] || return 0
+  mkdir -p "$(dirname "$dest")"
+  echo "▶ 搬移 $src → $dest"
+  mv -n "$src" "$dest"
+}
+
+pick_ref() {   # $1 = KEY
+  (( UPDATE )) && return 0
+  lock_get "$1"
 }
 
 # ---------------------------------------------------------------- whisper.cpp
 if (( DO_WHISPER )); then
   step "whisper.cpp"
-  fetch_repo "$ROOT/whisper.cpp" "$WHISPER_REPO"
-  build_repo "$ROOT/whisper.cpp" -DWHISPER_BUILD_TESTS=OFF -DWHISPER_SDL2=OFF -- whisper-server whisper-cli
+  fetch_repo "$ROOT/whisper.cpp" "$WHISPER_REPO" "$(pick_ref WHISPER_REF)"
+  build_repo "$ROOT/whisper.cpp" "${WHISPER_ARGS[@]}" -- "${WHISPER_TARGETS[@]}"
   check_bin "$ROOT/whisper.cpp/build/bin/whisper-server"
+  [[ -z "$(lock_get WHISPER_REF)" || $UPDATE -eq 1 ]] && lock_set WHISPER_REF "$ROOT/whisper.cpp"
 
   model="$ROOT/whisper.cpp/models/ggml-$WHISPER_MODEL.bin"
-  if ! adopt_file "$model" "$HOME/whisper.cpp/models/ggml-$WHISPER_MODEL.bin"; then
+  import_model "$model" "ggml-$WHISPER_MODEL.bin"
+  if [[ ! -f "$model" ]]; then
     echo "▶ 下載 whisper 模型 $WHISPER_MODEL（約 1.6GB）"
     bash "$ROOT/whisper.cpp/models/download-ggml-model.sh" "$WHISPER_MODEL" "$ROOT/whisper.cpp/models"
   fi
@@ -136,29 +201,24 @@ fi
 # ---------------------------------------------------------------- llama.cpp
 if (( DO_LLAMA )); then
   step "llama.cpp"
-  fetch_repo "$ROOT/llama.cpp" "$LLAMA_REPO"
-  build_repo "$ROOT/llama.cpp" -DLLAMA_OPENSSL=OFF -DLLAMA_BUILD_TESTS=OFF -DLLAMA_BUILD_EXAMPLES=OFF \
-    -- llama-server llama-bench
+  fetch_repo "$ROOT/llama.cpp" "$LLAMA_REPO" "$(pick_ref LLAMA_REF)"
+  build_repo "$ROOT/llama.cpp" "${LLAMA_ARGS[@]}" -- "${LLAMA_TARGETS[@]}"
   check_bin "$ROOT/llama.cpp/build/bin/llama-server"
+  [[ -z "$(lock_get LLAMA_REF)" || $UPDATE -eq 1 ]] && lock_set LLAMA_REF "$ROOT/llama.cpp"
   if [[ "$VULKAN" == "ON" ]]; then
     echo "▶ 可用裝置："
-    "$ROOT/llama.cpp/build/bin/llama-server" --list-devices 2>&1 | grep -iE "vulkan|device|intel" | head -5 || true
+    "$ROOT/llama.cpp/build/bin/llama-server" --list-devices 2>&1 | grep -iE "vulkan|device|intel|amd|nvidia" | head -5 || true
   fi
 
   step "LLM 模型"
   mkdir -p "$ROOT/models"
-  shopt -s nullglob
-  for f in "$HOME"/models/*.gguf; do
-    adopt_file "$ROOT/models/$(basename "$f")" "$f" || true
-  done
-  shopt -u nullglob
-  ls -lh "$ROOT"/models/*.gguf 2>/dev/null | awk '{print "✔ " $5 "  " $NF}' \
-    || echo "⚠ $ROOT/models 裡沒有 .gguf，請把 Qwen3-8B-Q4_K_M.gguf / Qwen3-4B-Q4_K_M.gguf 放進去"
+  for m in Qwen3-8B-Q4_K_M.gguf Qwen3-4B-Q4_K_M.gguf; do import_model "$ROOT/models/$m" "$m"; done
+  if compgen -G "$ROOT/models/*.gguf" >/dev/null; then
+    ls -lh "$ROOT"/models/*.gguf | awk '{print "✔ " $5 "  " $NF}'
+  else
+    echo "⚠ $ROOT/models 裡沒有 .gguf，請下載 Qwen3-8B-Q4_K_M.gguf 放進去"
+  fi
 fi
 
-# ---------------------------------------------------------------- 收尾
 step "完成"
-for d in "${OLD_HOME_DIRS[@]}"; do
-  [[ -d "$d" ]] && echo "舊資料夾 $d 仍在；確認 lec 正常後可自行刪除"
-done
-echo "下一步：./lec config UNIXops | grep -A6 '\[paths\]'  然後  ./lec run UNIXops --file <錄音>"
+echo "下一步：./lec doctor"

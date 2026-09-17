@@ -22,6 +22,8 @@ EPILOG = """範例：
   lec summarize outputs/UNIXops_20260916 --redo all --model qwen3-4b
   lec config 計算機概論                      印出合併後的設定
   lec courses / lec new 課名 / lec status / lec stop
+  lec devices [--test 編號] [--save 編號]    列出 / 測試 / 設定麥克風
+  lec doctor [課名] [--mic]                  檢查環境（回報問題時請附上輸出）
 """
 
 
@@ -106,7 +108,9 @@ def cmd_courses(args):
         print(json.dumps(out, ensure_ascii=False, indent=2))
         return 0
     if not files:
-        print(f"（{C.COURSES_DIR} 中沒有課程設定檔，可用 lec new 課名 建立）")
+        ex = ", ".join(p.stem for p in C.EXAMPLES_DIR.glob("*.toml"))
+        print(f"（{C.COURSES_DIR} 中沒有課程設定檔，可用 lec new 課名 建立"
+              + (f"，或 lec new 課名 --from {ex.split(', ')[0]}；範例：{ex}" if ex else "") + "）")
     for f in files:
         try:
             cfg, _ = C.load(f.stem)
@@ -118,7 +122,7 @@ def cmd_courses(args):
 
 def cmd_new(args):
     try:
-        p = C.create_course_file(args.course)
+        p = C.create_course_file(args.course, from_example=args.from_example)
     except C.ConfigError as e:
         die(str(e))
     print(f"✔ 已建立 {p}")
@@ -164,6 +168,64 @@ def cmd_stop(args):
     return 0
 
 
+def cmd_devices(args):
+    from . import devices
+    sources = devices.list_sources(include_monitors=args.all)
+    if sources is None:
+        die("找不到 pactl（sudo apt install pulseaudio-utils），無法列出錄音來源")
+    cfg, _ = _load(args, course_arg=None)
+    current = cfg.audio_source()
+    default = devices.default_source()
+    if args.json and not (args.test or args.save):
+        print(json.dumps({"current": current, "default": default, "sources": sources},
+                         ensure_ascii=False, indent=2))
+        return 0
+
+    target = args.save or args.test
+    if target:
+        name = "default" if target == "default" else devices.resolve(target, sources)
+        if not name:
+            die(f"找不到來源 {target}（用 lec devices 看編號）")
+        if args.test:
+            print(f"▶ 錄音 3 秒測試：{name}（請說話）…")
+            mean, peak = devices.test_volume(name)
+            if mean is None:
+                die(f"測試失敗：{peak}")
+            mark, msg = devices.judge_volume(mean)
+            print(f"{mark} 平均 {mean:.1f} dB、峰值 {peak:.1f} dB：{msg}")
+        if args.save:
+            f = C.set_local("audio.source", name)
+            print(f"✔ 已設定 audio.source = {name}（寫入 {f}）")
+        return 0
+
+    print(f"目前設定：{current}" + (f"（系統預設 → {default}）" if current == "default" else ""))
+    print(f"{'編號':>4}  {'狀態':<10} 來源")
+    for s in sources:
+        mark = "*" if s["name"] == current or (current == "default" and s["name"] == default) else " "
+        desc = f"  {s['description']}" if s["description"] else ""
+        print(f"{mark}{s['index']:>4}  {s['state']:<10} {s['name']}{desc}")
+    print("\n測試：lec devices --test <編號>　設定：lec devices --save <編號>（寫入 config/local.toml）")
+    return 0
+
+
+def cmd_doctor(args):
+    from . import doctor
+    items = doctor.run(args.course, args.set, mic=args.mic)
+    if args.json:
+        print(json.dumps(items, ensure_ascii=False, indent=2))
+    else:
+        import unicodedata
+        def pad(t, n):
+            w = sum(2 if unicodedata.east_asian_width(c) in "WF" else 1 for c in t)
+            return t + " " * max(1, n - w)
+        for it in items:
+            print(f"{it['status']} {pad(it['name'], 20)}{it['detail']}")
+        n_fail = sum(1 for it in items if it["status"] == doctor.FAIL)
+        n_warn = sum(1 for it in items if it["status"] == doctor.WARN)
+        print(f"\n{'✔ 全部正常' if not (n_fail or n_warn) else f'{n_fail} 個錯誤、{n_warn} 個警告'}")
+    return 1 if any(it["status"] == doctor.FAIL for it in items) else 0
+
+
 def main(argv=None):
     ap = argparse.ArgumentParser(prog="lec", description="課堂筆記系統",
                                  formatter_class=argparse.RawDescriptionHelpFormatter, epilog=EPILOG)
@@ -195,6 +257,8 @@ def main(argv=None):
 
     p = sub.add_parser("new", help="從範本建立課程設定檔")
     p.add_argument("course")
+    p.add_argument("--from", dest="from_example", metavar="範例",
+                   help="以 courses/examples/<範例>.toml 為起點")
     p.set_defaults(func=cmd_new)
 
     p = sub.add_parser("status", help="查看目前執行狀態")
@@ -204,6 +268,19 @@ def main(argv=None):
     p = sub.add_parser("stop", help="停止目前的 lec run（等同 Ctrl+C）")
     p.add_argument("--force", action="store_true", help="強制結束（等同連按兩次 Ctrl+C）")
     p.set_defaults(func=cmd_stop)
+
+    p = sub.add_parser("devices", help="列出 / 測試 / 設定錄音來源")
+    p.add_argument("--test", metavar="編號|名稱", help="錄 3 秒檢查音量")
+    p.add_argument("--save", metavar="編號|名稱", help="設為這台電腦的預設來源（寫入 config/local.toml）")
+    p.add_argument("--all", action="store_true", help="也列出喇叭的 monitor 來源")
+    p.add_argument("--json", action="store_true")
+    p.set_defaults(func=cmd_devices, set=[])
+
+    p = sub.add_parser("doctor", help="檢查執行環境")
+    p.add_argument("course", nargs="?", help="同時檢查某門課的設定")
+    p.add_argument("--mic", action="store_true", help="另外錄 3 秒測試麥克風音量")
+    p.add_argument("--json", action="store_true")
+    p.set_defaults(func=cmd_doctor, set=[])
 
     args = ap.parse_args(argv)
     if not getattr(args, "func", None):
