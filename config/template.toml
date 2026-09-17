@@ -1,0 +1,22 @@
+# ===== 課程設定：{name} =====
+# 只寫跟 config/default.toml 不同的項目；取消註解即可生效。
+# 查看合併後的完整設定：lec config {name}
+
+[course]
+name = "{name}"
+
+[whisper]
+# 課程術語：提升 whisper 辨識率，也提供給總結當錯字參考
+terms = []
+# prompt = "以下是繁體中文的大學課堂內容，老師會中英夾雜地講解。"
+
+[summary]
+# model = "qwen3-8b"          # 或 qwen3-4b
+# extra_instructions = "本課程著重……，重點請保留……。"
+# prompt_file = "prompts/summary.md"
+
+# [audio]
+# source = "mic1"             # mic1 = 內建麥克風、mic2 = 耳機孔
+
+# [vad]
+# sensitivity = 2.5           # 教室吵調高（3–4），老師小聲調低（1.8–2）

@@ -1,0 +1,7 @@
+# 輸出與大型檔案不進 git
+outputs/
+models/
+whisper.cpp/
+llama.cpp/
+__pycache__/
+*.pyc

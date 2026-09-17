@@ -1,17 +1,13 @@
-#!/usr/bin/env python3
-"""課堂即時轉錄（VAD 版）
+"""課堂即時轉錄（VAD 版，由 live_transcribe.py 移植，行為不變）
 
 ffmpeg 持續把音訊以 raw PCM 送進來 → 以能量 VAD 在「停頓處」切段（12–30 秒）
 → 立即送 whisper-server → 以自然段落追加到 transcript.md，並產出 transcript.srt。
 只用 Python 標準函式庫。
 """
-import argparse
 import array
 import math
-import os
 import queue
 import re
-import shutil
 import signal
 import subprocess
 import sys
@@ -22,6 +18,8 @@ from collections import deque
 from datetime import datetime
 from pathlib import Path
 
+from .util import hms, log, opencc_available, opencc_convert
+
 SR = 16000
 FRAME_MS = 30
 FRAME_SAMPLES = SR * FRAME_MS // 1000
@@ -31,15 +29,6 @@ HALLUCINATIONS = re.compile(
     r"(字幕|訂閱|點贊|點讚|按讚|感謝觀看|謝謝觀看|明鏡|Amara|請不吝|小鈴鐺|優優獨播)")
 END_PUNCT = "。！？!?.…"
 ANY_PUNCT = END_PUNCT + "，、；：,;:「」『』（）()"
-
-
-def log(msg):
-    print(f"[{datetime.now():%H:%M:%S}] {msg}", flush=True)
-
-
-def hms(t):
-    t = int(max(t, 0))
-    return f"{t // 3600:02d}:{t % 3600 // 60:02d}:{t % 60:02d}"
 
 
 def srt_ts(t):
@@ -65,7 +54,10 @@ def parse_srt(text):
                 a, b = line.split("-->")
                 body = "".join(x.strip() for x in lines[i + 1:])
                 if body:
-                    cues.append((parse_ts(a), parse_ts(b), body))
+                    try:
+                        cues.append((parse_ts(a), parse_ts(b), body))
+                    except ValueError:
+                        pass
                 break
     return cues
 
@@ -166,10 +158,16 @@ class VadChunker:
             return None
         return self._cut(len(self.frames))
 
+    @property
+    def total_seconds(self):
+        return (self.pos + len(self.frames)) * FRAME_MS / 1000
+
 
 # ---------------------------------------------------------------- 文件輸出
 class TranscriptWriter:
     """把 whisper 片段組成自然段落，只做追加寫入（tail -f 與 Obsidian 皆可即時看）。"""
+
+    prev_char = "。"
 
     def __init__(self, session, course, section_s, para_gap, para_max, opencc):
         self.md = (session / "transcript.md").open("a", encoding="utf-8")
@@ -182,6 +180,7 @@ class TranscriptWriter:
         self.last_end = -1e9
         self.para_len = 0
         self.next_section = 0.0
+        self.sections = 0
         self.recent = deque(maxlen=3)
         if self.md.tell() == 0:
             today = datetime.now().strftime("%Y-%m-%d")
@@ -190,17 +189,7 @@ class TranscriptWriter:
             self.md.flush()
 
     def convert(self, texts):
-        if not self.opencc or not texts:
-            return texts
-        try:
-            out = subprocess.run(["opencc", "-c", "s2twp.json"], input="\n".join(texts),
-                                 capture_output=True, text=True, timeout=20, check=True).stdout
-            lines = out.rstrip("\n").split("\n")
-            if len(lines) != len(texts):
-                return texts
-            return [l.replace("臺", "台") for l in lines]   # 台灣日常寫法用「台」
-        except Exception:
-            return texts
+        return opencc_convert(texts) if self.opencc else texts
 
     @staticmethod
     def split_sentences(a, b, text):
@@ -225,7 +214,7 @@ class TranscriptWriter:
             units += self.split_sentences(a, b, text)
         tail = ""
         for a, b, text in units:
-            if b - a < 0.05 and len(text) <= 1:
+            if not text or (b - a < 0.05 and len(text) <= 1):
                 continue
             if list(self.recent).count(text) >= 2:      # whisper 重複迴圈
                 continue
@@ -245,6 +234,7 @@ class TranscriptWriter:
                     self.md.write("\n")
                 if new_section:
                     self.md.write(f"\n## {hms(a)}\n")
+                    self.sections += 1
                     while self.next_section <= a:
                         self.next_section += self.section_s
                 self.md.write(f"\n`{hms(a)}` {text}")
@@ -262,8 +252,6 @@ class TranscriptWriter:
         self.srt.flush()
         return tail
 
-    prev_char = "。"
-
     def close(self):
         if self.para_len and self.prev_char not in END_PUNCT:
             self.md.write("。")
@@ -272,8 +260,8 @@ class TranscriptWriter:
         self.srt.close()
 
 
-# ---------------------------------------------------------------- 轉錄執行緒
-def transcribe(server, wav_path, prompt):
+# ---------------------------------------------------------------- 轉錄
+def transcribe_request(server, wav_path, prompt):
     cmd = ["curl", "-sS", "--fail", "--max-time", "300", f"{server}/inference",
            "-F", f"file=@{wav_path}", "-F", "response_format=srt",
            "-F", "temperature=0.0", "-F", f"prompt={prompt}"]
@@ -287,154 +275,166 @@ def transcribe(server, wav_path, prompt):
     return ""
 
 
-def worker(q, args, writer, tmp_dir, stats):
-    tail = ""
-    while True:
-        item = q.get()
-        if item is None:
-            break
-        start, pcm, voiced, cut_wall = item
-        dur = len(pcm) / 2 / SR
-        if voiced < args.min_voiced:
-            log(f"{hms(start)} 略過 {dur:4.1f}s（幾乎無人聲）")
-            continue
-        try:
-            tail = process_chunk(start, pcm, dur, cut_wall, q, args, writer, tmp_dir, stats, tail)
-        except Exception as e:                      # 單段失敗不影響後續
-            log(f"  ⚠ {hms(start)} 這段處理失敗：{e}")
-    wav = tmp_dir / "chunk.wav"
-    if wav.exists():
-        wav.unlink()
+class Transcriber:
+    """一次錄音（或一個音檔）的轉錄流程。run() 會阻塞到結束；request_stop() 可由 signal handler 呼叫。"""
 
+    def __init__(self, cfg, session_dir, server_url, input_file=None, status=None):
+        self.cfg = cfg
+        self.session = Path(session_dir)
+        self.server = server_url
+        self.file = str(input_file) if input_file else ""
+        self.live = not self.file
+        self.status = status
+        self.prompt = cfg.whisper_prompt()
 
-def process_chunk(start, pcm, dur, cut_wall, q, args, writer, tmp_dir, stats, tail):
-    wav_path = tmp_dir / "chunk.wav"
-    with wave.open(str(wav_path), "wb") as w:
-        w.setnchannels(1)
-        w.setsampwidth(2)
-        w.setframerate(SR)
-        w.writeframes(pcm)
-    t0 = time.time()
-    srt = transcribe(args.server, wav_path, (args.prompt + tail[-100:]).strip())
-    cues = [(start + a, start + b, t) for a, b, t in parse_srt(srt)]
-    new_tail = writer.add(cues)
-    if new_tail:
-        tail = new_tail
-    stats["audio"] += dur
-    stats["work"] += time.time() - t0
-    lag = f"｜延遲 {time.time() - cut_wall:4.1f}s" if args.live else ""
-    log(f"{hms(start)} +{dur:4.1f}s → {len(cues):2d} 句，轉錄 {time.time() - t0:4.1f}s"
-        f"{lag}｜佇列 {q.qsize()}")
-    return tail
+        v = cfg["vad"]
+        self.min_chunk, self.max_chunk = v["min_chunk"], v["max_chunk"]
+        if not self.live:   # 處理檔案時不求即時，段落拉長填滿 whisper 的 30 秒視窗，效率較高
+            self.min_chunk = max(self.min_chunk, min(v["file_min_chunk"], self.max_chunk - 4))
+        self.min_voiced = v["min_voiced"]
+        self.chunker = VadChunker(self.min_chunk, self.max_chunk, v["silence_ms"], v["sensitivity"])
 
+        t = cfg["transcript"]
+        self.use_opencc = bool(cfg["system"]["opencc"] and opencc_available())
+        self.writer = TranscriptWriter(self.session, cfg.course_name, t["section_minutes"] * 60,
+                                       t["para_gap"], t["para_max"], self.use_opencc)
+        self.q = queue.Queue()
+        self.proc = None
+        self.abort = False
+        self.stopping = False
+        self.stats = {"audio": 0.0, "work": 0.0}
+        self.tmp_dir = self.session / ".tmp"
+        self.tmp_dir.mkdir(exist_ok=True)
 
-# ---------------------------------------------------------------- 主程式
-def main():
-    ap = argparse.ArgumentParser()
-    ap.add_argument("--session", required=True)
-    ap.add_argument("--course", required=True)
-    ap.add_argument("--server", required=True)
-    ap.add_argument("--source", default="default")
-    ap.add_argument("--file", default="")
-    ap.add_argument("--prompt", default="")
-    ap.add_argument("--min-chunk", type=float, default=12)
-    ap.add_argument("--max-chunk", type=float, default=30)
-    ap.add_argument("--file-min-chunk", type=float, default=24)
-    ap.add_argument("--silence-ms", type=int, default=500)
-    ap.add_argument("--sensitivity", type=float, default=2.5)
-    ap.add_argument("--min-voiced", type=float, default=0.08)
-    ap.add_argument("--section-min", type=float, default=5)
-    ap.add_argument("--para-gap", type=float, default=2.5)
-    ap.add_argument("--para-max", type=int, default=220)
-    ap.add_argument("--keep-recording", type=int, default=1)
-    ap.add_argument("--opencc", type=int, default=1)
-    args = ap.parse_args()
-    args.live = not args.file
-    if not args.live:   # 處理檔案時不求即時，段落拉長填滿 whisper 的 30 秒視窗，效率較高
-        args.min_chunk = max(args.min_chunk, min(args.file_min_chunk, args.max_chunk - 4))
-
-    session = Path(args.session)
-    session.mkdir(parents=True, exist_ok=True)
-    tmp_dir = session / ".tmp"
-    tmp_dir.mkdir(exist_ok=True)
-
-    use_opencc = bool(args.opencc and shutil.which("opencc"))
-    writer = TranscriptWriter(session, args.course, args.section_min * 60,
-                              args.para_gap, args.para_max, use_opencc)
-    chunker = VadChunker(args.min_chunk, args.max_chunk, args.silence_ms, args.sensitivity)
-
-    if args.live:
-        cmd = ["ffmpeg", "-hide_banner", "-loglevel", "error", "-nostdin",
-               "-f", "pulse", "-i", args.source,
-               "-ac", "1", "-ar", str(SR), "-f", "s16le", "pipe:1"]
-        if args.keep_recording:
-            rec = session / f"recording_{datetime.now():%H%M%S}.ogg"
-            cmd += ["-ac", "1", "-ar", str(SR), "-c:a", "libopus", "-b:a", "32k", str(rec)]
-    else:
-        cmd = ["ffmpeg", "-hide_banner", "-loglevel", "error", "-nostdin", "-i", args.file,
-               "-ac", "1", "-ar", str(SR), "-f", "s16le", "pipe:1"]
-
-    stop = {"count": 0}
-    q = queue.Queue()
-
-    def on_sigint(*_):
-        stop["count"] += 1
-        if stop["count"] == 1:
-            print(flush=True)
-            if args.live:
-                log("▶ 停止錄音，處理剩餘音訊中…（再按一次 Ctrl+C 強制結束）")
-            else:
-                dropped = 0
-                try:
-                    while True:
-                        q.get_nowait()
-                        dropped += 1
-                except queue.Empty:
-                    pass
-                stop["file_abort"] = True
-                q.put(None)          # 讓 worker 做完目前這段就結束
-                log(f"▶ 中止處理，捨棄尚未轉錄的 {dropped} 段，完成目前這段後結束")
+    # -- 控制
+    def request_stop(self):
+        """第一次 Ctrl+C：即時模式停止錄音、轉完剩餘段落；檔案模式捨棄佇列、完成目前這段。"""
+        if self.stopping:
+            return
+        self.stopping = True
+        if self.live:
+            log("▶ 停止錄音，處理剩餘音訊中…（再按一次 Ctrl+C 強制結束）")
+            if self.proc and self.proc.poll() is None:
+                self.proc.send_signal(signal.SIGINT)     # 讓 ffmpeg 正常寫完 ogg
         else:
-            log("✖ 強制結束")
-            os._exit(130)
+            self.abort = True
+            dropped = 0
+            try:
+                while True:
+                    self.q.get_nowait()
+                    dropped += 1
+            except queue.Empty:
+                pass
+            self.q.put(None)
+            if self.proc and self.proc.poll() is None:
+                self.proc.terminate()
+            log(f"▶ 中止處理，捨棄尚未轉錄的 {dropped} 段，完成目前這段後結束")
 
-    signal.signal(signal.SIGINT, on_sigint)
+    def _update(self, **kv):
+        if self.status:
+            self.status.update(**kv)
 
-    stats = {"audio": 0.0, "work": 0.0}
-    th = threading.Thread(target=worker, args=(q, args, writer, tmp_dir, stats), daemon=True)
-    th.start()
+    # -- 轉錄執行緒
+    def _worker(self):
+        tail = ""
+        while True:
+            item = self.q.get()
+            if item is None:
+                break
+            start, pcm, voiced, cut_wall = item
+            dur = len(pcm) / 2 / SR
+            if voiced < self.min_voiced:
+                log(f"{hms(start)} 略過 {dur:4.1f}s（幾乎無人聲）")
+                continue
+            try:
+                tail = self._process(start, pcm, dur, cut_wall, tail)
+            except Exception as e:                      # 單段失敗不影響後續
+                log(f"  ⚠ {hms(start)} 這段處理失敗：{e}")
+                if self.status:
+                    self.status.error(f"轉錄 {hms(start)} 失敗：{e}")
 
-    log(f"VAD 已啟用（每段 {args.min_chunk:.0f}–{args.max_chunk:.0f} 秒，停頓 ≥{args.silence_ms}ms 切段）"
-        f"{'，OpenCC 繁體轉換開啟' if use_opencc else ''}")
-    if args.live:
-        log(f"🎙 錄音中（{args.source}）。按 Ctrl+C 結束。")
+    def _process(self, start, pcm, dur, cut_wall, tail):
+        wav_path = self.tmp_dir / "chunk.wav"
+        with wave.open(str(wav_path), "wb") as w:
+            w.setnchannels(1)
+            w.setsampwidth(2)
+            w.setframerate(SR)
+            w.writeframes(pcm)
+        t0 = time.time()
+        srt = transcribe_request(self.server, wav_path, (self.prompt + tail[-100:]).strip())
+        cues = [(start + a, start + b, t) for a, b, t in parse_srt(srt)]
+        new_tail = self.writer.add(cues)
+        if new_tail:
+            tail = new_tail
+        self.stats["audio"] += dur
+        self.stats["work"] += time.time() - t0
+        lag = time.time() - cut_wall
+        lag_s = f"｜延遲 {lag:4.1f}s" if self.live else ""
+        log(f"{hms(start)} +{dur:4.1f}s → {len(cues):2d} 句，轉錄 {time.time() - t0:4.1f}s"
+            f"{lag_s}｜佇列 {self.q.qsize()}")
+        self._update(transcribed=round(start + dur, 1), queue=self.q.qsize(),
+                     transcribe_lag=round(lag, 1) if self.live else None,
+                     sections_total=self.writer.sections)
+        return tail
 
-    proc = subprocess.Popen(cmd, stdout=subprocess.PIPE)
-    buf = b""
-    while True:
-        data = proc.stdout.read(FRAME_BYTES * 10)
-        if not data:
-            break
-        buf += data
-        while len(buf) >= FRAME_BYTES:
-            frame, buf = buf[:FRAME_BYTES], buf[FRAME_BYTES:]
-            out = chunker.push(frame)
-            if out and not stop.get("file_abort"):
-                q.put((*out, time.time()))
-    proc.wait()
-    last = chunker.flush()
-    if last and len(last[1]) > SR and not stop.get("file_abort"):        # 最後不足 1 秒就不送
-        q.put((*last, time.time()))
-    q.put(None)
-    th.join()
-    writer.close()
-    try:
-        tmp_dir.rmdir()
-    except OSError:
-        pass
-    speed = stats["audio"] / stats["work"] if stats["work"] else 0
-    log(f"✔ 完成：總長 {hms(chunker.pos * FRAME_MS / 1000)}，轉錄 {speed:.1f}x 速")
+    # -- 主流程
+    def run(self):
+        if self.live:
+            cmd = ["ffmpeg", "-hide_banner", "-loglevel", "error", "-nostdin",
+                   "-f", "pulse", "-i", self.cfg.audio_source(),
+                   "-ac", "1", "-ar", str(SR), "-f", "s16le", "pipe:1"]
+            if self.cfg["audio"]["keep_recording"]:
+                rec = self.session / f"recording_{datetime.now():%H%M%S}.ogg"
+                cmd += ["-ac", "1", "-ar", str(SR), "-c:a", "libopus", "-b:a", "32k", str(rec)]
+        else:
+            cmd = ["ffmpeg", "-hide_banner", "-loglevel", "error", "-nostdin", "-i", self.file,
+                   "-ac", "1", "-ar", str(SR), "-f", "s16le", "pipe:1"]
 
+        th = threading.Thread(target=self._worker, daemon=True)
+        th.start()
+        log(f"VAD 已啟用（每段 {self.min_chunk:.0f}–{self.max_chunk:.0f} 秒，"
+            f"停頓 ≥{self.cfg['vad']['silence_ms']}ms 切段）"
+            f"{'，OpenCC 繁體轉換開啟' if self.use_opencc else ''}")
+        if self.live:
+            log(f"🎙 錄音中（{self.cfg['audio']['source']}）。按 Ctrl+C 結束。")
 
-if __name__ == "__main__":
-    main()
+        # start_new_session：由我們決定何時送 SIGINT 給 ffmpeg（UI 只會對 lec 的 pid 送訊號）
+        self.proc = subprocess.Popen(cmd, stdout=subprocess.PIPE, start_new_session=True)
+        if self.stopping and self.live:
+            self.proc.send_signal(signal.SIGINT)
+        buf = b""
+        last_update = 0.0
+        while True:
+            data = self.proc.stdout.read(FRAME_BYTES * 10)
+            if not data:
+                break
+            if self.abort:
+                continue
+            buf += data
+            while len(buf) >= FRAME_BYTES:
+                frame, buf = buf[:FRAME_BYTES], buf[FRAME_BYTES:]
+                out = self.chunker.push(frame)
+                if out:
+                    self.q.put((*out, time.time()))
+            now = time.time()
+            if now - last_update >= 1:
+                last_update = now
+                self._update(elapsed=round(self.chunker.total_seconds, 1), queue=self.q.qsize())
+        rc = self.proc.wait()
+        if rc not in (0, 255, -2, -15) and not self.stopping:
+            log(f"⚠ ffmpeg 結束代碼 {rc}（音源或音檔可能有問題）")
+            if self.status:
+                self.status.error(f"ffmpeg 結束代碼 {rc}")
+        last = self.chunker.flush()
+        if last and len(last[1]) > SR and not self.abort:        # 最後不足 1 秒就不送
+            self.q.put((*last, time.time()))
+        self.q.put(None)
+        th.join()
+        self.writer.close()
+        wav = self.tmp_dir / "chunk.wav"
+        wav.unlink(missing_ok=True)
+        total = self.chunker.pos * FRAME_MS / 1000
+        speed = self.stats["audio"] / self.stats["work"] if self.stats["work"] else 0
+        log(f"✔ 轉錄完成：總長 {hms(total)}，轉錄 {speed:.1f}x 速")
+        self._update(elapsed=round(total, 1), queue=0, sections_total=self.writer.sections)
+        return {"duration": total, "speed": speed, "aborted": self.abort}

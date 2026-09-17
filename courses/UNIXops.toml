@@ -1,0 +1,14 @@
+# ===== 課程設定：UNIXops =====
+# 只寫跟 config/default.toml 不同的項目；取消註解即可生效。
+# 查看合併後的完整設定：lec config UNIXops
+
+[course]
+name = "UNIXops"
+
+[whisper]
+# 課程術語：提升 whisper 辨識率，也提供給總結當錯字參考
+terms = ["Unix", "Linux", "BSD", "AT&T", "光纖", "冗餘", "Switch", "Computer Science"]
+
+[summary]
+# model = "qwen3-4b"
+# extra_instructions = ""
