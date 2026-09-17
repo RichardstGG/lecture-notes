@@ -1,23 +1,42 @@
 # 課堂筆記系統（lec）
 
-課堂錄音 → whisper.cpp 即時逐字稿 → llama.cpp 每 5 分鐘總結 → Obsidian Markdown。
+課堂錄音 → whisper.cpp 即時逐字稿 → llama.cpp 每 5 分鐘總結 → Obsidian Markdown，全部在本機執行。
+
+Repo：<https://github.com/RichardstGG/lecture-notes>（目前為 private）
 
 ## 安裝
 
 需要：Linux（PulseAudio / PipeWire）、Python 3.11+、ffmpeg、curl；GPU 建議支援 Vulkan。
+實測環境：Debian 13、Intel Core Ultra 7 258V（Arc 140V，Vulkan）。
 
 ```bash
-git clone <repo> ~/lecture-notes && cd ~/lecture-notes
+# 1. 取得程式（private repo 需先 gh auth login，或改用 SSH：git@github.com:RichardstGG/lecture-notes.git）
+git clone https://github.com/RichardstGG/lecture-notes.git ~/lecture-notes
+cd ~/lecture-notes
+
+# 2. 系統套件
 sudo apt install ffmpeg curl pulseaudio-utils opencc \
                  git cmake build-essential pkg-config libvulkan-dev glslc vulkan-tools
-./setup_engines.sh              # 依 engines.lock 取得並編譯 whisper.cpp / llama.cpp、下載 whisper 模型
-# 把 Qwen3-8B-Q4_K_M.gguf 放到 ./models/
+
+# 3. 編譯 whisper.cpp / llama.cpp（依 engines.lock 的版本）並下載 whisper 模型
+./setup_engines.sh
+
+# 4. 下載 LLM 模型（Qwen 官方 GGUF，約 5GB）
+curl -L -C - -o models/Qwen3-8B-Q4_K_M.gguf \
+  https://huggingface.co/Qwen/Qwen3-8B-GGUF/resolve/main/Qwen3-8B-Q4_K_M.gguf
+
+# 5. 放進 PATH、設定麥克風、檢查環境
 ln -s ~/lecture-notes/lec ~/.local/bin/lec
 lec devices                     # 找到麥克風編號
-lec devices --test 56           # 錄 3 秒看音量
-lec devices --save 56           # 寫入 config/local.toml
-lec doctor                      # 全部 ✔ 就可以上課了
+lec devices --test <編號>        # 錄 3 秒看音量
+lec devices --save <編號>        # 寫入 config/local.toml
+lec doctor --mic                # 全部 ✔ 就可以上課了
+
+# 6. 建立課程設定
+lec new 計算機概論 --from UNIXops  # 或 lec new 計算機概論 從空白範本開始
 ```
+
+更新程式：`git pull`，若 `engines.lock` 有變動再執行一次 `./setup_engines.sh`。
 
 ### 目錄結構
 
@@ -46,7 +65,7 @@ lec doctor                      # 全部 ✔ 就可以上課了
 | `VULKAN=OFF ./setup_engines.sh` | 編純 CPU 版 |
 
 以 `BUILD_SHARED_LIBS=OFF` 靜態連結，整個專案資料夾搬到哪裡都能執行。
-基準測試：`./bench_llm.sh [逐字稿.md] [第幾段]`，結果在 `outputs/_llm-bench/`。
+基準測試：`./bench_llm.sh [逐字稿.md] [第幾段]`（預設只測 8B），結果在 `outputs/_llm-bench/`。
 
 `--file` 可用任何 ffmpeg 能解碼的檔案：mp3、m4a/aac、wav、flac、ogg/opus、wma、webm，以及 mp4/mkv/mov 等影片（自動取音軌）。
 
@@ -137,3 +156,9 @@ core/status.py      status.json / events.jsonl / 執行鎖
 core/devices.py     錄音來源列表與音量測試
 core/doctor.py      環境檢查
 ```
+
+## 開發
+
+- 分支：`main`。只提交程式、`config/default.toml`、`config/template.toml`、`courses/examples/`、`prompts/`、`engines.lock`；本機設定與輸出已由 `.gitignore` 排除。
+- 升級引擎：`./setup_engines.sh --update` → `lec run 課名 --file <錄音>` 與 `./bench_llm.sh` 確認沒問題 → `git commit engines.lock`。
+- 回報問題時附上 `lec doctor --json` 與該堂課的 `session.log`。

@@ -1,5 +1,6 @@
 #!/usr/bin/env python3
-"""課堂筆記系統 CLI 入口。可放進 PATH：ln -s ~/lecture-notes/lec ~/.local/bin/lec"""
+"""課堂筆記系統 CLI 入口（https://github.com/RichardstGG/lecture-notes）。
+可放進 PATH：ln -s ~/lecture-notes/lec ~/.local/bin/lec"""
 import os
 import sys
 
