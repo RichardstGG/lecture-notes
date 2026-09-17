@@ -261,16 +261,52 @@ class TranscriptWriter:
 
 
 # ---------------------------------------------------------------- 轉錄
+def _incomplete_utf8_tail(bs):
+    """回傳結尾「不完整 UTF-8 字元」的位元組數（0–3）。"""
+    for i in range(1, min(4, len(bs)) + 1):
+        b = bs[-i]
+        if b & 0xC0 == 0x80:          # 延續位元組，繼續往前找開頭
+            continue
+        if b >= 0xC0:
+            need = 2 if b < 0xE0 else 3 if b < 0xF0 else 4
+            return i if need > i else 0
+        return 0
+    return 0
+
+
+def decode_srt(raw):
+    """whisper.cpp 會把一個中文字的 UTF-8 位元組拆在相鄰兩句字幕之間，
+    直接解碼會失敗（整段遺失）。這裡把句尾不完整的位元組搬到下一句開頭再解碼，
+    仍無法修復的位元組直接丟棄。"""
+    blocks = re.split(rb"\r?\n\s*\r?\n", raw.strip())
+    out, carry = [], b""
+    for block in blocks:
+        lines = [l for l in block.splitlines() if l.strip()]
+        idx = next((i for i, l in enumerate(lines) if b"-->" in l), None)
+        if idx is None:
+            continue
+        body = carry + b"".join(l.strip() for l in lines[idx + 1:])
+        cut = _incomplete_utf8_tail(body)
+        carry = body[len(body) - cut:] if cut else b""
+        body = body[:len(body) - cut] if cut else body
+        head = [l.decode("utf-8", "replace") for l in lines[:idx + 1]]
+        text = body.decode("utf-8", "replace").replace("\ufffd", "")
+        out.append("\n".join(head + [text]))
+    return "\n\n".join(out) + "\n"
+
+
 def transcribe_request(server, wav_path, prompt):
     cmd = ["curl", "-sS", "--fail", "--max-time", "300", f"{server}/inference",
            "-F", f"file=@{wav_path}", "-F", "response_format=srt",
            "-F", "temperature=0.0", "-F", f"prompt={prompt}"]
     for attempt in range(3):
         # start_new_session：Ctrl+C 不會打斷正在進行的轉錄請求
-        r = subprocess.run(cmd, capture_output=True, text=True, start_new_session=True)
-        if r.returncode == 0 and not r.stdout.lstrip().startswith("{"):
-            return r.stdout
-        log(f"  ⚠ 轉錄請求失敗（第 {attempt + 1} 次）: {(r.stderr or r.stdout).strip()[:200]}")
+        # 以位元組讀取：whisper 輸出可能含被拆開的 UTF-8 字元，交給 decode_srt 修復
+        r = subprocess.run(cmd, capture_output=True, start_new_session=True)
+        if r.returncode == 0 and not r.stdout.lstrip().startswith(b"{"):
+            return decode_srt(r.stdout)
+        err = (r.stderr or r.stdout).decode("utf-8", "replace").strip()
+        log(f"  ⚠ 轉錄請求失敗（第 {attempt + 1} 次）: {err[:200]}")
         time.sleep(2)
     return ""
 

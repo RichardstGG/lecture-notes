@@ -119,12 +119,12 @@ fetch_repo() {
   if [[ -n "$ref" && "$head" == "$ref"* ]]; then
     echo "▶ 已是鎖定版本 ${ref:0:9}"
   elif [[ -n "$ref" ]]; then
-    echo "▶ 切換到鎖定版本 ${ref:0:9}"
-    git -C "$dir" fetch -q --depth 1 origin "$ref"
+    echo "▶ 切換到鎖定版本 ${ref:0:9}（下載中，llama.cpp 較大需要一點時間）"
+    git -C "$dir" fetch --depth 1 --progress origin "$ref"
     git -C "$dir" -c advice.detachedHead=false checkout -q FETCH_HEAD
   else
     echo "▶ 取得最新版"
-    git -C "$dir" fetch -q --depth 1 origin HEAD
+    git -C "$dir" fetch --depth 1 --progress origin HEAD
     git -C "$dir" -c advice.detachedHead=false checkout -q FETCH_HEAD
   fi
   echo "  版本：$(git -C "$dir" log -1 --format='%h %cs %s' | cut -c1-80)"
