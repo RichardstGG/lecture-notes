@@ -40,7 +40,7 @@ class LecClient:
         root = Path(repo_root).resolve()
         return cls((sys.executable, root / "lec"), cwd=root, timeout=timeout)
 
-    async def run_json(self, *args):
+    async def run_text(self, *args):
         env = os.environ.copy()
         env["PYTHONUTF8"] = "1"
         env["PYTHONIOENCODING"] = "utf-8"
@@ -76,12 +76,15 @@ class LecClient:
                 "cli_failed", err or out.strip() or "lec command failed",
                 exit_code=process.returncode, stderr=err[:2000],
             )
+        return out
+
+    async def run_json(self, *args):
+        out = await self.run_text(*args)
         try:
             return json.loads(out)
         except json.JSONDecodeError as exc:
             raise LecCommandError(
                 "cli_invalid_json", "lec returned an invalid JSON response",
-                exit_code=process.returncode, stderr=err[:2000],
             ) from exc
 
     async def status(self):
@@ -95,3 +98,9 @@ class LecClient:
         if not isinstance(result, list) or not all(isinstance(item, dict) for item in result):
             raise LecCommandError("cli_invalid_response", "lec courses returned an invalid response")
         return result
+
+    async def stop(self, force=False):
+        args = ["stop"]
+        if force:
+            args.append("--force")
+        return (await self.run_text(*args)).strip()

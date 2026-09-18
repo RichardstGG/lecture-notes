@@ -12,6 +12,7 @@ if HAS_UI_DEPS:
     import httpx
     from ui.backend.app import _session_events, _sse, _status_events, create_app
     from ui.backend.cli_client import LecCommandError
+    from ui.backend.process_control import LaunchResult
     from ui.backend.settings import BackendSettings
 
 
@@ -20,6 +21,7 @@ class StubClient:
         self.status_result = {"schema_version": 1, "running": False}
         self.courses_result = []
         self.error = None
+        self.stop_calls = []
 
     async def status(self):
         if self.error:
@@ -30,6 +32,22 @@ class StubClient:
         if self.error:
             raise self.error
         return self.courses_result
+
+    async def stop(self, force=False):
+        if self.error:
+            raise self.error
+        self.stop_calls.append(force)
+        return "force stop" if force else "stop"
+
+
+class StubLauncher:
+    def __init__(self):
+        self.calls = []
+        self.pid = 4321
+
+    async def start(self, *args):
+        self.calls.append(args)
+        return LaunchResult(self.pid)
 
 
 class DisconnectAfter:
@@ -48,10 +66,13 @@ class BackendApiTests(unittest.IsolatedAsyncioTestCase):
         self.tmp = tempfile.TemporaryDirectory()
         self.output = Path(self.tmp.name) / "outputs"
         self.client = StubClient()
+        self.launcher = StubLauncher()
         settings = BackendSettings(
             Path.cwd(), output_root=self.output, status_poll_interval=0.001,
         )
-        self.app = create_app(settings=settings, client=self.client)
+        self.app = create_app(
+            settings=settings, client=self.client, launcher=self.launcher,
+        )
 
     def tearDown(self):
         self.tmp.cleanup()
@@ -68,10 +89,10 @@ class BackendApiTests(unittest.IsolatedAsyncioTestCase):
         (session / "notes.md").write_text("note\n", encoding="utf-8")
         return session
 
-    async def request(self, method, path):
+    async def request(self, method, path, **kwargs):
         transport = httpx.ASGITransport(app=self.app)
         async with httpx.AsyncClient(transport=transport, base_url="http://test") as client:
-            return await client.request(method, path)
+            return await client.request(method, path, **kwargs)
 
     async def test_health_is_versioned(self):
         response = await self.request("GET", "/api/v1/health")
@@ -115,6 +136,75 @@ class BackendApiTests(unittest.IsolatedAsyncioTestCase):
         response = await self.request("GET", "/api/v1/courses")
         self.assertEqual(response.status_code, 503)
         self.assertEqual(response.json()["error"]["code"], "cli_timeout")
+
+    async def test_start_run_builds_fixed_cli_arguments(self):
+        input_file = Path(self.tmp.name) / "lecture.ogg"
+        input_file.write_bytes(b"audio")
+        response = await self.request("POST", "/api/v1/runs", json={
+            "course": "UNIXops", "input_file": str(input_file),
+            "model": "future-14b", "source": "mic-1",
+            "overrides": {"summary.temperature": 0.3, "summary.enabled": False,
+                          "whisper.terms": ["核心", "kernel"]},
+        })
+        self.assertEqual(response.status_code, 202)
+        self.assertEqual(response.json()["pid"], 4321)
+        self.assertEqual(self.launcher.calls, [(
+            "run", "UNIXops", "--file", str(input_file.resolve()),
+            "--model", "future-14b", "--source", "mic-1",
+            "--set", "summary.enabled=false",
+            "--set", "summary.temperature=0.3",
+            "--set", 'whisper.terms=["核心", "kernel"]',
+        )])
+
+    async def test_start_run_rejects_active_process(self):
+        self.client.status_result = {
+            "schema_version": 1, "running": True, "course": "SecOps",
+        }
+        response = await self.request("POST", "/api/v1/runs", json={"course": "UNIXops"})
+        self.assertEqual(response.status_code, 409)
+        self.assertEqual(response.json()["error"]["code"], "run_active")
+        self.assertEqual(self.launcher.calls, [])
+
+    async def test_start_run_rejects_invalid_override(self):
+        response = await self.request("POST", "/api/v1/runs", json={
+            "course": "UNIXops", "overrides": {"not-dotted": True},
+        })
+        self.assertEqual(response.status_code, 400)
+        self.assertEqual(response.json()["error"]["code"], "invalid_override")
+
+    async def test_start_run_rejects_option_like_course(self):
+        response = await self.request("POST", "/api/v1/runs", json={"course": "--help"})
+        self.assertEqual(response.status_code, 400)
+        self.assertEqual(response.json()["error"]["code"], "invalid_argument")
+
+    async def test_start_run_rejects_missing_input_file(self):
+        response = await self.request("POST", "/api/v1/runs", json={
+            "course": "UNIXops", "input_file": "/definitely/missing/audio.ogg",
+        })
+        self.assertEqual(response.status_code, 400)
+        self.assertEqual(response.json()["error"]["code"], "input_file_not_found")
+
+    async def test_force_stop_invokes_cli(self):
+        response = await self.request(
+            "POST", "/api/v1/runs/stop", json={"force": True},
+        )
+        self.assertEqual(response.status_code, 202)
+        self.assertEqual(response.json()["operation"], "stop")
+        self.assertTrue(response.json()["force"])
+        self.assertEqual(self.client.stop_calls, [True])
+
+    async def test_summarize_builds_fixed_cli_arguments(self):
+        session = self.make_session()
+        response = await self.request(
+            "POST", f"/api/v1/sessions/{session.name}/summarize",
+            json={"redo": "all", "model": "future-14b", "course": "UNIXops"},
+        )
+        self.assertEqual(response.status_code, 202)
+        self.assertEqual(response.json()["operation"], "summarize")
+        self.assertEqual(self.launcher.calls, [(
+            "summarize", str(session.resolve()), "--redo", "all",
+            "--model", "future-14b", "--course", "UNIXops",
+        )])
 
     async def test_status_stream_emits_sse_status_event(self):
         stream = _status_events(DisconnectAfter(), self.client, 0.001)

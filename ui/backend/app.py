@@ -7,8 +7,12 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse, StreamingResponse
 
 from .cli_client import LecClient, LecCommandError
+from .process_control import (ControlError, LecProcessLauncher,
+                              ProcessController)
 from .schemas import (ApiErrorResponse, CourseSummary, HealthResponse,
-                      RuntimeStatusResponse, SessionDetail, SessionSummary)
+                      ProcessActionResponse, RunStartRequest,
+                      RuntimeStatusResponse, SessionDetail, SessionSummary,
+                      StopRequest, SummarizeRequest)
 from .session_store import SessionStore, SessionStoreError
 from .settings import BackendSettings
 
@@ -67,10 +71,12 @@ async def _session_events(request, sessions, session_id, interval, initial=None)
         await asyncio.sleep(interval)
 
 
-def create_app(settings=None, client=None, sessions=None):
+def create_app(settings=None, client=None, sessions=None, launcher=None):
     settings = settings or BackendSettings.from_env()
     client = client or LecClient.for_repo(settings.repo_root, settings.cli_timeout)
     sessions = sessions or SessionStore.from_settings(settings)
+    launcher = launcher or LecProcessLauncher.for_client(client, settings.process_log)
+    controller = ProcessController(client, launcher, sessions, settings.repo_root)
     app = FastAPI(
         title="Lecture Notes UI API",
         version="1.0.0",
@@ -80,11 +86,12 @@ def create_app(settings=None, client=None, sessions=None):
     app.state.settings = settings
     app.state.lec_client = client
     app.state.sessions = sessions
+    app.state.controller = controller
     app.add_middleware(
         CORSMiddleware,
         allow_origins=["http://127.0.0.1:5173", "http://localhost:5173"],
         allow_credentials=False,
-        allow_methods=["GET"],
+        allow_methods=["GET", "POST"],
         allow_headers=["*"],
     )
 
@@ -95,6 +102,10 @@ def create_app(settings=None, client=None, sessions=None):
 
     @app.exception_handler(SessionStoreError)
     async def session_error_handler(_request, exc):
+        return JSONResponse(status_code=exc.status_code, content={"error": exc.as_detail()})
+
+    @app.exception_handler(ControlError)
+    async def control_error_handler(_request, exc):
         return JSONResponse(status_code=exc.status_code, content={"error": exc.as_detail()})
 
     @app.get("/api/v1/health", response_model=HealthResponse)
@@ -117,6 +128,26 @@ def create_app(settings=None, client=None, sessions=None):
     async def courses(request: Request):
         return await request.app.state.lec_client.courses()
 
+    @app.post(
+        "/api/v1/runs", response_model=ProcessActionResponse,
+        response_model_exclude_none=True, status_code=202,
+        responses={400: {"model": ApiErrorResponse}, 409: {"model": ApiErrorResponse},
+                   502: {"model": ApiErrorResponse}, 503: {"model": ApiErrorResponse}},
+    )
+    async def run_start(payload: RunStartRequest, request: Request):
+        return await request.app.state.controller.start_run(
+            payload.course, input_file=payload.input_file, model=payload.model,
+            source=payload.source, overrides=payload.overrides,
+        )
+
+    @app.post(
+        "/api/v1/runs/stop", response_model=ProcessActionResponse,
+        response_model_exclude_none=True, status_code=202,
+        responses={502: {"model": ApiErrorResponse}, 503: {"model": ApiErrorResponse}},
+    )
+    async def run_stop(payload: StopRequest, request: Request):
+        return await request.app.state.controller.stop(force=payload.force)
+
     @app.get(
         "/api/v1/sessions", response_model=list[SessionSummary],
         response_model_exclude_none=True,
@@ -133,6 +164,21 @@ def create_app(settings=None, client=None, sessions=None):
     )
     async def session_detail(session_id: str, request: Request):
         return request.app.state.sessions.get(session_id)
+
+    @app.post(
+        "/api/v1/sessions/{session_id}/summarize",
+        response_model=ProcessActionResponse, response_model_exclude_none=True,
+        status_code=202,
+        responses={400: {"model": ApiErrorResponse}, 404: {"model": ApiErrorResponse},
+                   409: {"model": ApiErrorResponse}, 502: {"model": ApiErrorResponse},
+                   503: {"model": ApiErrorResponse}},
+    )
+    async def session_summarize(
+        session_id: str, payload: SummarizeRequest, request: Request,
+    ):
+        return await request.app.state.controller.summarize(
+            session_id, redo=payload.redo, model=payload.model, course=payload.course,
+        )
 
     @app.get(
         "/api/v1/sessions/{session_id}/stream", response_class=StreamingResponse,

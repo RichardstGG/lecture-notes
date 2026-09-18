@@ -193,3 +193,7 @@ class SessionStore:
             "transcript": self._content_file(path / "transcript.md"),
             "notes": self._content_file(path / "notes.md"),
         }
+
+    def path_for(self, session_id):
+        """Resolve an existing safe session for fixed CLI operations."""
+        return self._session_dir(session_id)
