@@ -13,6 +13,7 @@ import urllib.error
 import urllib.request
 from pathlib import Path
 
+from . import platform as P
 from .util import log, pid_alive, read_json, write_json
 
 
@@ -111,8 +112,8 @@ class ManagedServer:
         fh = open(self.log_path, "a", encoding="utf-8")
         # start_new_session：Ctrl+C 不會直接打斷 server，等收尾時再關
         proc = subprocess.Popen(self.build_cmd(), stdout=fh, stderr=subprocess.STDOUT,
-                                stdin=subprocess.DEVNULL, start_new_session=True,
-                                env=self._env(binary))
+                                stdin=subprocess.DEVNULL, env=self._env(binary),
+                                **P.spawn_kwargs())
         fh.close()
         self.pid, self.owned = proc.pid, True
         self.own_file.parent.mkdir(parents=True, exist_ok=True)
@@ -122,40 +123,31 @@ class ManagedServer:
         log(f"▶ {self.name} 就緒（{self.backend_note(binary)}）")
 
     def backend_note(self, binary):
-        """確認是否使用 Vulkan：先看 log；新版靜態編譯的 llama-server 啟動時不一定印出，改問 --list-devices。"""
+        """確認用了哪個 GPU 後端：先看 log，新版靜態編譯不一定印出，改問 --list-devices。"""
         for _ in range(3):
             try:
-                if "vulkan" in self.log_path.read_text(encoding="utf-8", errors="replace").lower():
-                    return "Vulkan 已啟用"
+                text = self.log_path.read_text(encoding="utf-8", errors="replace").lower()
+                for kind in ("vulkan", "cuda", "metal", "rocm"):
+                    if kind in text:
+                        return f"{kind.capitalize()} 已啟用"
             except OSError:
                 pass
             time.sleep(1)
         try:
             out = subprocess.run([str(binary), "--list-devices"], capture_output=True, text=True,
-                                 timeout=20, env=self._env(binary))
+                                 errors="replace", timeout=30, env=self._env(binary))
             devs = [l.strip() for l in (out.stdout + out.stderr).splitlines()
-                    if l.strip().lower().startswith("vulkan")]
+                    if l.strip().lower().startswith(("vulkan", "cuda", "metal", "rocm"))]
             if devs:
-                return f"Vulkan：{devs[0]}"
+                return f"GPU：{devs[0]}"
         except (OSError, subprocess.TimeoutExpired):
             pass
-        return "⚠ 沒偵測到 Vulkan，可能在跑純 CPU"
+        return "⚠ 沒偵測到 GPU 後端，可能在跑純 CPU"
 
     @staticmethod
     def _env(binary):
-        """把 build 內的共用函式庫資料夾加進 LD_LIBRARY_PATH。
-        whisper.cpp / llama.cpp 預設編成 .so，RPATH 寫死編譯時的絕對路徑；
-        整個資料夾搬家後不重新編譯也能找到 libggml*.so。"""
-        env = os.environ.copy()
-        build = Path(binary).resolve().parent.parent
-        try:
-            dirs = sorted({str(p.parent) for p in build.rglob("lib*.so*")})
-        except OSError:
-            dirs = []
-        if dirs:
-            old = env.get("LD_LIBRARY_PATH")
-            env["LD_LIBRARY_PATH"] = ":".join(dirs + ([old] if old else []))
-        return env
+        """動態連結時把 build 內的函式庫資料夾加進搜尋路徑（搬家或預編譯檔都能跑）。"""
+        return P.env_with_libs(binary)
 
     def _wait_ready(self, proc=None):
         deadline = time.time() + self.startup_timeout
@@ -177,22 +169,7 @@ class ManagedServer:
 
     @staticmethod
     def _kill(pid, timeout=15):
-        for sig in (signal.SIGTERM, signal.SIGKILL):
-            try:
-                os.killpg(pid, sig)
-            except ProcessLookupError:
-                return
-            except PermissionError:
-                os.kill(pid, sig)
-            end = time.time() + (timeout if sig == signal.SIGTERM else 5)
-            while time.time() < end:
-                try:                       # 若是自己的子程序要回收，避免殭屍
-                    os.waitpid(pid, os.WNOHANG)
-                except ChildProcessError:
-                    pass
-                if not pid_alive(pid):
-                    return
-                time.sleep(0.3)
+        P.kill_tree(pid, timeout)
 
     def stop(self):
         if self.owned and self.pid:
@@ -204,10 +181,7 @@ class ManagedServer:
     def kill_now(self):
         """強制結束時用：不等待。"""
         if self.owned and self.pid:
-            try:
-                os.killpg(self.pid, signal.SIGKILL)
-            except OSError:
-                pass
+            P.kill_now(self.pid)
             self.own_file.unlink(missing_ok=True)
 
 
@@ -223,7 +197,7 @@ class WhisperServer(ManagedServer):
         self.lang, self.threads = w["language"], w["threads"]
 
     def binary(self):
-        return self.whisper_dir / "build" / "bin" / "whisper-server"
+        return P.find_engine_bin(self.whisper_dir, "whisper-server")
 
     def build_cmd(self):
         return [str(self.binary()), "-m", self.model_path, "-l", self.lang,
@@ -243,7 +217,7 @@ class LlamaServer(ManagedServer):
         self.l = l
 
     def binary(self):
-        return self.llama_dir / "build" / "bin" / "llama-server"
+        return P.find_engine_bin(self.llama_dir, "llama-server")
 
     def build_cmd(self):
         return [str(self.binary()), "-m", self.model_path, "-ngl", str(self.l["ngl"]),

@@ -85,20 +85,8 @@ def read_json(path, default=None):
 
 
 def pid_alive(pid):
-    if not pid:
-        return False
-    try:
-        os.kill(int(pid), 0)
-    except ProcessLookupError:
-        return False
-    except PermissionError:
-        return True
-    # 殭屍程序也算已結束
-    try:
-        with open(f"/proc/{int(pid)}/stat") as f:
-            return f.read().split(")")[-1].split()[0] != "Z"
-    except OSError:
-        return True
+    from .platform import pid_alive as _alive      # 平台差異在 core/platform.py
+    return _alive(pid)
 
 
 def die(msg, code=1):

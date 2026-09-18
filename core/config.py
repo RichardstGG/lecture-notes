@@ -183,6 +183,11 @@ class Config:
             cur = cur[p]
         return cur
 
+    def state_dir(self):
+        v = self.data["paths"]["state_dir"]
+        from .platform import default_state_dir
+        return default_state_dir() if v in ("", "auto") else self.path(v)
+
     @staticmethod
     def path(value):
         p = Path(str(value)).expanduser()

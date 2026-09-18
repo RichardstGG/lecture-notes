@@ -1,62 +1,43 @@
-"""錄音來源（PulseAudio / PipeWire）列表與測試。"""
-import json
+"""錄音來源列表與音量測試（平台差異在 core/platform.py）。"""
 import re
-import shutil
 import subprocess
 
-
-def list_sources(include_monitors=False):
-    """回傳 [{index, name, description, state}]；沒有 pactl 時回傳 None。"""
-    if not shutil.which("pactl"):
-        return None
-    out = []
-    try:
-        r = subprocess.run(["pactl", "-f", "json", "list", "sources"], capture_output=True,
-                           text=True, timeout=10)
-        if r.returncode == 0 and r.stdout.strip().startswith("["):
-            for s in json.loads(r.stdout):
-                out.append({"index": s.get("index"), "name": s.get("name", ""),
-                            "description": s.get("description", ""),
-                            "state": str(s.get("state", "")).lower()})
-        else:
-            raise ValueError
-    except (ValueError, subprocess.TimeoutExpired, OSError):
-        out = []
-        r = subprocess.run(["pactl", "list", "short", "sources"], capture_output=True, text=True, timeout=10)
-        for line in r.stdout.splitlines():
-            parts = line.split("\t")
-            if len(parts) >= 2:
-                out.append({"index": int(parts[0]) if parts[0].isdigit() else parts[0], "name": parts[1],
-                            "description": "", "state": parts[-1].lower() if len(parts) >= 5 else ""})
-    if not include_monitors:
-        out = [s for s in out if not s["name"].endswith(".monitor")]
-    return out
+from . import platform as P
 
 
-def default_source():
-    if not shutil.which("pactl"):
-        return None
-    try:
-        r = subprocess.run(["pactl", "get-default-source"], capture_output=True, text=True, timeout=5)
-        return r.stdout.strip() or None
-    except (OSError, subprocess.TimeoutExpired):
-        return None
+def list_sources(include_monitors=False, backend=None):
+    """回傳 [{id, name, description, state}]；無法列出時回傳 None。"""
+    return P.list_sources(backend, include_monitors=include_monitors)
 
 
-def resolve(choice, sources):
-    """編號或名稱 → pulse 來源名稱。"""
-    for s in sources or []:
-        if str(s["index"]) == str(choice) or s["name"] == choice:
-            return s["name"]
+def default_source(backend=None):
+    return P.default_source(backend)
+
+
+def resolve(choice, sources=None, backend=None):
+    """編號 / 名稱 / id → 要存進設定的 id；找不到回傳 None。"""
+    rows = sources if sources is not None else (P.list_sources(backend) or [])
+    for i, s in enumerate(rows):
+        if choice in (s["id"], s["name"]) or str(choice) == str(s.get("index", i)):
+            return s["id"]
     return None
 
 
-def test_volume(source, seconds=3):
+def hint():
+    """列不出裝置時給使用者的建議。"""
+    return {"pulse": "請安裝 pactl（Debian/Ubuntu：sudo apt install pulseaudio-utils）",
+            "avfoundation": "請確認已安裝 ffmpeg（brew install ffmpeg），並在系統設定允許終端機使用麥克風",
+            "dshow": "請確認已安裝 ffmpeg 並在 PATH 中"}.get(P.audio_backend(), "")
+
+
+def test_volume(source, seconds=3, backend=None):
     """錄幾秒，回傳 (mean_db, max_db)；失敗回傳 (None, 錯誤訊息)。"""
-    cmd = ["ffmpeg", "-hide_banner", "-nostdin", "-f", "pulse", "-i", source, "-t", str(seconds),
-           "-af", "volumedetect", "-f", "null", "-"]
+    target = P.resolve_source(source, backend)
+    cmd = ["ffmpeg", "-hide_banner", "-nostdin", *P.ffmpeg_input(target, backend),
+           "-t", str(seconds), "-af", "volumedetect", "-f", "null", "-"]
     try:
-        r = subprocess.run(cmd, capture_output=True, text=True, timeout=seconds + 15)
+        r = subprocess.run(cmd, capture_output=True, text=True, errors="replace",
+                           timeout=seconds + 20)
     except (OSError, subprocess.TimeoutExpired) as e:
         return None, str(e)
     mean = re.search(r"mean_volume:\s*(-?[\d.]+|-inf) dB", r.stderr)

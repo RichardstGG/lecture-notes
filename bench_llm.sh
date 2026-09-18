@@ -17,7 +17,7 @@ read -r -a MODELS <<< "${MODELS:-Qwen3-8B-Q4_K_M.gguf}"
 OUT_DIR="$OUTPUTS/_llm-bench/$(date +%Y%m%d_%H%M%S)"
 
 SERVER_BIN="$LLAMA_DIR/build/bin/llama-server"
-[[ -x "$SERVER_BIN" ]] || { echo "找不到 $SERVER_BIN，請先執行 ./setup_engines.sh llama" >&2; exit 1; }
+[[ -x "$SERVER_BIN" ]] || { echo "找不到 $SERVER_BIN，請先執行 python3 setup_engines.py llama" >&2; exit 1; }
 
 # ---- 找逐字稿 ----
 TRANSCRIPT="${1:-}"

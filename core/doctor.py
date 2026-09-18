@@ -8,6 +8,7 @@ from pathlib import Path
 
 from . import config as C
 from . import devices
+from . import platform as P
 from .servers import LlamaServer, WhisperServer, http_get
 
 OK, WARN, FAIL = "✔", "⚠", "✖"
@@ -42,12 +43,16 @@ def run(course=None, sets=(), mic=False):
 
     # ---- 系統
     add(OK if sys.version_info >= (3, 11) else FAIL, "Python", platform.python_version())
-    add(OK if sys.platform.startswith("linux") else WARN, "作業系統",
-        f"{platform.system()} {platform.release()}" + ("" if sys.platform.startswith("linux") else "（目前只支援 Linux）"))
-    for cmd, need, why in (("ffmpeg", True, "錄音與解碼"), ("curl", True, "呼叫 whisper-server"),
-                           ("pactl", False, "列出麥克風（lec devices）"),
-                           ("opencc", False, "台灣繁體用語轉換"),
-                           ("systemd-inhibit", False, "上課時阻止休眠"), ("git", False, "setup_engines.sh")):
+    tested = {"linux": "已實測", "macos": "實驗中", "windows": "實驗中"}[P.NAME]
+    add(OK if P.NAME == "linux" else WARN, "作業系統", f"{P.describe()}｜{tested}")
+    add(OK, "錄音後端", P.audio_backend())
+    tools = [("ffmpeg", True, "錄音與解碼"), ("opencc", False, "台灣繁體用語轉換"),
+             ("git", False, "setup_engines.py 取得原始碼"), ("cmake", False, "編譯引擎")]
+    if P.NAME == "linux":
+        tools += [("pactl", False, "列出麥克風"), ("systemd-inhibit", False, "上課時阻止休眠")]
+    elif P.NAME == "macos":
+        tools += [("caffeinate", False, "上課時阻止休眠")]
+    for cmd, need, why in tools:
         p = shutil.which(cmd)
         add(OK if p else (FAIL if need else WARN), cmd, p or f"找不到（{why}）")
 
@@ -68,11 +73,11 @@ def run(course=None, sets=(), mic=False):
     for srv, key, d in ((w, "WHISPER_REF", w.whisper_dir), (l, "LLAMA_REF", l.llama_dir)):
         b = Path(srv.binary())
         if not os.access(b, os.X_OK):
-            add(FAIL, srv.name, f"找不到 {b}（執行 ./setup_engines.sh）")
+            add(FAIL, srv.name, f"找不到 {b}（執行 python3 setup_engines.py）")
             continue
         head, want = git_head(d), lock.get(key)
         if want and head and head != want:
-            add(WARN, srv.name, f"版本 {head[:9]} 與 engines.lock 的 {want[:9]} 不同（./setup_engines.sh 會切回）")
+            add(WARN, srv.name, f"版本 {head[:9]} 與 engines.lock 的 {want[:9]} 不同（setup_engines.py 會切回）")
         else:
             add(OK, srv.name, f"{b}" + (f"（{head[:9]}）" if head else ""))
     for label, path in (("whisper 模型", Path(cfg.whisper_model_path())),
@@ -101,7 +106,7 @@ def run(course=None, sets=(), mic=False):
 
     # ---- 資料夾
     for label, p in (("輸出資料夾", cfg.path(cfg["paths"]["output_root"])),
-                     ("狀態資料夾", cfg.path(cfg["paths"]["state_dir"]))):
+                     ("狀態資料夾", cfg.state_dir())):
         try:
             p.mkdir(parents=True, exist_ok=True)
             ok = os.access(p, os.W_OK)
@@ -111,16 +116,19 @@ def run(course=None, sets=(), mic=False):
 
     # ---- 麥克風
     source = cfg.audio_source()
-    sources = devices.list_sources()
+    backend = cfg["audio"].get("backend")
+    sources = devices.list_sources(backend=backend)
     if sources is None:
-        add(WARN, "麥克風", f"{source}（沒有 pactl，無法確認是否存在）")
-    elif source != "default" and source not in [s["name"] for s in sources]:
+        add(WARN, "麥克風", f"{source}（無法列出裝置：{devices.hint()}）")
+    elif source not in ("default", "") and source not in [s["id"] for s in sources] \
+            and source not in [s["name"] for s in sources]:
         add(FAIL, "麥克風", f"設定的來源 {source} 不存在；用 lec devices 查詢並 --save")
     else:
-        shown = source if source != "default" else f"default → {devices.default_source() or '?'}"
+        shown = source if source not in ("default", "") else \
+            f"default → {devices.default_source(backend) or '?'}"
         add(OK, "麥克風", shown)
     if mic:
-        mean, peak = devices.test_volume(source)
+        mean, peak = devices.test_volume(source, backend=backend)
         if mean is None:
             add(FAIL, "錄音測試", str(peak))
         else:

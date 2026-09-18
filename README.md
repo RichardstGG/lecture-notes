@@ -2,53 +2,88 @@
 
 課堂錄音 → whisper.cpp 即時逐字稿 → llama.cpp 每 5 分鐘總結 → Obsidian Markdown，全部在本機執行。
 
-Repo：<https://github.com/RichardstGG/lecture-notes>（目前為 private）
+Repo：<https://github.com/RichardstGG/lecture-notes>
+
+## 平台支援
+
+| 平台 | 錄音 | GPU 後端 | 狀態 |
+|---|---|---|---|
+| Linux（PulseAudio / PipeWire） | pulse | Vulkan | 已實測（Debian 13、Intel Arc 140V） |
+| macOS | avfoundation | Metal | 程式已支援，實測中 |
+| Windows | dshow | Vulkan（可改 CUDA） | 程式已支援，實測中 |
+
+共同需求：Python 3.11+、ffmpeg、git、cmake，以及 C++ 編譯環境。
 
 ## 安裝
 
-需要：Linux（PulseAudio / PipeWire）、Python 3.11+、ffmpeg、curl；GPU 建議支援 Vulkan。
-實測環境：Debian 13、Intel Core Ultra 7 258V（Arc 140V，Vulkan）。
-
 ```bash
-# 1. 取得程式（private repo 需先 gh auth login，或改用 SSH：git@github.com:RichardstGG/lecture-notes.git）
 git clone https://github.com/RichardstGG/lecture-notes.git ~/lecture-notes
 cd ~/lecture-notes
+```
 
-# 2. 系統套件
+**1. 系統套件**
+
+```bash
+# Linux（Debian / Ubuntu）
 sudo apt install ffmpeg curl pulseaudio-utils opencc \
                  git cmake build-essential pkg-config libvulkan-dev glslc vulkan-tools
 
-# 3. 編譯 whisper.cpp / llama.cpp（依 engines.lock 的版本）並下載 whisper 模型
-./setup_engines.sh
+# macOS
+xcode-select --install && brew install cmake ffmpeg opencc
 
-# 4. 下載 LLM 模型（Qwen 官方 GGUF，約 5GB）
+# Windows（PowerShell；另需 Visual Studio Build Tools 的「C++ 桌面開發」與 Vulkan SDK）
+winget install Git.Git Kitware.CMake Gyan.FFmpeg Python.Python.3.13
+winget install LunarG.VulkanSDK
+```
+
+**2. 編譯引擎並取得 whisper 模型**
+
+```bash
+python3 setup_engines.py            # Linux/macOS；Windows 用 python setup_engines.py
+```
+
+後端預設 Linux/Windows 為 Vulkan、macOS 為 Metal；要用 NVIDIA CUDA 加 `--backend cuda`（需 CUDA Toolkit）。
+
+**3. 下載 LLM 模型（Qwen 官方 GGUF，約 5GB）**
+
+```bash
 curl -L -C - -o models/Qwen3-8B-Q4_K_M.gguf \
   https://huggingface.co/Qwen/Qwen3-8B-GGUF/resolve/main/Qwen3-8B-Q4_K_M.gguf
+```
 
-# 5. 放進 PATH、設定麥克風、檢查環境
-ln -s ~/lecture-notes/lec ~/.local/bin/lec
-lec devices                     # 找到麥克風編號
+**4. 設定麥克風並檢查環境**
+
+```bash
+ln -s ~/lecture-notes/lec ~/.local/bin/lec   # Linux/macOS；Windows 用 python lec …
+lec devices                     # 列出麥克風
 lec devices --test <編號>        # 錄 3 秒看音量
 lec devices --save <編號>        # 寫入 config/local.toml
 lec doctor --mic                # 全部 ✔ 就可以上課了
-
-# 6. 建立課程設定
-lec new 計算機概論 --from UNIXops  # 或 lec new 計算機概論 從空白範本開始
+lec new 計算機概論 --from UNIXops  # 建立課程設定
 ```
 
-更新程式：`git pull`，若 `engines.lock` 有變動再執行一次 `./setup_engines.sh`。
+更新程式：`git pull`，若 `engines.lock` 有變動再執行一次 `setup_engines.py`。
+
+### Windows 預編譯檔（不想裝編譯環境時）
+
+llama.cpp 官方有 Windows Vulkan / CUDA 版，whisper.cpp 官方只有 CPU 與 cuBLAS 版（且只有部分 release 附執行檔，例如 v1.9.0）。
+手動下載後把執行檔與 DLL 放進 `llama.cpp/build/bin/` 與 `whisper.cpp/build/bin/`，`lec doctor` 就能找到：
+
+- <https://github.com/ggml-org/llama.cpp/releases>：`llama-<版本>-bin-win-vulkan-x64.zip`
+- <https://github.com/ggml-org/whisper.cpp/releases/tag/v1.9.0>：`whisper-bin-x64.zip`（CPU）或 `whisper-cublas-12.4.0-bin-x64.zip`（NVIDIA）
 
 ### 目錄結構
 
 ```
 ~/lecture-notes/
 ├─ lec, core/, prompts/          程式
+├─ setup_engines.py              取得與編譯引擎
 ├─ config/default.toml           全域預設（進 git）
 ├─ config/local.toml             這台電腦專屬：麥克風、路徑…（不進 git，範例 local.example.toml）
 ├─ courses/<課名>.toml            你的課程設定（不進 git）
 ├─ courses/examples/             課程設定範例（進 git）
 ├─ engines.lock                  已測試的 whisper.cpp / llama.cpp 版本（進 git）
-├─ whisper.cpp/  llama.cpp/      由 setup_engines.sh 取得與編譯（不進 git）
+├─ whisper.cpp/  llama.cpp/      由 setup_engines.py 取得與編譯（不進 git）
 ├─ models/                       LLM 模型 .gguf（不進 git）
 └─ outputs/<課名>_<YYYYMMDD>/     每堂課的輸出（不進 git）
 ```
@@ -57,15 +92,15 @@ lec new 計算機概論 --from UNIXops  # 或 lec new 計算機概論 從空白�
 
 | 指令 | 說明 |
 |---|---|
-| `./setup_engines.sh` | checkout `engines.lock` 的版本並編譯；同版本已編好就略過 |
-| `./setup_engines.sh --update` | 升級到最新版，編譯成功後寫回 `engines.lock`（測試沒問題再 commit） |
-| `./setup_engines.sh --rebuild` | 版本不變，強制重新編譯 |
-| `./setup_engines.sh --lock` | 不編譯，把目前的版本記進 `engines.lock` |
-| `./setup_engines.sh --import-models <資料夾>` | 從其他位置搬入已下載的模型 |
-| `VULKAN=OFF ./setup_engines.sh` | 編純 CPU 版 |
+| `setup_engines.py` | checkout `engines.lock` 的版本並編譯；同版本已編好就略過 |
+| `setup_engines.py --update` | 升級到最新版，編譯成功後寫回 `engines.lock`（測試沒問題再 commit） |
+| `setup_engines.py --rebuild` | 版本或後端不變，強制重新編譯 |
+| `setup_engines.py --lock` | 不編譯，把目前的版本記進 `engines.lock` |
+| `setup_engines.py --backend vulkan\|cuda\|metal\|cpu` | 指定後端（預設依平台） |
+| `setup_engines.py --import-models <資料夾>` | 從其他位置搬入已下載的模型 |
 
 以 `BUILD_SHARED_LIBS=OFF` 靜態連結，整個專案資料夾搬到哪裡都能執行。
-基準測試：`./bench_llm.sh [逐字稿.md] [第幾段]`（預設只測 8B），結果在 `outputs/_llm-bench/`。
+基準測試：`./bench_llm.sh [逐字稿.md] [第幾段]`（bash 腳本，Linux / macOS 可用），結果在 `outputs/_llm-bench/`。
 
 `--file` 可用任何 ffmpeg 能解碼的檔案：mp3、m4a/aac、wav、flac、ogg/opus、wma、webm，以及 mp4/mkv/mov 等影片（自動取音軌）。
 
@@ -85,10 +120,13 @@ lec new 計算機概論 --from UNIXops  # 或 lec new 計算機概論 從空白�
 | `lec doctor [課名] [--mic]` | 檢查環境（回報問題請附上輸出，`--json` 給 UI） |
 | `lec status` / `lec stop` | 查看 / 停止目前的執行（`--json`、`--force`） |
 
-Ctrl+C 行為：
-- 錄音中按一次：停止錄音，轉完剩餘段落，再補做最後一段總結（最多等 `summary.final_wait` 秒）。
-- 補做總結時再按：放棄總結，正常收尾（之後可用 `lec summarize` 補）。
-- 轉錄剩餘段落時再按：強制結束。
+停止方式（Ctrl+C 與 `lec stop` 等效，三個平台相同）：
+- 錄音中一次：停止錄音，轉完剩餘段落，再補做最後一段總結（最多等 `summary.final_wait` 秒）。
+- 補做總結時再一次：放棄總結，正常收尾（之後可用 `lec summarize` 補）。
+- 轉錄剩餘段落時再一次：強制結束。
+
+`lec stop` 是在輸出資料夾寫 `stop` 檔（`--force` 寫 `stop_force`），程式每秒檢查一次。
+Windows 無法對別的行程送 Ctrl+C，所以 UI 與腳本一律用這個方式停止。
 
 ## 設定
 
@@ -129,8 +167,8 @@ extra_instructions = "本課程著重網路概念，重點請保留協定名稱�
 ## 給 UI 的介面（UI 不 import core）
 
 - **設定**：讀寫 `courses/*.toml`、`config/local.toml`；`lec courses --json` 列出課程；`lec config 課名` 看合併結果；`lec devices --json` 列出麥克風；`lec doctor --json` 環境檢查。
-- **啟動 / 停止**：subprocess 執行 `lec run …`；停止送 SIGINT 給 `lec status --json` 的 `pid`（或執行 `lec stop`）。
-- **狀態**：`~/.local/state/lecture-notes/run.json`（是否執行中、輸出資料夾）、`<資料夾>/status.json`：
+- **啟動 / 停止**：subprocess 執行 `lec run …`；停止在輸出資料夾寫 `stop`（或 `stop_force`）檔，也可執行 `lec stop`。不需要送訊號，三個平台一致。
+- **狀態**：`run.json`（是否執行中、輸出資料夾；位置見 `lec doctor` 的「狀態資料夾」，Linux 為 `~/.local/state/lecture-notes`）、`<資料夾>/status.json`：
 
 ```json
 {"phase": "recording", "mode": "live", "course": "…", "pid": 123,
@@ -155,10 +193,13 @@ core/summarize.py   分段總結、驗證、notes.md
 core/status.py      status.json / events.jsonl / 執行鎖
 core/devices.py     錄音來源列表與音量測試
 core/doctor.py      環境檢查
+core/platform.py    平台差異（錄音後端、防休眠、狀態資料夾、行程管理）
 ```
 
 ## 開發
 
 - 分支：`main`。只提交程式、`config/default.toml`、`config/template.toml`、`courses/examples/`、`prompts/`、`engines.lock`；本機設定與輸出已由 `.gitignore` 排除。
-- 升級引擎：`./setup_engines.sh --update` → `lec run 課名 --file <錄音>` 與 `./bench_llm.sh` 確認沒問題 → `git commit engines.lock`。
+- 升級引擎：`python3 setup_engines.py --update` → `lec run 課名 --file <錄音>` 與 `./bench_llm.sh` 確認沒問題 → `git commit engines.lock`。
 - 回報問題時附上 `lec doctor --json` 與該堂課的 `session.log`。
+- 授權：MIT（見 LICENSE）。whisper.cpp、llama.cpp 為 MIT，Qwen3 模型為 Apache-2.0，皆在執行時自行取得。
+- 錄音前請先取得老師或學校同意；錄音與逐字稿只留在本機。

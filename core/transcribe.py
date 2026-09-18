@@ -13,11 +13,15 @@ import subprocess
 import sys
 import threading
 import time
+import urllib.error
+import urllib.request
+import uuid
 import wave
 from collections import deque
 from datetime import datetime
 from pathlib import Path
 
+from . import platform as P
 from .util import hms, log, opencc_available, opencc_convert
 
 SR = 16000
@@ -295,17 +299,37 @@ def decode_srt(raw):
     return "\n\n".join(out) + "\n"
 
 
+def _multipart(fields, file_field, file_path):
+    """自己組 multipart/form-data（只用標準函式庫，不依賴 curl）。"""
+    boundary = "----lec" + uuid.uuid4().hex
+    out = bytearray()
+    for k, v in fields.items():
+        out += (f"--{boundary}\r\nContent-Disposition: form-data; name=\"{k}\"\r\n\r\n"
+                f"{v}\r\n").encode("utf-8")
+    name = Path(file_path).name
+    out += (f"--{boundary}\r\nContent-Disposition: form-data; name=\"{file_field}\"; "
+            f"filename=\"{name}\"\r\nContent-Type: audio/wav\r\n\r\n").encode("utf-8")
+    out += Path(file_path).read_bytes()
+    out += f"\r\n--{boundary}--\r\n".encode("utf-8")
+    return bytes(out), f"multipart/form-data; boundary={boundary}"
+
+
 def transcribe_request(server, wav_path, prompt):
-    cmd = ["curl", "-sS", "--fail", "--max-time", "300", f"{server}/inference",
-           "-F", f"file=@{wav_path}", "-F", "response_format=srt",
-           "-F", "temperature=0.0", "-F", f"prompt={prompt}"]
+    """送到 whisper-server /inference。以位元組讀取回應：
+    whisper 輸出可能含被拆開的 UTF-8 字元，交給 decode_srt 修復。"""
+    body, ctype = _multipart({"response_format": "srt", "temperature": "0.0",
+                              "prompt": prompt}, "file", wav_path)
+    req = urllib.request.Request(f"{server}/inference", data=body,
+                                 headers={"Content-Type": ctype})
     for attempt in range(3):
-        # start_new_session：Ctrl+C 不會打斷正在進行的轉錄請求
-        # 以位元組讀取：whisper 輸出可能含被拆開的 UTF-8 字元，交給 decode_srt 修復
-        r = subprocess.run(cmd, capture_output=True, start_new_session=True)
-        if r.returncode == 0 and not r.stdout.lstrip().startswith(b"{"):
-            return decode_srt(r.stdout)
-        err = (r.stderr or r.stdout).decode("utf-8", "replace").strip()
+        try:
+            with urllib.request.urlopen(req, timeout=300) as r:
+                raw = r.read()
+            if not raw.lstrip().startswith(b"{"):
+                return decode_srt(raw)
+            err = raw.decode("utf-8", "replace").strip()
+        except (urllib.error.URLError, OSError, TimeoutError) as e:
+            err = str(e)
         log(f"  ⚠ 轉錄請求失敗（第 {attempt + 1} 次）: {err[:200]}")
         time.sleep(2)
     return ""
@@ -351,7 +375,13 @@ class Transcriber:
         if self.live:
             log("▶ 停止錄音，處理剩餘音訊中…（再按一次 Ctrl+C 強制結束）")
             if self.proc and self.proc.poll() is None:
-                self.proc.send_signal(signal.SIGINT)     # 讓 ffmpeg 正常寫完 ogg
+                try:      # 讓 ffmpeg 正常寫完 ogg；Windows 無法送 SIGINT，只能終止
+                    if P.IS_WINDOWS:
+                        self.proc.terminate()
+                    else:
+                        self.proc.send_signal(signal.SIGINT)
+                except OSError:
+                    pass
         else:
             self.abort = True
             dropped = 0
@@ -416,8 +446,9 @@ class Transcriber:
     # -- 主流程
     def run(self):
         if self.live:
+            source = P.resolve_source(self.cfg.audio_source(), self.cfg["audio"].get("backend"))
             cmd = ["ffmpeg", "-hide_banner", "-loglevel", "error", "-nostdin",
-                   "-f", "pulse", "-i", self.cfg.audio_source(),
+                   *P.ffmpeg_input(source, self.cfg["audio"].get("backend")),
                    "-ac", "1", "-ar", str(SR), "-f", "s16le", "pipe:1"]
             if self.cfg["audio"]["keep_recording"]:
                 rec = self.session / f"recording_{datetime.now():%H%M%S}.ogg"
@@ -434,8 +465,8 @@ class Transcriber:
         if self.live:
             log(f"🎙 錄音中（{self.cfg['audio']['source']}）。按 Ctrl+C 結束。")
 
-        # start_new_session：由我們決定何時送 SIGINT 給 ffmpeg（UI 只會對 lec 的 pid 送訊號）
-        self.proc = subprocess.Popen(cmd, stdout=subprocess.PIPE, start_new_session=True)
+        # 讓 ffmpeg 不被終端機的 Ctrl+C 直接打斷，由我們決定何時停止它
+        self.proc = subprocess.Popen(cmd, stdout=subprocess.PIPE, **P.spawn_kwargs())
         if self.stopping and self.live:
             self.proc.send_signal(signal.SIGINT)
         buf = b""

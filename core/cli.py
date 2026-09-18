@@ -35,7 +35,7 @@ def _add_overrides(p):
 
 def _state_dir():
     cfg, _ = C.load(None)
-    return cfg.path(cfg["paths"]["state_dir"])
+    return cfg.state_dir()
 
 
 def _load(args, **kw):
@@ -152,30 +152,37 @@ def cmd_status(args):
 
 
 def cmd_stop(args):
+    """在輸出資料夾寫 stop / stop_force 檔（三個平台通用；UI 也用同一個方式）。"""
+    from . import platform as P
+    from .session import STOP_FILE, STOP_FORCE_FILE
     lock = RunLock(_state_dir())
     cur = lock.current()
     if not cur:
         print("目前沒有 lec 在執行")
         return 0
     pid = int(cur["pid"])
-    os.kill(pid, signal.SIGINT)
-    if args.force:
-        time.sleep(0.3)
-        os.kill(pid, signal.SIGINT)
-        print(f"✔ 已強制結束 pid {pid}")
+    session = Path(cur.get("session", "")) if cur.get("session") else None
+    if session and session.is_dir():
+        name = STOP_FORCE_FILE if args.force else STOP_FILE
+        (session / name).write_text("", encoding="utf-8")
+        print(f"✔ 已寫入停止要求（{session / name}）"
+              + ("，會立即結束" if args.force else "，會轉完剩餘段落、補做最後一段總結；最多 1 秒內反應"))
     else:
-        print(f"✔ 已送出停止訊號給 pid {pid}（會轉完剩餘段落、補做最後一段總結）")
+        if not P.interrupt(pid):
+            die(f"找不到輸出資料夾，也無法對 pid {pid} 送訊號（Windows 請改用 Ctrl+C）")
+        print(f"✔ 已送出停止訊號給 pid {pid}")
     return 0
 
 
 def cmd_devices(args):
     from . import devices
-    sources = devices.list_sources(include_monitors=args.all)
-    if sources is None:
-        die("找不到 pactl（sudo apt install pulseaudio-utils），無法列出錄音來源")
     cfg, _ = _load(args, course_arg=None)
+    backend = cfg["audio"].get("backend")
+    sources = devices.list_sources(include_monitors=args.all, backend=backend)
+    if sources is None:
+        die(f"無法列出錄音來源：{devices.hint()}")
     current = cfg.audio_source()
-    default = devices.default_source()
+    default = devices.default_source(backend)
     if args.json and not (args.test or args.save):
         print(json.dumps({"current": current, "default": default, "sources": sources},
                          ensure_ascii=False, indent=2))
@@ -183,12 +190,12 @@ def cmd_devices(args):
 
     target = args.save or args.test
     if target:
-        name = "default" if target == "default" else devices.resolve(target, sources)
+        name = "default" if target == "default" else devices.resolve(target, sources, backend)
         if not name:
             die(f"找不到來源 {target}（用 lec devices 看編號）")
         if args.test:
             print(f"▶ 錄音 3 秒測試：{name}（請說話）…")
-            mean, peak = devices.test_volume(name)
+            mean, peak = devices.test_volume(name, backend=backend)
             if mean is None:
                 die(f"測試失敗：{peak}")
             mark, msg = devices.judge_volume(mean)
@@ -199,11 +206,12 @@ def cmd_devices(args):
         return 0
 
     print(f"目前設定：{current}" + (f"（系統預設 → {default}）" if current == "default" else ""))
-    print(f"{'編號':>4}  {'狀態':<10} 來源")
-    for s in sources:
-        mark = "*" if s["name"] == current or (current == "default" and s["name"] == default) else " "
-        desc = f"  {s['description']}" if s["description"] else ""
-        print(f"{mark}{s['index']:>4}  {s['state']:<10} {s['name']}{desc}")
+    print(f"{'編號':>4}  來源")
+    for i, s in enumerate(sources):
+        mark = "*" if s["id"] in (current,) or (current in ("default", "") and s["id"] == default) else " "
+        desc = f"  {s['description']}" if s.get("description") else ""
+        state = f"  [{s['state']}]" if s.get("state") else ""
+        print(f"{mark}{s.get('index', i):>4}  {s['name']}{state}{desc}")
     print("\n測試：lec devices --test <編號>　設定：lec devices --save <編號>（寫入 config/local.toml）")
     return 0
 

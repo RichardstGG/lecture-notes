@@ -12,7 +12,7 @@ name = ""                     # 空白 = 用設定檔檔名
 [paths]
 output_root = "outputs"       # 相對路徑 = app 根目錄下
 session_name = "{course}_{date:%Y%m%d}"   # 每堂課的子資料夾名稱；同名已存在時自動加 _HHMM
-state_dir = "~/.local/state/lecture-notes"   # 執行鎖、server 擁有權紀錄
+state_dir = "auto"            # 執行鎖與 server 紀錄；auto = 各平台標準位置（Linux ~/.local/state/lecture-notes）
 whisper_dir = "whisper.cpp"   # 內含 build/bin/whisper-server
 llama_dir = "llama.cpp"       # 內含 build/bin/llama-server
 
@@ -23,6 +23,7 @@ status_interval = 2           # status.json 更新間隔（秒）
 
 # ---------------------------------------------------------------- 錄音
 [audio]
+backend = "auto"              # auto = 依作業系統（Linux pulse、macOS avfoundation、Windows dshow）
 source = "default"            # default = 系統預設麥克風；或 [audio.sources.*] 的名稱、pulse 來源全名
                               # 用 lec devices 列出可用來源，lec devices --save <編號> 存到 local.toml
 keep_recording = true         # 保留整堂錄音（ogg/opus 32k，3 小時約 45MB）

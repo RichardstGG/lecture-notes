@@ -8,6 +8,7 @@ import time
 from datetime import datetime
 from pathlib import Path
 
+from . import platform as P
 from .config import ConfigError
 from .servers import LlamaServer, ServerError, WhisperServer
 from .status import RunLock, Status
@@ -33,37 +34,7 @@ def make_session_dir(cfg):
     return d
 
 
-class SleepInhibitor:
-    """以 systemd-inhibit 持有鎖；子程序用 tail --pid 綁定 lec，lec 意外結束時自動釋放。"""
-
-    def __init__(self):
-        self.proc = None
-
-    def start(self, why):
-        if not shutil.which("systemd-inhibit"):
-            log("⚠ 找不到 systemd-inhibit，無法阻止休眠")
-            return
-        self.proc = subprocess.Popen(
-            ["systemd-inhibit", "--what=sleep:idle:handle-lid-switch", "--who=lec",
-             f"--why={why}", "--mode=block", "tail", f"--pid={os.getpid()}", "-f", "/dev/null"],
-            stdin=subprocess.DEVNULL, stdout=subprocess.DEVNULL, stderr=subprocess.PIPE,
-            start_new_session=True)
-        time.sleep(0.5)
-        if self.proc.poll() is not None:
-            err = self.proc.stderr.read().decode(errors="replace").strip()
-            log(f"⚠ 無法阻止休眠：{err[:200]}")
-            self.proc = None
-        else:
-            log("▶ 已阻止休眠 / 蓋螢幕休眠")
-
-    def stop(self):
-        if self.proc and self.proc.poll() is None:
-            self.proc.terminate()
-            try:
-                self.proc.wait(3)
-            except subprocess.TimeoutExpired:
-                self.proc.kill()
-        self.proc = None
+STOP_FILE, STOP_FORCE_FILE = "stop", "stop_force"
 
 
 class _Base:
@@ -74,13 +45,43 @@ class _Base:
         self.llama = None
         self.summarizer = None
         self.status = None
-        self.lock = RunLock(cfg.path(cfg["paths"]["state_dir"]))
-        self.inhibitor = SleepInhibitor()
+        self.lock = RunLock(cfg.state_dir())
+        self.inhibitor = P.Inhibitor()
         self.presses = 0
+        self._watcher = None
+        self._watch_stop = threading.Event()
 
     def _install_signals(self):
         signal.signal(signal.SIGINT, self._on_signal)
-        signal.signal(signal.SIGTERM, self._on_signal)
+        if not P.IS_WINDOWS:
+            signal.signal(signal.SIGTERM, self._on_signal)
+
+    def _start_stop_watcher(self):
+        """UI 與 lec stop 透過輸出資料夾的 stop / stop_force 檔要求停止
+        （Windows 無法對別的行程送 SIGINT，三個平台統一走檔案）。"""
+        def loop():
+            while not self._watch_stop.wait(1):
+                try:
+                    force, once = self.dir / STOP_FORCE_FILE, self.dir / STOP_FILE
+                    if force.exists():
+                        force.unlink(missing_ok=True)
+                        log("▶ 收到強制停止要求（stop_force）")
+                        self._force_exit()
+                    if once.exists():
+                        once.unlink(missing_ok=True)   # 用掉就刪，避免重複觸發
+                        log("▶ 收到停止要求（stop 檔）")
+                        self._on_signal(None, None)
+                except OSError:
+                    pass
+        self._watcher = threading.Thread(target=loop, daemon=True)
+        self._watcher.start()
+
+    def _clear_stop_files(self):
+        for name in (STOP_FILE, STOP_FORCE_FILE):
+            try:
+                (self.dir / name).unlink(missing_ok=True)
+            except OSError:
+                pass
 
     def _force_exit(self):
         log("✖ 強制結束")
@@ -106,7 +107,11 @@ class _Base:
         if self.status:
             self.status.set_server("llama", "ok")
 
+    def _stop_watcher(self):
+        self._watch_stop.set()
+
     def _cleanup(self):
+        self._stop_watcher()
         for srv, key in ((self.llama, "llama"), (self.whisper, "whisper")):
             if srv:
                 try:
@@ -165,6 +170,8 @@ class LectureRun(_Base):
         try:
             self.dir = make_session_dir(cfg)
             log.attach(self.dir / "session.log")
+            self._clear_stop_files()
+            self._start_stop_watcher()
             atomic_write(self.dir / "config.used.toml", cfg.dump())
             self.lock.update(session=str(self.dir))
             self.status = Status(self.dir, cfg["system"]["status_interval"],
@@ -177,7 +184,7 @@ class LectureRun(_Base):
             for w in cfg.warnings:
                 log(f"⚠ {w}")
             if cfg["system"]["inhibit_sleep"]:
-                self.inhibitor.start(f"lec：{cfg.course_name}")
+                self.inhibitor.start(f"lec：{cfg.course_name}", log)
 
             self.status.phase("loading")
             summary_on = cfg["summary"]["enabled"]
@@ -290,6 +297,8 @@ class OfflineSummary(_Base):
             die(f"已有 lec 在執行（pid {cur.get('pid')}，{cur.get('session', '')}），請等它結束")
         self._install_signals()
         log.attach(self.dir / "session.log")
+        self._clear_stop_files()
+        self._start_stop_watcher()
         code = 0
         try:
             log(f"▶ 離線總結：{self.dir}（課程 {self.cfg.course_name}，模型 {self.cfg['summary']['model']}）")
@@ -304,7 +313,7 @@ class OfflineSummary(_Base):
                 log("▷ 沒有尚未總結的段落（要重做請加 --redo <時間> 或 --redo all）")
                 return code
             if self.cfg["system"]["inhibit_sleep"]:
-                self.inhibitor.start(f"lec summarize：{self.cfg.course_name}")
+                self.inhibitor.start(f"lec summarize：{self.cfg.course_name}", log)
             self._start_llama()
             self.stage = "summarize"
             t0 = time.time()
