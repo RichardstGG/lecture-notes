@@ -161,7 +161,8 @@ class LectureRun(_Base):
             if not shutil.which(cmd):
                 die(f"缺少指令：{cmd}")
 
-        cur = self.lock.acquire(course=cfg.course_name)
+        cur = self.lock.acquire(course=cfg.course_name,
+                                mode="live" if self.live else "file")
         if cur:
             die(f"已有 lec 在執行（pid {cur.get('pid')}，課程 {cur.get('course')}，"
                 f"{cur.get('session', '')}）。可用 lec status 查看、lec stop 停止。")

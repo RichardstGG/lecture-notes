@@ -9,7 +9,7 @@ import time
 from pathlib import Path
 
 from . import config as C
-from .status import RunLock
+from .status import RUN_SCHEMA_VERSION, RunLock
 from .util import die, hms, read_json
 
 EPILOG = """範例：
@@ -133,7 +133,8 @@ def cmd_status(args):
     lock = RunLock(_state_dir())
     cur = lock.current()
     if not cur:
-        print(json.dumps({"running": False}) if args.json else "目前沒有 lec 在執行")
+        print(json.dumps({"schema_version": RUN_SCHEMA_VERSION, "running": False})
+              if args.json else "目前沒有 lec 在執行")
         return 0
     st = read_json(Path(cur.get("session", "")) / "status.json", {}) if cur.get("session") else {}
     if args.json:
