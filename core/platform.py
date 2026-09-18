@@ -284,26 +284,37 @@ def _avfoundation_sources():
     return rows
 
 
-_DSHOW_NAME = re.compile(r'"([^"]+)"\s*\((audio|video)\)')
+_DSHOW_SECTION = re.compile(r"DirectShow\s+(audio|video)\s+devices", re.I)
+_DSHOW_NAME = re.compile(r'"([^"]+)"')
 _DSHOW_ALT = re.compile(r'Alternative name\s+"([^"]+)"')
 
 
 def _dshow_sources():
+    """ffmpeg 的 dshow -list_devices 輸出是先印一行區段標題（video/audio 各一段），
+    段內每個裝置一行「"名稱"」，下一行可能是「Alternative name "裝置路徑"」。
+    裝置名稱本身不會標註 (audio)/(video)，只能靠區段標題判斷。"""
     out = _run(["ffmpeg", "-hide_banner", "-f", "dshow", "-list_devices", "true", "-i", "dummy"])
-    rows, pending = [], None
+    rows, pending, section = [], None, None
     for line in out.splitlines():
-        m = _DSHOW_NAME.search(line)
-        if m:
-            pending = {"id": m.group(1), "name": m.group(1), "description": "", "state": "",
-                       "kind": m.group(2)}
-            rows.append(pending)
-            continue
-        m = _DSHOW_ALT.search(line)
-        if m and pending is not None:
-            # 裝置路徑比顯示名稱穩定（不受中文、逗號、重複名稱影響）
-            pending["id"] = m.group(1)
-            pending["description"] = pending["name"]
+        sec = _DSHOW_SECTION.search(line)
+        if sec:
+            section = sec.group(1).lower()
             pending = None
+            continue
+        alt = _DSHOW_ALT.search(line)
+        if alt:
+            if pending is not None:
+                # 裝置路徑比顯示名稱穩定（不受中文、逗號、重複名稱影響）
+                pending["id"] = alt.group(1)
+                pending["description"] = pending["name"]
+            pending = None
+            continue
+        if section == "audio":
+            m = _DSHOW_NAME.search(line)
+            if m:
+                pending = {"id": m.group(1), "name": m.group(1), "description": "",
+                           "state": "", "kind": "audio"}
+                rows.append(pending)
     return [r for r in rows if r.get("kind") == "audio"]
 
 

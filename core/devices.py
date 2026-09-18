@@ -30,20 +30,51 @@ def hint():
             "dshow": "請確認已安裝 ffmpeg 並在 PATH 中"}.get(P.audio_backend(), "")
 
 
+#  macOS／Windows 缺乏實機驗證，這裡只能依常見的 ffmpeg 錯誤字樣做啟發式判斷
+#（heuristic，非窮舉；實際文字可能因 ffmpeg 版本而不同）。
+_PERMISSION_HINTS = {
+    "avfoundation": (
+        ("not authoriz", "Operation not permitted", "Input/output error"),
+        "麥克風權限被拒絕：請至「系統設定 > 隱私權與安全性 > 麥克風」允許執行 lec 的終端機／Python",
+    ),
+    "dshow": (
+        ("Access is denied", "could not open", "I/O error"),
+        "無法開啟麥克風：請至「設定 > 隱私權 > 麥克風」允許桌面應用程式使用麥克風，並確認裝置未被其他程式獨佔",
+    ),
+}
+
+
+def _permission_hint(backend, text):
+    entry = _PERMISSION_HINTS.get(backend)
+    if not entry:
+        return None
+    needles, hint = entry
+    low = text.lower()
+    return hint if any(n.lower() in low for n in needles) else None
+
+
 def test_volume(source, seconds=3, backend=None):
     """錄幾秒，回傳 (mean_db, max_db)；失敗回傳 (None, 錯誤訊息)。"""
+    backend = P.audio_backend(backend)
     target = P.resolve_source(source, backend)
     cmd = ["ffmpeg", "-hide_banner", "-nostdin", *P.ffmpeg_input(target, backend),
            "-t", str(seconds), "-af", "volumedetect", "-f", "null", "-"]
     try:
         r = subprocess.run(cmd, capture_output=True, text=True, errors="replace",
                            timeout=seconds + 20)
-    except (OSError, subprocess.TimeoutExpired) as e:
+    except subprocess.TimeoutExpired as e:
+        if backend == "avfoundation":
+            hint = _PERMISSION_HINTS["avfoundation"][1]
+            return None, f"錄音逾時，若麥克風硬體正常，很可能是權限問題：{hint}"
+        return None, str(e)
+    except OSError as e:
         return None, str(e)
     mean = re.search(r"mean_volume:\s*(-?[\d.]+|-inf) dB", r.stderr)
     peak = re.search(r"max_volume:\s*(-?[\d.]+|-inf) dB", r.stderr)
     if not mean:
-        return None, (r.stderr.strip().splitlines() or ["ffmpeg 沒有輸出"])[-1][:200]
+        last = (r.stderr.strip().splitlines() or ["ffmpeg 沒有輸出"])[-1][:200]
+        hint = _permission_hint(backend, r.stderr)
+        return None, f"{last}（{hint}）" if hint else last
     f = lambda m: float("-inf") if m.group(1) == "-inf" else float(m.group(1))
     return f(mean), f(peak) if peak else None
 
