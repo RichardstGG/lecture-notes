@@ -9,5 +9,9 @@ config/local.toml
 config/*.tmp
 courses/*.toml
 
+# 範例的原始錄音與本機工作紀錄不進 git
+samples/_raw_recording.wav
+Claude outputs/
+
 __pycache__/
 *.pyc

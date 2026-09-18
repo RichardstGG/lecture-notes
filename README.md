@@ -59,7 +59,19 @@ lec devices                     # 列出麥克風
 lec devices --test <編號>        # 錄 3 秒看音量
 lec devices --save <編號>        # 寫入 config/local.toml
 lec doctor --mic                # 全部 ✔ 就可以上課了
-lec new 計算機概論 --from UNIXops  # 建立課程設定
+```
+
+**5. 用內附的範例音檔驗證整條流程**
+
+```bash
+lec run 測試課 --file samples/test8min.ogg   # 轉錄 → 總結，跑完看 outputs/
+```
+
+結果可以跟 `samples/expected/` 對照（是結構對照，不是逐字比對，說明見 `samples/README.md`）。
+確認沒問題之後就可以建立自己的課程設定：
+
+```bash
+lec new 計算機概論 --from UNIXops
 ```
 
 更新程式：`git pull`，若 `engines.lock` 有變動再執行一次 `setup_engines.py`。
@@ -78,6 +90,8 @@ llama.cpp 官方有 Windows Vulkan / CUDA 版，whisper.cpp 官方只有 CPU 與
 ~/lecture-notes/
 ├─ lec, core/, prompts/          程式
 ├─ setup_engines.py              取得與編譯引擎
+├─ samples/                      8 分鐘範例音檔、講稿與參考輸出
+├─ tools/make_sample.py          重新產生範例音檔（一般使用者用不到）
 ├─ config/default.toml           全域預設（進 git）
 ├─ config/local.toml             這台電腦專屬：麥克風、路徑…（不進 git，範例 local.example.toml）
 ├─ courses/<課名>.toml            你的課程設定（不進 git）
@@ -196,9 +210,16 @@ core/doctor.py      環境檢查
 core/platform.py    平台差異（錄音後端、防休眠、狀態資料夾、行程管理）
 ```
 
+## 範例音檔
+
+`samples/test8min.ogg` 是一段約 8 分鐘的模擬課堂錄音：
+講稿（`samples/test8min.txt`）由本專案自行撰寫，再由作者本人朗讀錄製，
+跟 lec 實際錄音一樣是單聲道 Opus 語音。
+不是任何真實課程的錄音，著作權屬本專案，可自由散布。詳見 `samples/README.md`。
+
 ## 開發
 
-- 分支：`main`。只提交程式、`config/default.toml`、`config/template.toml`、`courses/examples/`、`prompts/`、`engines.lock`；本機設定與輸出已由 `.gitignore` 排除。
+- 分支：`main`。程式、設定範例、prompts、`samples/` 範例素材與 `engines.lock` 進 git；本機設定、個人課程、原始錄音與 outputs 已由 `.gitignore` 排除。
 - 升級引擎：`python3 setup_engines.py --update` → `lec run 課名 --file <錄音>` 與 `./bench_llm.sh` 確認沒問題 → `git commit engines.lock`。
 - 回報問題時附上 `lec doctor --json` 與該堂課的 `session.log`。
 - 授權：MIT（見 LICENSE）。whisper.cpp、llama.cpp 為 MIT，Qwen3 模型為 Apache-2.0，皆在執行時自行取得。

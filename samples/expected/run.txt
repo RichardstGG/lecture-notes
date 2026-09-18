@@ -1,0 +1,27 @@
+範例輸出產生紀錄
+==================
+
+日期：2026-09-18
+lec commit：6113d91（sample fixture 尚未提交）
+作業系統：Debian 13 / Linux 6.12.107+deb13-amd64
+CPU：Intel Core Ultra 7 258V
+GPU：Intel Arc 140V（Vulkan）
+記憶體：32 GB
+Python：3.13.5
+
+輸入：samples/test8min.ogg
+長度：00:07:55.206
+大小：1,355,663 bytes
+SHA-256：6f02b8ffc31b1e28f5ab943b9ef1f87b96c42a74a85fc02752de43a7108bb72f
+
+whisper.cpp：da54572229bcf64ba367d96c7ef15770376c4280
+llama.cpp：aa39d7a3e145a88202793a89462d65e94a5fc25f
+Whisper 模型：large-v3-turbo
+LLM 模型：Qwen3-8B-Q4_K_M.gguf
+
+轉錄：00:01:19，6.3x 速，2 個 sections
+總結：2 段，95.0s / 82.3s，693 / 630 completion tokens
+最終狀態：done，0 errors
+
+這些檔案是結構與人工品質檢查用的參考結果，不是逐字相等的 pass/fail fixture。
+模型、引擎或設定變更後，輸出文字與耗時可能不同。
