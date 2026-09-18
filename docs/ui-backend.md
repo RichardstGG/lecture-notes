@@ -24,6 +24,8 @@ Optional environment variables:
 - `LECTURE_NOTES_UI_POLL_INTERVAL`: status SSE polling interval, default `2`
 - `LECTURE_NOTES_OUTPUT_ROOT`: override the session output directory
 - `LECTURE_NOTES_UI_MAX_CONTENT_MB`: maximum transcript or notes size, default `16`
+- `LECTURE_NOTES_UI_PROCESS_LOG`: background launcher log path; defaults to the
+  operating system temporary directory
 
 ## API v1
 
@@ -36,6 +38,33 @@ Optional environment variables:
 | `GET` | `/api/v1/sessions` | Session history, newest first |
 | `GET` | `/api/v1/sessions/{id}` | Session metadata, transcript, and notes |
 | `GET` | `/api/v1/sessions/{id}/stream` | Live transcript and notes updates |
+| `POST` | `/api/v1/runs` | Start a live or file-mode lecture process |
+| `POST` | `/api/v1/runs/stop` | Request normal or forced stop |
+| `POST` | `/api/v1/sessions/{id}/summarize` | Start missing or redo summaries |
+
+Mutation requests use JSON. Starting a process returns HTTP `202` with its PID;
+an existing active process returns HTTP `409`.
+If a valid command finishes during the startup window, such as summarize finding
+nothing to do, the response includes `"completed": true` and `"exit_code": 0`.
+
+```json
+{
+  "course": "UNIXops",
+  "input_file": "/absolute/path/to/lecture.ogg",
+  "model": "qwen3-8b",
+  "source": "default",
+  "overrides": {
+    "summary.temperature": 0.2,
+    "summary.enabled": true
+  }
+}
+```
+
+Normal and forced stop bodies are `{"force": false}` and `{"force": true}`.
+Summarize accepts optional `redo` (`all` or `hh:mm:ss`), `model`, and `course`.
+The API only constructs fixed `lec` argument arrays; it never invokes a shell.
+Background children use a separate process group/session and do not depend on the
+browser connection remaining open.
 
 CLI failures use a stable envelope:
 
