@@ -36,6 +36,34 @@ class CourseSummary(BaseModel):
     error: str | None = None
 
 
+class SessionSummary(BaseModel):
+    id: str
+    course: str | None = None
+    started_at: str
+    updated_at: str
+    phase: str | None = None
+    mode: str | None = None
+    elapsed: float | None = None
+    sections_total: int | None = Field(default=None, ge=0)
+    sections_summarized: int | None = Field(default=None, ge=0)
+    has_transcript: bool
+    has_notes: bool
+    has_recording: bool
+
+
+class SessionContentFile(BaseModel):
+    content: str
+    updated_at: str | None = None
+    size_bytes: int = Field(ge=0)
+
+
+class SessionDetail(BaseModel):
+    api_version: int = API_VERSION
+    session: SessionSummary
+    transcript: SessionContentFile
+    notes: SessionContentFile
+
+
 class ApiErrorDetail(BaseModel):
     code: str
     message: str
