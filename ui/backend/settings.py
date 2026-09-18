@@ -7,9 +7,9 @@ from pathlib import Path
 @dataclass(frozen=True)
 class BackendSettings:
     repo_root: Path
-    output_root: Path | None = None
     cli_timeout: float = 30.0
     status_poll_interval: float = 2.0
+    output_root: Path | None = None
     max_content_bytes: int = 16 * 1024 * 1024
 
     @classmethod

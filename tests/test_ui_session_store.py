@@ -38,6 +38,14 @@ class OutputRootTests(unittest.TestCase):
         self.assertEqual(store.output_root, (self.root / "chosen").resolve())
         self.assertEqual(store.max_content_bytes, 123)
 
+    def test_existing_positional_settings_arguments_remain_compatible(self):
+        from ui.backend.settings import BackendSettings
+
+        settings = BackendSettings(self.root, 12.5, 0.5)
+        self.assertEqual(settings.cli_timeout, 12.5)
+        self.assertEqual(settings.status_poll_interval, 0.5)
+        self.assertIsNone(settings.output_root)
+
 
 class SessionStoreTests(unittest.TestCase):
     def setUp(self):
