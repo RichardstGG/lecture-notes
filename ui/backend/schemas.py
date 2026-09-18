@@ -64,6 +64,40 @@ class SessionDetail(BaseModel):
     notes: SessionContentFile
 
 
+class RunStartRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid", str_strip_whitespace=True)
+
+    course: str = Field(min_length=1)
+    input_file: str | None = None
+    model: str | None = None
+    source: str | None = None
+    overrides: dict[str, Any] = Field(default_factory=dict)
+
+
+class StopRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    force: bool = False
+
+
+class SummarizeRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid", str_strip_whitespace=True)
+
+    redo: str | None = Field(default=None, pattern=r"^(all|\d{2}:\d{2}:\d{2})$")
+    model: str | None = None
+    course: str | None = None
+
+
+class ProcessActionResponse(BaseModel):
+    accepted: bool
+    operation: str
+    pid: int | None = None
+    completed: bool | None = None
+    exit_code: int | None = None
+    force: bool | None = None
+    message: str
+
+
 class ApiErrorDetail(BaseModel):
     code: str
     message: str

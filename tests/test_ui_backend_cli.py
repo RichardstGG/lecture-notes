@@ -68,3 +68,11 @@ class LecClientTests(unittest.IsolatedAsyncioTestCase):
         with self.assertRaises(LecCommandError) as ctx:
             await client.run_json("status", "--json")
         self.assertEqual(ctx.exception.code, "cli_timeout")
+
+    async def test_stop_uses_text_command(self):
+        client = self.write_script("""
+            import sys
+            assert sys.argv[1:] == ["stop", "--force"]
+            print("停止要求已送出")
+        """)
+        self.assertEqual(await client.stop(force=True), "停止要求已送出")

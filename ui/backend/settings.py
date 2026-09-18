@@ -1,6 +1,7 @@
 """Configuration owned by the local UI service."""
 import os
-from dataclasses import dataclass
+import tempfile
+from dataclasses import dataclass, field
 from pathlib import Path
 
 
@@ -11,6 +12,9 @@ class BackendSettings:
     status_poll_interval: float = 2.0
     output_root: Path | None = None
     max_content_bytes: int = 16 * 1024 * 1024
+    process_log: Path = field(
+        default_factory=lambda: Path(tempfile.gettempdir()) / "lecture-notes-ui-process.log",
+    )
 
     @classmethod
     def from_env(cls):
@@ -23,6 +27,11 @@ class BackendSettings:
         timeout = float(os.environ.get("LECTURE_NOTES_UI_CLI_TIMEOUT", "30"))
         poll = float(os.environ.get("LECTURE_NOTES_UI_POLL_INTERVAL", "2"))
         max_mb = float(os.environ.get("LECTURE_NOTES_UI_MAX_CONTENT_MB", "16"))
+        process_log_raw = os.environ.get("LECTURE_NOTES_UI_PROCESS_LOG")
+        process_log = (Path(process_log_raw).expanduser() if process_log_raw else
+                       Path(tempfile.gettempdir()) / "lecture-notes-ui-process.log")
+        if not process_log.is_absolute():
+            process_log = root / process_log
         if timeout <= 0:
             raise ValueError("LECTURE_NOTES_UI_CLI_TIMEOUT must be greater than zero")
         if poll <= 0:
@@ -31,4 +40,5 @@ class BackendSettings:
             raise ValueError("LECTURE_NOTES_UI_MAX_CONTENT_MB must be greater than zero")
         return cls(repo_root=root, output_root=output_root.resolve() if output_root else None,
                    cli_timeout=timeout, status_poll_interval=poll,
-                   max_content_bytes=int(max_mb * 1024 * 1024))
+                   max_content_bytes=int(max_mb * 1024 * 1024),
+                   process_log=process_log.resolve())
