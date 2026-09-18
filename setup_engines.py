@@ -9,6 +9,7 @@
   python3 setup_engines.py --lock             不編譯，只把目前 checkout 的版本記進 engines.lock
   python3 setup_engines.py --backend vulkan   後端：auto（預設）/ vulkan / cuda / metal / cpu
   python3 setup_engines.py --import-models DIR  從其他位置搬入已下載的模型
+  python3 setup_engines.py --generator Ninja  指定 cmake generator（Windows 想用 Ninja 而非 Visual Studio 時）
 
 後端預設：Linux 與 Windows 用 Vulkan，macOS 用 Metal。
 以靜態連結編譯（BUILD_SHARED_LIBS=OFF），整個專案資料夾搬到哪裡都能執行。
@@ -106,9 +107,10 @@ def lock_write(key, directory):
     print(f"▶ engines.lock：{key}={sha[:9]}（{desc}）")
 
 
-def build_stamp(directory, backend, args):
+def build_stamp(directory, backend, args, generator=None):
     sha = out(["git", "-C", directory, "rev-parse", "HEAD"])
-    return f"{sha} BACKEND={backend} {' '.join(args)}"
+    gen = f" GENERATOR={generator}" if generator else ""
+    return f"{sha} BACKEND={backend}{gen} {' '.join(args)}"
 
 
 # ---------------------------------------------------------------- 前置檢查
@@ -165,20 +167,23 @@ def fetch_repo(directory, repo, ref):
     print("  版本：" + out(["git", "-C", directory, "log", "-1", "--format=%h %cs %s"])[:80])
 
 
-def build(directory, backend, args, targets, jobs, rebuild):
+def build(directory, backend, args, targets, jobs, rebuild, generator=None):
     directory = Path(directory)
     stamp_file = directory / "build" / ".lec-build"
-    want = build_stamp(directory, backend, args)
+    want = build_stamp(directory, backend, args, generator)
     have = all(P.find_engine_bin(directory, t).is_file() for t in targets)
     if have and not rebuild and stamp_file.exists() and \
             stamp_file.read_text(encoding="utf-8").strip() == want:
-        print("▶ 已編譯過相同版本與後端，略過（要重編請加 --rebuild）")
+        print("▶ 已編譯過相同版本、後端與 generator，略過（要重編請加 --rebuild）")
         return
     print("▶ 清除舊的 build")
     shutil.rmtree(directory / "build", ignore_errors=True)
-    run(["cmake", "-S", directory, "-B", directory / "build",
-         "-DCMAKE_BUILD_TYPE=Release", "-DBUILD_SHARED_LIBS=OFF",
-         *BACKEND_FLAGS[backend], *args])
+    cmake_cmd = ["cmake", "-S", directory, "-B", directory / "build",
+                 "-DCMAKE_BUILD_TYPE=Release", "-DBUILD_SHARED_LIBS=OFF"]
+    if generator:
+        cmake_cmd += ["-G", generator]
+    cmake_cmd += [*BACKEND_FLAGS[backend], *args]
+    run(cmake_cmd)
     for t in targets:
         print(f"▶ 編譯 {t}")
         run(["cmake", "--build", directory / "build", "--config", "Release",
@@ -235,6 +240,8 @@ def main():
     ap.add_argument("--rebuild", action="store_true")
     ap.add_argument("--lock", action="store_true")
     ap.add_argument("--import-models", metavar="DIR")
+    ap.add_argument("--generator", metavar="NAME",
+                    help="傳給 cmake -G（例如 Windows 上的 Ninja；預設交給 cmake 自動判斷）")
     args = ap.parse_args()
 
     for name in args.engines:
@@ -255,7 +262,7 @@ def main():
             lock_write(e["key"], e["dir"])
             if (e["dir"] / "build").is_dir():
                 (e["dir"] / "build" / ".lec-build").write_text(
-                    build_stamp(e["dir"], backend, e["args"]) + "\n", encoding="utf-8")
+                    build_stamp(e["dir"], backend, e["args"], args.generator) + "\n", encoding="utf-8")
         return 0
 
     step("檢查編譯工具")
@@ -265,7 +272,7 @@ def main():
         e = ENGINES[name]
         step(e["dir"].name)
         fetch_repo(e["dir"], e["repo"], None if args.update else lock.get(e["key"]))
-        build(e["dir"], backend, e["args"], e["targets"], jobs, args.rebuild)
+        build(e["dir"], backend, e["args"], e["targets"], jobs, args.rebuild, args.generator)
         check_bin(P.find_engine_bin(e["dir"], e["targets"][0]), backend)
         if args.update or not lock.get(e["key"]):
             lock_write(e["key"], e["dir"])
