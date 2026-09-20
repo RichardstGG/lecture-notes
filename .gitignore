@@ -15,3 +15,8 @@ Claude outputs/
 
 __pycache__/
 *.pyc
+
+# Frontend dependencies and generated build output
+ui/frontend/node_modules/
+ui/frontend/dist/
+*.tsbuildinfo

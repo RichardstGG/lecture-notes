@@ -1,0 +1,15 @@
+export const zhTW = {
+  brand: "Lecture Notes",
+  brandSubtitle: "本機 AI 課堂筆記",
+  live: "進行中",
+  history: "歷史紀錄",
+  idle: "目前沒有進行中的課程",
+  transcript: "逐字稿",
+  notes: "課堂筆記",
+  emptyTranscript: "逐字稿會在轉錄完成後出現在這裡。",
+  emptyNotes: "筆記會在摘要完成後出現在這裡。",
+  start: "開始處理",
+  stop: "正常停止",
+  forceStop: "立即停止",
+  refresh: "重新整理",
+} as const;
