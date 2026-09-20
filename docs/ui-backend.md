@@ -10,12 +10,21 @@ Install the UI-only dependencies in a virtual environment:
 
 ```bash
 python -m pip install -r ui/backend/requirements.txt
+cd ui/frontend
+npm install
+npm run build
+cd ../..
 python -m ui.backend
 ```
 
 The service binds only to `127.0.0.1` and defaults to port `8765`. Use
 `python -m ui.backend --port <port>` to choose another local port. Interactive
-API documentation is available at `/api/docs`.
+API documentation is available at `/api/docs`. When `ui/frontend/dist` exists,
+the same service hosts the browser UI at `/`; no separate frontend server is
+needed for production-style local use.
+
+For frontend development, run `npm run dev` from `ui/frontend`. Vite binds to
+`127.0.0.1:5173` and proxies `/api` to the FastAPI service on port `8765`.
 
 Optional environment variables:
 
@@ -26,6 +35,7 @@ Optional environment variables:
 - `LECTURE_NOTES_UI_MAX_CONTENT_MB`: maximum transcript or notes size, default `16`
 - `LECTURE_NOTES_UI_PROCESS_LOG`: background launcher log path; defaults to the
   operating system temporary directory
+- `LECTURE_NOTES_UI_FRONTEND_DIST`: optional path to a built frontend directory
 
 ## API v1
 
@@ -95,5 +105,22 @@ The session stream sends a `snapshot` event first. Later `content` events contai
 files such as notes rebuilt by `--redo` send a complete replacement. Unchanged
 polls send SSE heartbeat comments.
 
-The backend remains read-only. Starting, stopping, summarizing, and editing
-configuration are intentionally deferred to later isolated changes.
+The backend can start and stop a lecture process and request session
+summarization through fixed `lec` argument arrays. Course and local
+configuration editing are intentionally deferred to a later isolated change.
+
+## Frontend foundation
+
+The React/TypeScript frontend currently provides:
+
+- local service connection state and live run status over SSE
+- live transcription, queue, and summary progress
+- live or file-mode launch, normal stop, and forced stop
+- session history with streamed transcript and notes content
+- missing-summary action for sessions that have a transcript
+- responsive desktop and mobile layouts
+
+The model override field is populated from model names already returned by the
+course contract and also accepts a future model identifier. A complete installed
+model inventory requires the planned versioned model-discovery contract; model
+names are never hard-coded in the frontend.
