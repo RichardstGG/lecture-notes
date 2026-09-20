@@ -23,9 +23,21 @@ def _sse(event, data):
     return f"event: {event}\ndata: {payload}\n\n"
 
 
-async def _status_events(request, client, interval):
+async def _wait_or_shutdown(interval, shutdown_event):
+    if shutdown_event is None:
+        await asyncio.sleep(interval)
+        return False
+    try:
+        await asyncio.wait_for(shutdown_event.wait(), timeout=interval)
+        return True
+    except TimeoutError:
+        return False
+
+
+async def _status_events(request, client, interval, shutdown_event=None):
     previous = None
-    while not await request.is_disconnected():
+    while (not (shutdown_event and shutdown_event.is_set())
+           and not await request.is_disconnected()):
         try:
             status = await client.status()
             marker = json.dumps(status, ensure_ascii=False, sort_keys=True)
@@ -36,12 +48,16 @@ async def _status_events(request, client, interval):
                 yield ": heartbeat\n\n"
         except LecCommandError as exc:
             yield _sse("error", exc.as_detail())
-        await asyncio.sleep(interval)
+        if await _wait_or_shutdown(interval, shutdown_event):
+            break
 
 
-async def _session_events(request, sessions, session_id, interval, initial=None):
+async def _session_events(
+    request, sessions, session_id, interval, initial=None, shutdown_event=None,
+):
     previous = None
-    while not await request.is_disconnected():
+    while (not (shutdown_event and shutdown_event.is_set())
+           and not await request.is_disconnected()):
         try:
             current = initial if initial is not None else sessions.get(session_id)
             initial = None
@@ -69,7 +85,8 @@ async def _session_events(request, sessions, session_id, interval, initial=None)
             previous = current
         except SessionStoreError as exc:
             yield _sse("error", exc.as_detail())
-        await asyncio.sleep(interval)
+        if await _wait_or_shutdown(interval, shutdown_event):
+            break
 
 
 def create_app(settings=None, client=None, sessions=None, launcher=None):
@@ -88,6 +105,7 @@ def create_app(settings=None, client=None, sessions=None, launcher=None):
     app.state.lec_client = client
     app.state.sessions = sessions
     app.state.controller = controller
+    app.state.shutdown_event = asyncio.Event()
     app.add_middleware(
         CORSMiddleware,
         allow_origins=["http://127.0.0.1:5173", "http://localhost:5173"],
@@ -191,6 +209,7 @@ def create_app(settings=None, client=None, sessions=None, launcher=None):
         stream = _session_events(
             request, request.app.state.sessions, session_id,
             request.app.state.settings.status_poll_interval, initial=initial,
+            shutdown_event=request.app.state.shutdown_event,
         )
         return StreamingResponse(
             stream, media_type="text/event-stream",
@@ -205,6 +224,7 @@ def create_app(settings=None, client=None, sessions=None, launcher=None):
         stream = _status_events(
             request, request.app.state.lec_client,
             request.app.state.settings.status_poll_interval,
+            shutdown_event=request.app.state.shutdown_event,
         )
         return StreamingResponse(
             stream, media_type="text/event-stream",
