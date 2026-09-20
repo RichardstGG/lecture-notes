@@ -80,6 +80,7 @@ class LecProcessLauncher:
         self.cwd = Path(cwd)
         self.log_path = Path(log_path)
         self.settle_seconds = float(settle_seconds)
+        self._processes = set()
         self._tasks = set()
 
     @classmethod
@@ -87,7 +88,10 @@ class LecProcessLauncher:
         return cls(client.command, client.cwd, log_path)
 
     async def _reap(self, process):
-        await process.wait()
+        while process.poll() is None:
+            await asyncio.sleep(0.1)
+        process.wait()
+        self._processes.discard(process)
 
     async def start(self, *args):
         env = os.environ.copy()
@@ -108,8 +112,8 @@ class LecProcessLauncher:
                 start_offset = output.tell()
                 output.write(marker)
                 output.flush()
-                process = await asyncio.create_subprocess_exec(
-                    *command, cwd=self.cwd, env=env, stdin=subprocess.DEVNULL,
+                process = subprocess.Popen(
+                    command, cwd=self.cwd, env=env, stdin=subprocess.DEVNULL,
                     stdout=output, stderr=subprocess.STDOUT, **kwargs,
                 )
         except OSError as exc:
@@ -118,8 +122,8 @@ class LecProcessLauncher:
             ) from exc
 
         await asyncio.sleep(self.settle_seconds)
-        if process.returncode is not None:
-            await process.wait()
+        if process.poll() is not None:
+            process.wait()
             try:
                 with open(self.log_path, "rb") as output:
                     output.seek(start_offset)
@@ -133,6 +137,7 @@ class LecProcessLauncher:
                 )
             return LaunchResult(process.pid, completed=True, exit_code=0)
 
+        self._processes.add(process)
         task = asyncio.create_task(self._reap(process))
         self._tasks.add(task)
         task.add_done_callback(self._tasks.discard)

@@ -41,16 +41,25 @@ class LauncherTests(unittest.IsolatedAsyncioTestCase):
         self.root = Path(self.tmp.name)
         self.script = self.root / "fake_lec.py"
         self.log = self.root / "process.log"
+        self.launchers = []
+
+    async def asyncTearDown(self):
+        for launcher in self.launchers:
+            for process in tuple(launcher._processes):
+                process.wait(timeout=2)
+        await asyncio.sleep(0)
 
     def tearDown(self):
         self.tmp.cleanup()
 
     def launcher(self, body, settle=0.02):
         self.script.write_text(textwrap.dedent(body), encoding="utf-8")
-        return LecProcessLauncher(
+        launcher = LecProcessLauncher(
             (sys.executable, self.script), self.root, self.log,
             settle_seconds=settle,
         )
+        self.launchers.append(launcher)
+        return launcher
 
     async def test_start_returns_before_background_process_finishes(self):
         launcher = self.launcher("""
@@ -89,6 +98,36 @@ class LauncherTests(unittest.IsolatedAsyncioTestCase):
         self.assertGreater(result.pid, 0)
         self.assertTrue(result.completed)
         self.assertEqual(result.exit_code, 0)
+
+
+class DetachedLauncherTests(unittest.TestCase):
+    def test_background_process_survives_event_loop_shutdown(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            script = root / "fake_lec.py"
+            marker = root / "finished"
+            script.write_text(textwrap.dedent("""
+                import sys
+                import time
+                from pathlib import Path
+
+                time.sleep(0.2)
+                Path(sys.argv[1]).write_text("finished", encoding="utf-8")
+            """), encoding="utf-8")
+            launcher = LecProcessLauncher(
+                (sys.executable, script), root, root / "process.log",
+                settle_seconds=0.02,
+            )
+
+            result = asyncio.run(launcher.start(marker))
+            deadline = time.monotonic() + 2
+            while not marker.exists() and time.monotonic() < deadline:
+                time.sleep(0.02)
+
+            self.assertGreater(result.pid, 0)
+            self.assertTrue(marker.is_file())
+            for process in tuple(launcher._processes):
+                self.assertEqual(process.wait(timeout=1), 0)
 
 
 if __name__ == "__main__":
