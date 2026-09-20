@@ -71,7 +71,7 @@ lec run 測試課 --file samples/test8min.ogg   # 轉錄 → 總結，跑完看 
 確認沒問題之後就可以建立自己的課程設定：
 
 ```bash
-lec new 計算機概論 --from UNIXops
+lec new 計算機概論 --from example
 ```
 
 更新程式：`git pull`，若 `engines.lock` 有變動再執行一次 `setup_engines.py`。

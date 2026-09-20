@@ -98,3 +98,7 @@ poll_seconds = 10             # 多久檢查一次逐字稿
 final_wait = 180              # Ctrl+C 後最多等最後一段總結幾秒
 quote_match = 0.8             # 「老師強調」原句與逐字稿的最低相似度
 unverified_terms = "mark"     # 逐字稿找不到的術語：mark = 標 ⚠、drop = 刪除、keep = 不處理
+
+# 術語對照表：正式寫法 = "說明"，或 = { means = "說明", aka = ["逐字稿可能出現的錯誤寫法"] }
+# 只在課程檔定義；供總結時認詞與填 asr_original 用，不會寫進筆記內容
+[summary.glossary]

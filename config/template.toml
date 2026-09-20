@@ -15,6 +15,10 @@ terms = []
 # extra_instructions = "本課程著重……，重點請保留……。"
 # prompt_file = "prompts/summary.md"
 
+# 術語對照表：正式寫法、逐字稿常見錯字與辨識用說明（不會直接寫進筆記）
+# [summary.glossary]
+# Multics = { means = "貝爾實驗室的分時作業系統專案", aka = ["MUTIX", "Multix"] }
+
 # [audio]
 # source = "mic1"             # mic1 = 內建麥克風、mic2 = 耳機孔
 

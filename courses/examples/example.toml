@@ -1,0 +1,18 @@
+# ===== 課程設定：測試課 =====
+# 這份公開範例配合 samples/test8min.ogg；只寫與預設不同的項目。
+# 範例：lec new 我的課 --from example 以此為起點建立自己的課程設定
+# 查看合併後的完整設定：lec config 測試課
+
+[course]
+name = "測試課"
+
+[whisper]
+# test8min 的課程術語：提升 whisper 辨識率，也提供給總結當錯字參考
+terms = ["UNIX", "Linux", "BSD", "AT&T", "Multics", "POSIX", "inode", "fork", "exec"]
+
+[summary]
+# model = "qwen3-4b"
+# extra_instructions = ""
+
+[summary.glossary]
+Multics = { means = "貝爾實驗室 1960 年代的分時作業系統專案", aka = ["MUTIX", "Multix", "馬提克斯"] }

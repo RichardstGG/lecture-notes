@@ -59,7 +59,7 @@ nothing to do, the response includes `"completed": true` and `"exit_code": 0`.
 
 ```json
 {
-  "course": "UNIXops",
+  "course": "測試課",
   "input_file": "/absolute/path/to/lecture.ogg",
   "model": "qwen3-8b",
   "source": "default",

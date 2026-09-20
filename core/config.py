@@ -12,8 +12,9 @@ LOCAL_FILE = APP_ROOT / "config" / "local.toml"          # 這台電腦專屬（
 TEMPLATE_FILE = APP_ROOT / "config" / "template.toml"
 COURSES_DIR = APP_ROOT / "courses"
 
-# 這些表格底下可以自由新增項目（模型、音源清單）
-OPEN_TABLES = {("models",), ("audio", "sources"), ("whisper", "models")}
+# 這些表格底下可以自由新增項目（模型、音源清單、課程術語）
+OPEN_TABLES = {("models",), ("audio", "sources"), ("whisper", "models"),
+               ("summary", "glossary")}
 
 CHOICES = {
     ("summary", "file_mode"): {"after", "off"},
@@ -228,6 +229,27 @@ class Config:
             raise ConfigError(f"找不到 prompt 檔：{f}")
         return f.read_text(encoding="utf-8")
 
+    def glossary(self):
+        """將 [summary.glossary] 正規化為 term / means / aka 項目。"""
+        raw = self.data.get("summary", {}).get("glossary") or {}
+        if not isinstance(raw, dict):
+            return []
+        out = []
+        for term, value in raw.items():
+            term = str(term).strip()
+            if not term:
+                continue
+            if isinstance(value, dict):
+                means = str(value.get("means") or "").strip()
+                aliases = value.get("aka") or []
+                aka = ([str(alias).strip() for alias in aliases
+                        if str(alias).strip()] if isinstance(aliases, list) else [])
+            else:
+                means, aka = str(value).strip(), []
+            aka = [alias for alias in dict.fromkeys(aka) if alias != term]
+            out.append({"term": term, "means": means, "aka": aka})
+        return out
+
     def validate(self):
         errs = []
         for (sec, key), allowed in CHOICES.items():
@@ -239,6 +261,22 @@ class Config:
                         f"（可用：{', '.join(self.data.get('models', {}))}）")
         if self.data["whisper"]["model"] not in self.data["whisper"].get("models", {}):
             errs.append(f"whisper.model = {self.data['whisper']['model']!r} 未在 [whisper.models.*] 定義")
+        glossary = self.data.get("summary", {}).get("glossary", {})
+        if not isinstance(glossary, dict):
+            errs.append("summary.glossary 應為 TOML 表格")
+        else:
+            for term, value in glossary.items():
+                valid = isinstance(value, str)
+                if isinstance(value, dict):
+                    means = value.get("means", "")
+                    aka = value.get("aka", [])
+                    valid = (isinstance(means, str) and isinstance(aka, list)
+                             and all(isinstance(alias, str) for alias in aka))
+                if not valid:
+                    errs.append(
+                        f'summary.glossary.{term} 應為字串或 '
+                        '{ means = "…", aka = ["…"] }'
+                    )
         if len(self.whisper_prompt()) > 200:
             self.warnings.append("whisper prompt＋術語超過 200 字，可能超出 whisper 的 prompt 上限而被截斷")
         return errs
