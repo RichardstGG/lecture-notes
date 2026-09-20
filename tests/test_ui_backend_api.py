@@ -65,10 +65,16 @@ class BackendApiTests(unittest.IsolatedAsyncioTestCase):
     def setUp(self):
         self.tmp = tempfile.TemporaryDirectory()
         self.output = Path(self.tmp.name) / "outputs"
+        self.frontend = Path(self.tmp.name) / "frontend"
+        self.frontend.mkdir()
+        (self.frontend / "index.html").write_text(
+            "<!doctype html><title>Lecture Notes</title>", encoding="utf-8",
+        )
         self.client = StubClient()
         self.launcher = StubLauncher()
         settings = BackendSettings(
             Path.cwd(), output_root=self.output, status_poll_interval=0.001,
+            frontend_dist=self.frontend,
         )
         self.app = create_app(
             settings=settings, client=self.client, launcher=self.launcher,
@@ -98,6 +104,11 @@ class BackendApiTests(unittest.IsolatedAsyncioTestCase):
         response = await self.request("GET", "/api/v1/health")
         self.assertEqual(response.status_code, 200)
         self.assertEqual(response.json(), {"service": "lecture-notes-ui", "api_version": 1})
+
+    async def test_built_frontend_is_served_at_root(self):
+        response = await self.request("GET", "/")
+        self.assertEqual(response.status_code, 200)
+        self.assertIn("Lecture Notes", response.text)
 
     async def test_status_passes_through_cli_contract(self):
         self.client.status_result = {

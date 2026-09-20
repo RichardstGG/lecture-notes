@@ -4,7 +4,8 @@ import json
 
 from fastapi import FastAPI, Request
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import JSONResponse, StreamingResponse
+from fastapi.responses import HTMLResponse, JSONResponse, StreamingResponse
+from fastapi.staticfiles import StaticFiles
 
 from .cli_client import LecClient, LecCommandError
 from .process_control import (ControlError, LecProcessLauncher,
@@ -209,6 +210,17 @@ def create_app(settings=None, client=None, sessions=None, launcher=None):
             stream, media_type="text/event-stream",
             headers={"Cache-Control": "no-cache", "X-Accel-Buffering": "no"},
         )
+
+    frontend_dist = settings.frontend_dist
+    if frontend_dist is not None and (frontend_dist / "index.html").is_file():
+        frontend_index_html = (frontend_dist / "index.html").read_text(encoding="utf-8")
+        assets = frontend_dist / "assets"
+        if assets.is_dir():
+            app.mount("/assets", StaticFiles(directory=assets), name="frontend-assets")
+
+        @app.get("/", include_in_schema=False, response_class=HTMLResponse)
+        async def frontend_index():
+            return HTMLResponse(frontend_index_html)
 
     return app
 
