@@ -83,11 +83,11 @@ class BackendApiTests(unittest.IsolatedAsyncioTestCase):
     def tearDown(self):
         self.tmp.cleanup()
 
-    def make_session(self, name="UNIXops_20260918"):
+    def make_session(self, name="測試課_20260918"):
         session = self.output / name
         session.mkdir(parents=True)
         (session / "status.json").write_text(json.dumps({
-            "schema_version": 1, "course": "UNIXops", "phase": "recording",
+            "schema_version": 1, "course": "測試課", "phase": "recording",
             "started_at": "2026-09-18T10:00:00+08:00",
             "updated_at": "2026-09-18T10:05:00+08:00",
         }), encoding="utf-8")
@@ -112,12 +112,12 @@ class BackendApiTests(unittest.IsolatedAsyncioTestCase):
 
     async def test_status_passes_through_cli_contract(self):
         self.client.status_result = {
-            "schema_version": 1, "running": True, "course": "UNIXops",
+            "schema_version": 1, "running": True, "course": "測試課",
             "future_field": "kept",
         }
         response = await self.request("GET", "/api/v1/status")
         self.assertEqual(response.status_code, 200)
-        self.assertEqual(response.json()["course"], "UNIXops")
+        self.assertEqual(response.json()["course"], "測試課")
         self.assertEqual(response.json()["future_field"], "kept")
 
     async def test_courses_supports_dynamic_model_names_and_invalid_course(self):
@@ -152,7 +152,7 @@ class BackendApiTests(unittest.IsolatedAsyncioTestCase):
         input_file = Path(self.tmp.name) / "lecture.ogg"
         input_file.write_bytes(b"audio")
         response = await self.request("POST", "/api/v1/runs", json={
-            "course": "UNIXops", "input_file": str(input_file),
+            "course": "測試課", "input_file": str(input_file),
             "model": "future-14b", "source": "mic-1",
             "overrides": {"summary.temperature": 0.3, "summary.enabled": False,
                           "whisper.terms": ["核心", "kernel"]},
@@ -160,7 +160,7 @@ class BackendApiTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(response.status_code, 202)
         self.assertEqual(response.json()["pid"], 4321)
         self.assertEqual(self.launcher.calls, [(
-            "run", "UNIXops", "--file", str(input_file.resolve()),
+            "run", "測試課", "--file", str(input_file.resolve()),
             "--model", "future-14b", "--source", "mic-1",
             "--set", "summary.enabled=false",
             "--set", "summary.temperature=0.3",
@@ -171,14 +171,14 @@ class BackendApiTests(unittest.IsolatedAsyncioTestCase):
         self.client.status_result = {
             "schema_version": 1, "running": True, "course": "SecOps",
         }
-        response = await self.request("POST", "/api/v1/runs", json={"course": "UNIXops"})
+        response = await self.request("POST", "/api/v1/runs", json={"course": "測試課"})
         self.assertEqual(response.status_code, 409)
         self.assertEqual(response.json()["error"]["code"], "run_active")
         self.assertEqual(self.launcher.calls, [])
 
     async def test_start_run_rejects_invalid_override(self):
         response = await self.request("POST", "/api/v1/runs", json={
-            "course": "UNIXops", "overrides": {"not-dotted": True},
+            "course": "測試課", "overrides": {"not-dotted": True},
         })
         self.assertEqual(response.status_code, 400)
         self.assertEqual(response.json()["error"]["code"], "invalid_override")
@@ -190,7 +190,7 @@ class BackendApiTests(unittest.IsolatedAsyncioTestCase):
 
     async def test_start_run_rejects_missing_input_file(self):
         response = await self.request("POST", "/api/v1/runs", json={
-            "course": "UNIXops", "input_file": "/definitely/missing/audio.ogg",
+            "course": "測試課", "input_file": "/definitely/missing/audio.ogg",
         })
         self.assertEqual(response.status_code, 400)
         self.assertEqual(response.json()["error"]["code"], "input_file_not_found")
@@ -208,13 +208,13 @@ class BackendApiTests(unittest.IsolatedAsyncioTestCase):
         session = self.make_session()
         response = await self.request(
             "POST", f"/api/v1/sessions/{session.name}/summarize",
-            json={"redo": "all", "model": "future-14b", "course": "UNIXops"},
+            json={"redo": "all", "model": "future-14b", "course": "測試課"},
         )
         self.assertEqual(response.status_code, 202)
         self.assertEqual(response.json()["operation"], "summarize")
         self.assertEqual(self.launcher.calls, [(
             "summarize", str(session.resolve()), "--redo", "all",
-            "--model", "future-14b", "--course", "UNIXops",
+            "--model", "future-14b", "--course", "測試課",
         )])
 
     async def test_status_stream_emits_sse_status_event(self):

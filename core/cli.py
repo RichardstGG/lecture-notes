@@ -17,9 +17,9 @@ EPILOG = """範例：
   lec run 計算機概論 --file 錄音.mp3         處理音檔（轉錄完再總結）
   lec run 計算機概論 --model qwen3-4b        臨時換模型
   lec run 計算機概論 --set vad.sensitivity=3 --set summary.temperature=0.3
-  lec summarize outputs/UNIXops_20260916                補做尚未完成的總結
-  lec summarize outputs/UNIXops_20260916 --redo 00:05:02
-  lec summarize outputs/UNIXops_20260916 --redo all --model qwen3-4b
+  lec summarize outputs/測試課_20260918                 補做尚未完成的總結
+  lec summarize outputs/測試課_20260918 --redo 00:05:13
+  lec summarize outputs/測試課_20260918 --redo all --model qwen3-4b
   lec config 計算機概論                      印出合併後的設定
   lec courses / lec new 課名 / lec status / lec stop
   lec devices [--test 編號] [--save 編號]    列出 / 測試 / 設定麥克風

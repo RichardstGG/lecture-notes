@@ -41,14 +41,14 @@ class StatusContractTests(unittest.TestCase):
         return status
 
     def test_status_snapshot_has_stable_versioned_shape(self):
-        status = self.make_status(course="UNIXops", mode="live")
+        status = self.make_status(course="測試課", mode="live")
         status.update(schema_version=999)
         status.flush()
 
         data = json.loads((self.session / "status.json").read_text(encoding="utf-8"))
         self.assertEqual(set(data), STATUS_KEYS)
         self.assertEqual(data["schema_version"], STATUS_SCHEMA_VERSION)
-        self.assertEqual(data["course"], "UNIXops")
+        self.assertEqual(data["course"], "測試課")
         self.assertEqual(data["mode"], "live")
         self.assertEqual(data["session"], str(self.session))
         self.assertEqual(data["transcribed"], 0)
@@ -110,12 +110,12 @@ class RunContractTests(unittest.TestCase):
 
     def test_new_run_record_has_stable_versioned_shape(self):
         lock = RunLock(self.state)
-        self.assertIsNone(lock.acquire(course="UNIXops", mode="file"))
+        self.assertIsNone(lock.acquire(course="測試課", mode="file"))
 
         data = json.loads((self.state / "run.json").read_text(encoding="utf-8"))
         self.assertEqual(data["schema_version"], RUN_SCHEMA_VERSION)
         self.assertEqual(data["pid"], os.getpid())
-        self.assertEqual(data["course"], "UNIXops")
+        self.assertEqual(data["course"], "測試課")
         self.assertEqual(data["mode"], "file")
         self.assertIsNone(data["session"])
         self.assertIn("started_at", data)
@@ -150,7 +150,7 @@ class RunContractTests(unittest.TestCase):
         (session / "status.json").write_text(
             '{"schema_version":1,"phase":"recording"}\n', encoding="utf-8")
         lock = RunLock(self.state)
-        self.assertIsNone(lock.acquire(course="UNIXops", session=str(session), mode="live"))
+        self.assertIsNone(lock.acquire(course="測試課", session=str(session), mode="live"))
 
         args = SimpleNamespace(json=True)
         out = io.StringIO()

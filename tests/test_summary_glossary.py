@@ -6,8 +6,8 @@ import unittest
 from pathlib import Path
 
 from tests import _pathfix  # noqa: F401
-from core.config import (DEFAULT_FILE, Config, _unknown_keys, deep_merge,
-                         dump_toml, load_toml)
+from core.config import (DEFAULT_FILE, EXAMPLES_DIR, Config, _unknown_keys,
+                         deep_merge, dump_toml, load_toml)
 from core.summarize import Summarizer
 
 
@@ -74,6 +74,14 @@ class GlossaryConfigTests(unittest.TestCase):
         self.assertEqual(merged["summary"]["glossary"], {})
         self.assertEqual(Config(merged).glossary(), [])
 
+    def test_public_example_uses_neutral_test_course_identity(self):
+        example_path = EXAMPLES_DIR / "example.toml"
+        data = load_toml(example_path)
+
+        self.assertTrue(example_path.is_file())
+        self.assertEqual(data["course"]["name"], "測試課")
+        self.assertIn("Multics", data["summary"]["glossary"])
+
 
 class GlossaryPromptTests(unittest.TestCase):
     def setUp(self):
@@ -87,7 +95,7 @@ class GlossaryPromptTests(unittest.TestCase):
         prompt_path = self.root / f"prompt-{len(list(self.root.glob('prompt-*')))}.md"
         prompt_path.write_text(prompt, encoding="utf-8")
         data = copy.deepcopy(load_toml(DEFAULT_FILE))
-        data["course"]["name"] = "UNIXops"
+        data["course"]["name"] = "測試課"
         data["system"]["opencc"] = False
         data["summary"]["prompt_file"] = str(prompt_path)
         data["summary"]["glossary"] = glossary or {}

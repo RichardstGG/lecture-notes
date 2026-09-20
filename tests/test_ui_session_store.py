@@ -57,11 +57,11 @@ class SessionStoreTests(unittest.TestCase):
     def tearDown(self):
         self.tmp.cleanup()
 
-    def make_session(self, name="UNIXops_20260918", updated="2026-09-18T12:00:00+08:00"):
+    def make_session(self, name="測試課_20260918", updated="2026-09-18T12:00:00+08:00"):
         session = self.output / name
         session.mkdir()
         (session / "status.json").write_text(json.dumps({
-            "schema_version": 1, "course": "UNIXops", "phase": "done",
+            "schema_version": 1, "course": "測試課", "phase": "done",
             "mode": "live", "elapsed": 123.4, "sections_total": 3,
             "sections_summarized": 2, "started_at": "2026-09-18T10:00:00+08:00",
             "updated_at": updated,
@@ -80,7 +80,7 @@ class SessionStoreTests(unittest.TestCase):
         sessions = self.store.list()
 
         self.assertEqual([item["id"] for item in sessions], [newer.name, older.name])
-        self.assertEqual(sessions[0]["course"], "UNIXops")
+        self.assertEqual(sessions[0]["course"], "測試課")
         self.assertEqual(sessions[0]["phase"], "done")
         self.assertTrue(sessions[0]["has_transcript"])
         self.assertTrue(sessions[0]["has_notes"])
