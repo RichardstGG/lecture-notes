@@ -1,4 +1,5 @@
 """HTTP contract tests for the local UI backend."""
+import asyncio
 import importlib.util
 import json
 import tempfile
@@ -224,6 +225,29 @@ class BackendApiTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(event, _sse("status", self.client.status_result))
         data = json.loads(event.split("data: ", 1)[1])
         self.assertFalse(data["running"])
+
+    async def test_status_stream_closes_when_server_shutdown_is_requested(self):
+        shutdown = asyncio.Event()
+        stream = _status_events(
+            DisconnectAfter(allowed_calls=100), self.client, 60,
+            shutdown_event=shutdown,
+        )
+        self.assertTrue((await anext(stream)).startswith("event: status\n"))
+        shutdown.set()
+        with self.assertRaises(StopAsyncIteration):
+            await asyncio.wait_for(anext(stream), timeout=0.1)
+
+    async def test_session_stream_closes_when_server_shutdown_is_requested(self):
+        session = self.make_session()
+        shutdown = asyncio.Event()
+        stream = _session_events(
+            DisconnectAfter(allowed_calls=100), self.app.state.sessions,
+            session.name, 60, shutdown_event=shutdown,
+        )
+        self.assertTrue((await anext(stream)).startswith("event: snapshot\n"))
+        shutdown.set()
+        with self.assertRaises(StopAsyncIteration):
+            await asyncio.wait_for(anext(stream), timeout=0.1)
 
     async def test_sessions_list_and_detail(self):
         session = self.make_session()
