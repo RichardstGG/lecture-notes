@@ -139,14 +139,40 @@ class Summarizer:
         self.use_opencc = bool(cfg["system"]["opencc"] and opencc_available())
 
     # -- prompt
+    def _glossary_prompt(self):
+        entries = self.cfg.glossary()
+        if not entries:
+            return ""
+        lines = [
+            "# 本課程術語對照表",
+            "- 左邊是正式寫法，「可能被聽成」是老師發音不準或語音辨識常出現的錯誤寫法。",
+            "- 本段逐字稿出現任一錯誤寫法時，一律視為該正式術語：topic 與 points 使用正式寫法，terms 的 term 填正式寫法、asr_original 填逐字稿中原本的寫法。",
+            "- 「是什麼」只用來幫你認出這個詞，不可寫進 explain、points 或任何欄位；explain 仍然只能寫老師在逐字稿裡講過的內容。",
+            "- 對照表裡沒有在本段逐字稿出現的詞，不可寫進筆記。",
+        ]
+        for entry in entries:
+            parts = [entry["term"]]
+            if entry["aka"]:
+                parts.append("可能被聽成：" + "、".join(entry["aka"]))
+            if entry["means"]:
+                parts.append("是什麼：" + entry["means"])
+            lines.append("- " + "｜".join(parts))
+        return "\n".join(lines) + "\n"
+
     def _build_system_prompt(self):
         tpl = self.cfg.summary_prompt()
         terms = [str(t) for t in self.cfg["whisper"].get("terms", []) if str(t).strip()]
         terms_txt = ("- 本課程常用術語（只作為判斷錯字的參考，不代表本段有提到，不可因此加入筆記）："
                      + "、".join(terms) + "\n") if terms else ""
+        glossary_txt = self._glossary_prompt()
+        if not glossary_txt:
+            # 預設 prompt 把 placeholder 獨立放一行；空表時連同行尾移除，
+            # 讓產生的 prompt 與加入 glossary 功能前逐字相同。
+            tpl = tpl.replace("{glossary}\n", "").replace("{glossary}", "")
         extra = self.s.get("extra_instructions", "").strip()
         extra_txt = f"\n# 本課程補充說明\n{extra}\n" if extra else ""
         for key, val in (("{course}", self.cfg.course_name), ("{terms}", terms_txt),
+                         ("{glossary}", glossary_txt),
                          ("{extra_instructions}", extra_txt)):
             if key in tpl:
                 tpl = tpl.replace(key, val)
