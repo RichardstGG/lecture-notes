@@ -13,3 +13,6 @@ terms = ["Unix", "Linux", "BSD", "AT&T", "光纖", "冗餘", "Switch", "Computer
 [summary]
 # model = "qwen3-4b"
 # extra_instructions = ""
+
+[summary.glossary]
+Multics = { means = "貝爾實驗室 1960 年代的分時作業系統專案，UNIX 的前身", aka = ["MUTIX", "Multix", "馬提克斯"] }
