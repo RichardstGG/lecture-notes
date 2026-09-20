@@ -23,6 +23,11 @@ API documentation is available at `/api/docs`. When `ui/frontend/dist` exists,
 the same service hosts the browser UI at `/`; no separate frontend server is
 needed for production-style local use.
 
+Pressing `Ctrl+C` stops only the UI service. Open browser SSE connections are
+notified immediately and have a one-second fallback shutdown bound, so the
+browser tab does not need to be closed. Any detached `lec` run continues and is
+rediscovered the next time the UI service starts.
+
 For frontend development, run `npm run dev` from `ui/frontend`. Vite binds to
 `127.0.0.1:5173` and proxies `/api` to the FastAPI service on port `8765`.
 
