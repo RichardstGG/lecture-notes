@@ -1,5 +1,6 @@
 """Filesystem safety tests for UI course configuration editing."""
 import tempfile
+import tomllib
 import unittest
 from pathlib import Path
 
@@ -92,6 +93,76 @@ class CourseStoreTests(unittest.IsolatedAsyncioTestCase):
         with self.assertRaises(CourseStoreError) as ctx:
             store.get("course")
         self.assertEqual(ctx.exception.code, "course_too_large")
+
+    async def test_vocabulary_round_trip_preserves_unmanaged_content_and_comments(self):
+        target = self.root / "course.toml"
+        target.write_text(
+            '# course comment\n[course]\nname = "Operating Systems"\n\n'
+            '[whisper]\n# keep whisper comment\nterms = [\n  "UNIX",\n  "Multics",\n]\nprompt = "custom"\n\n'
+            '[summary]\nmodel = "qwen3-8b"\n\n'
+            '[summary.glossary]\n# keep glossary comment\n'
+            'Multics = { means = "old", aka = ["MUTIX"] }\n\n'
+            '[audio]\nsource = "default"\n',
+            encoding="utf-8",
+        )
+
+        self.assertEqual(self.store.get("course")["vocabulary"], {
+            "terms": ["UNIX", "Multics"],
+            "glossary": [{"term": "Multics", "means": "old", "aka": ["MUTIX"]}],
+        })
+        detail = await self.store.update_vocabulary(
+            self.client,
+            "course",
+            [" kernel ", "POSIX", "kernel"],
+            [{"term": " kernel ", "means": " 核心 ",
+              "aka": ["核心", "核心", "kernel"]}],
+        )
+
+        parsed = tomllib.loads(detail["content"])
+        self.assertEqual(parsed["whisper"]["terms"], ["kernel", "POSIX"])
+        self.assertEqual(parsed["whisper"]["prompt"], "custom")
+        self.assertEqual(parsed["summary"]["model"], "qwen3-8b")
+        self.assertEqual(parsed["summary"]["glossary"], {
+            "kernel": {"means": "核心", "aka": ["核心"]},
+        })
+        self.assertEqual(parsed["audio"]["source"], "default")
+        self.assertIn("# course comment", detail["content"])
+        self.assertIn("# keep whisper comment", detail["content"])
+        self.assertIn("# keep glossary comment", detail["content"])
+        self.assertEqual(detail["vocabulary"], {
+            "terms": ["kernel", "POSIX"],
+            "glossary": [{"term": "kernel", "means": "核心", "aka": ["核心"]}],
+        })
+
+    async def test_vocabulary_adds_missing_tables_and_rejects_duplicate_terms(self):
+        target = self.root / "course.toml"
+        original = '[course]\nname = "Networks"\n'
+        target.write_text(original, encoding="utf-8")
+
+        detail = await self.store.update_vocabulary(
+            self.client, "course", ["TCP/IP"],
+            [{"term": "router", "means": "路由器", "aka": []}],
+        )
+        parsed = tomllib.loads(detail["content"])
+        self.assertEqual(parsed["whisper"]["terms"], ["TCP/IP"])
+        self.assertEqual(parsed["summary"]["glossary"]["router"]["means"], "路由器")
+
+        saved = target.read_text(encoding="utf-8")
+        with self.assertRaises(CourseStoreError) as ctx:
+            await self.store.update_vocabulary(
+                self.client, "course", [],
+                [{"term": "dup", "means": "one", "aka": []},
+                 {"term": "dup", "means": "two", "aka": []}],
+            )
+        self.assertEqual(ctx.exception.code, "invalid_course_vocabulary")
+        self.assertEqual(target.read_text(encoding="utf-8"), saved)
+
+    async def test_malformed_vocabulary_remains_available_in_raw_editor(self):
+        target = self.root / "course.toml"
+        target.write_text('[whisper]\nterms = "not-an-array"\n', encoding="utf-8")
+        detail = self.store.get("course")
+        self.assertIsNone(detail["vocabulary"])
+        self.assertIn("not-an-array", detail["content"])
 
 
 if __name__ == "__main__":

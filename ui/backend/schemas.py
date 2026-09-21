@@ -36,11 +36,25 @@ class CourseSummary(BaseModel):
     error: str | None = None
 
 
+class GlossaryEntry(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    term: str
+    means: str = ""
+    aka: list[str] = Field(default_factory=list)
+
+
+class CourseVocabulary(BaseModel):
+    terms: list[str] = Field(default_factory=list)
+    glossary: list[GlossaryEntry] = Field(default_factory=list)
+
+
 class CourseDetail(BaseModel):
     api_version: int = API_VERSION
     id: str
     file: str
     content: str
+    vocabulary: CourseVocabulary | None = None
 
 
 class CourseCreateRequest(BaseModel):
@@ -53,6 +67,13 @@ class CourseUpdateRequest(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
     content: str
+
+
+class CourseVocabularyUpdateRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    terms: list[str] = Field(default_factory=list)
+    glossary: list[GlossaryEntry] = Field(default_factory=list)
 
 
 class SessionSummary(BaseModel):
