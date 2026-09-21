@@ -223,6 +223,11 @@ extra_instructions = "本課程著重網路概念，重點請保留協定名稱�
 # prompt_file = "prompts/計概.md"      # 整份替換預設 prompt（可用 {course} {terms} {extra_instructions}）
 ```
 
+若要依課程分層儲存，可在 `config/local.toml` 設定
+`paths.session_name = "{course}/{date:%Y%m%d}"`，輸出會放在
+`outputs/<課程名稱>/<YYYYMMDD>/`。預設值仍是單層的
+`{course}_{date:%Y%m%d}`。
+
 `lec summarize` 預設使用**目前**的課程設定檔（改完 prompt 可直接重做）；找不到才用資料夾內的 `config.used.toml`。
 
 ## 輸出（outputs/<課名>_<YYYYMMDD>/，同一天同課名再錄會加 _HHMM）

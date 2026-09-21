@@ -1,5 +1,6 @@
 """一次 lec run / lec summarize 的完整流程（server 生命週期、訊號處理、收尾）。"""
 import os
+import re
 import shutil
 import signal
 import subprocess
@@ -21,10 +22,17 @@ def make_session_dir(cfg):
     root = cfg.path(cfg["paths"]["output_root"])
     now = datetime.now()
     try:
-        name = cfg["paths"]["session_name"].format(course=cfg.course_name, date=now)
+        name = cfg["paths"]["session_name"].format(
+            course=safe_name(cfg.course_name), date=now,
+        )
     except (KeyError, ValueError, IndexError) as e:
-        raise ConfigError(f"paths.session_name 格式錯誤（可用 {{course}}、{{date:%Y%m%d}}）：{e}") from None
-    d = root / safe_name(name)
+        raise ConfigError(
+            f"paths.session_name 格式錯誤（可用 {{course}}、{{date:%Y%m%d}}，"
+            f"可用 / 分層）：{e}"
+        ) from None
+    parts = [safe_name(part) for part in re.split(r"[/\\]", name)
+             if part.strip() not in ("", ".", "..")]
+    d = root.joinpath(*parts) if parts else root / "session"
     base, n = d, 1
     # 同一天同課名再錄，另開資料夾避免混在一起
     while d.exists() and any(d.iterdir()):

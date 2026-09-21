@@ -58,8 +58,13 @@ export function applyContentEvent(
   };
 }
 
-export function sessionIdFromPath(path?: string): string | undefined {
+export function sessionIdFromPath(path?: string, knownIds: string[] = []): string | undefined {
   if (!path) return undefined;
-  const parts = path.replaceAll("\\", "/").split("/").filter(Boolean);
+  const normalized = path.replaceAll("\\", "/").replace(/\/+$/, "");
+  const match = [...knownIds]
+    .sort((left, right) => right.length - left.length)
+    .find((id) => normalized === id || normalized.endsWith(`/${id}`));
+  if (match) return match;
+  const parts = normalized.split("/").filter(Boolean);
   return parts.at(-1);
 }

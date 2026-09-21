@@ -102,11 +102,12 @@ Unavailable and timed-out CLI processes return HTTP `503`. Failed commands and
 invalid CLI JSON/contracts return HTTP `502`. The backend preserves unknown
 status and course fields so that additive CLI contract changes remain compatible.
 
-Session discovery reads the direct children of the configured output root. The
-root comes from `LECTURE_NOTES_OUTPUT_ROOT`, then `config/local.toml`, then
-`config/default.toml`. Unrelated directories and symlinks that leave the output
-root are ignored. Symlinked transcript, notes, status, and configuration files
-are never followed.
+Session discovery recursively searches the configured output root for session
+marker files. Nested session ids are slash-separated paths relative to that
+root, for example `UNIXops/20260921`. The root comes from
+`LECTURE_NOTES_OUTPUT_ROOT`, then `config/local.toml`, then
+`config/default.toml`. Unrelated directories and symlinks are ignored.
+Symlinked transcript, notes, status, and configuration files are never followed.
 
 The session stream sends a `snapshot` event first. Later `content` events contain
 `target` (`transcript` or `notes`), `operation` (`append` or `replace`), `content`,

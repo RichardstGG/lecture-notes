@@ -22,7 +22,9 @@ export default function App() {
   const [summarizing, setSummarizing] = useState(false);
   const [phaseStartedAt, setPhaseStartedAt] = useState(() => Date.now());
   const [clockNow, setClockNow] = useState(() => Date.now());
-  const runningId = sessionIdFromPath(data.status.session);
+  const runningId = sessionIdFromPath(
+    data.status.session, data.sessions.map((session) => session.id),
+  );
   const visibleDetail: SessionDetail | undefined = data.detail;
   const phase = data.status.status?.phase;
   const progress = progressFor(data.status.status);

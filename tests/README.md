@@ -25,6 +25,7 @@ python3 -m unittest tests.test_platform_parsers -v
 | `test_platform_process.py` | 行程存活判斷、spawn 參數、中斷／強制關閉、防休眠（Windows 分支用 mock 假造 `ctypes.windll`） |
 | `test_platform_engine.py` | 引擎執行檔搜尋（Visual Studio Release/Debug 佈局等）、動態函式庫搜尋路徑 |
 | `test_setup_engines.py` | `setup_engines.py` 的後端／generator 選擇、`engines.lock` 讀寫、編譯工具檢查、`--generator` 參數傳遞 |
+| `test_session_paths.py` | 輸出資料夾命名、分層、同名後綴與 traversal 防護 |
 | `test_devices_permission_hint.py` | 麥克風權限錯誤訊息（啟發式，非窮舉） |
 | `test_doctor_helpers.py` | `core/doctor.py` 裡跟平台邏輯無關的小工具函式 |
 | `test_ui_course_store.py` | UI 課程設定的安全路徑、symlink 防護、驗證與原子寫入 |

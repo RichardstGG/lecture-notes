@@ -72,27 +72,36 @@ class SessionStore:
         return cls(root, settings.max_content_bytes)
 
     def _is_session(self, path):
+        path = Path(path)
         try:
             resolved = path.resolve()
         except OSError:
             return False
-        return (not path.is_symlink() and resolved.parent == self.output_root
+        try:
+            relative = path.relative_to(self.output_root)
+        except ValueError:
+            return False
+        current = self.output_root
+        for part in relative.parts:
+            current /= part
+            if current.is_symlink():
+                return False
+        return (resolved != self.output_root and resolved.is_relative_to(self.output_root)
                 and resolved.is_dir()
                 and any((resolved / name).is_file()
                         and not (resolved / name).is_symlink()
                         for name in SESSION_MARKERS))
 
     def _session_dir(self, session_id):
-        if (not session_id or session_id in {".", ".."} or "/" in session_id
-                or "\\" in session_id or "\x00" in session_id):
+        if (not session_id or "\\" in session_id or "\x00" in session_id):
             raise SessionStoreError("invalid_session_id", "Invalid session identifier", 400)
-        candidate = self.output_root / session_id
-        if candidate.is_symlink():
+        parts = session_id.split("/")
+        if any(part in {"", ".", ".."} for part in parts):
+            raise SessionStoreError("invalid_session_id", "Invalid session identifier", 400)
+        path = self.output_root.joinpath(*parts)
+        if not self._is_session(path):
             raise SessionStoreError("session_not_found", "Session not found", 404)
-        path = candidate.resolve()
-        if path.parent != self.output_root or not self._is_session(path):
-            raise SessionStoreError("session_not_found", "Session not found", 404)
-        return path
+        return path.resolve()
 
     def _course_name(self, path, status):
         if status.get("course"):
@@ -127,7 +136,7 @@ class SessionStore:
         oldest = min(timestamps, default=newest)
         recordings = list(path.glob("recording_*.ogg"))
         return {
-            "id": path.name,
+            "id": path.relative_to(self.output_root).as_posix(),
             "course": self._course_name(path, status),
             "started_at": status.get("started_at") or _iso(oldest),
             "updated_at": status.get("updated_at") or _iso(newest),
@@ -147,8 +156,16 @@ class SessionStore:
         try:
             if not self.output_root.exists():
                 return []
-            sessions = [self._summary(path) for path in self.output_root.iterdir()
-                        if self._is_session(path)]
+            sessions = []
+            pending = [self.output_root]
+            while pending:
+                parent = pending.pop()
+                for path in parent.iterdir():
+                    if path.is_symlink() or not path.is_dir():
+                        continue
+                    pending.append(path)
+                    if self._is_session(path):
+                        sessions.append(self._summary(path))
         except OSError as exc:
             raise SessionStoreError(
                 "sessions_unavailable", f"Unable to read session directory: {exc}",
