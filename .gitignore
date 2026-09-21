@@ -8,6 +8,7 @@ llama.cpp/
 config/local.toml
 config/*.tmp
 courses/*.toml
+courses/*.toml.tmp
 
 # 範例的原始錄音與本機工作紀錄不進 git
 samples/_raw_recording.wav
@@ -15,6 +16,7 @@ Claude outputs/
 
 __pycache__/
 *.pyc
+.venv/
 
 # Frontend dependencies and generated build output
 ui/frontend/node_modules/

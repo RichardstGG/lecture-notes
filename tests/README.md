@@ -27,6 +27,7 @@ python3 -m unittest tests.test_platform_parsers -v
 | `test_setup_engines.py` | `setup_engines.py` 的後端／generator 選擇、`engines.lock` 讀寫、編譯工具檢查、`--generator` 參數傳遞 |
 | `test_devices_permission_hint.py` | 麥克風權限錯誤訊息（啟發式，非窮舉） |
 | `test_doctor_helpers.py` | `core/doctor.py` 裡跟平台邏輯無關的小工具函式 |
+| `test_ui_course_store.py` | UI 課程設定的安全路徑、symlink 防護、驗證與原子寫入 |
 
 macOS／Windows 相關的測試全部是靜態驗證＋mock，**不代表已經在真機上測過**，
 細節與已知限制見 `docs/platform-macos.md`、`docs/platform-windows.md`。
