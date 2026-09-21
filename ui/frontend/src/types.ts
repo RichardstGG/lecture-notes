@@ -47,6 +47,28 @@ export interface Course {
   error?: string;
 }
 
+export interface ModelInfo {
+  id: string;
+  path: string;
+  available: boolean;
+  size_bytes?: number;
+  disable_thinking?: boolean;
+  [key: string]: unknown;
+}
+
+export interface ModelGroup {
+  selected: string;
+  models: ModelInfo[];
+  [key: string]: unknown;
+}
+
+export interface ModelInventory {
+  schema_version: number;
+  summary: ModelGroup;
+  whisper: ModelGroup;
+  [key: string]: unknown;
+}
+
 export interface CourseDetail {
   api_version: number;
   id: string;

@@ -24,6 +24,11 @@ class StubClient:
     def __init__(self):
         self.status_result = {"schema_version": 1, "running": False}
         self.courses_result = []
+        self.models_result = {
+            "schema_version": 1,
+            "summary": {"selected": "qwen3-8b", "models": []},
+            "whisper": {"selected": "large-v3-turbo", "models": []},
+        }
         self.error = None
         self.stop_calls = []
         self.course_root = None
@@ -39,6 +44,11 @@ class StubClient:
         if self.error:
             raise self.error
         return self.courses_result
+
+    async def models(self):
+        if self.error:
+            raise self.error
+        return self.models_result
 
     async def stop(self, force=False):
         if self.error:
@@ -154,6 +164,22 @@ class BackendApiTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(response.status_code, 200)
         self.assertEqual(response.json()[0]["model"], "future-14b")
         self.assertEqual(response.json()[1]["error"], "bad TOML")
+
+    async def test_models_exposes_versioned_dynamic_inventory(self):
+        self.client.models_result["summary"]["models"] = [{
+            "id": "future-14b",
+            "path": "/models/future.gguf",
+            "available": True,
+            "size_bytes": 1234,
+            "disable_thinking": False,
+            "future_field": "kept",
+        }]
+        response = await self.request("GET", "/api/v1/models")
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(response.json()["schema_version"], 1)
+        self.assertEqual(response.json()["summary"]["selected"], "qwen3-8b")
+        self.assertEqual(response.json()["summary"]["models"][0]["id"], "future-14b")
+        self.assertEqual(response.json()["summary"]["models"][0]["future_field"], "kept")
 
     async def test_course_create_and_detail_use_versioned_contract(self):
         response = await self.request("POST", "/api/v1/courses", json={"id": "資料結構"})

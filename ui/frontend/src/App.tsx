@@ -111,7 +111,7 @@ export default function App() {
           {data.status.status?.last_error && <p className="inline-error">{data.status.status.last_error}</p>}
         </>}
 
-        <RunPanel courses={data.courses} status={data.status} onChanged={data.refresh} onError={data.setError} />
+        <RunPanel courses={data.courses} models={data.models} status={data.status} onChanged={data.refresh} onError={data.setError} />
       </section>
 
       <div className="workspace-grid">

@@ -1,16 +1,22 @@
 import { useEffect, useMemo, useState, type FormEvent } from "react";
 import { api } from "../api";
-import type { Course, RuntimeStatus } from "../types";
+import type { Course, ModelInventory, RuntimeStatus } from "../types";
 import { Icon } from "./Icon";
 
 interface Props {
   courses: Course[];
+  models?: ModelInventory;
   status: RuntimeStatus;
   onChanged: () => Promise<unknown>;
   onError: (message?: string) => void;
 }
 
-export function RunPanel({ courses, status, onChanged, onError }: Props) {
+function formatModelSize(bytes?: number): string | undefined {
+  if (bytes === undefined) return undefined;
+  return `${(bytes / (1024 ** 3)).toFixed(1)} GB`;
+}
+
+export function RunPanel({ courses, models, status, onChanged, onError }: Props) {
   const validCourses = useMemo(() => courses.filter((course) => !course.error), [courses]);
   const [course, setCourse] = useState("");
   const [mode, setMode] = useState<"live" | "file">("live");
@@ -20,6 +26,9 @@ export function RunPanel({ courses, status, onChanged, onError }: Props) {
   const [starting, setStarting] = useState(false);
   const [stopMode, setStopMode] = useState<"normal" | "force">();
   const [stopRequesting, setStopRequesting] = useState(false);
+  const selectedCourse = validCourses.find((item) => item.id === course);
+  const defaultModel = selectedCourse?.model || models?.summary.selected;
+  const defaultModelInfo = models?.summary.models.find((item) => item.id === defaultModel);
 
   useEffect(() => {
     if (!course && validCourses[0]) setCourse(validCourses[0].id);
@@ -95,11 +104,17 @@ export function RunPanel({ courses, status, onChanged, onError }: Props) {
       <input value={inputFile} onChange={(event) => setInputFile(event.target.value)} placeholder="/home/you/lecture.ogg" required />
     </label>}
     <label>
-      <span>模型覆寫（選填）</span>
-      <input list="known-models" value={model} onChange={(event) => setModel(event.target.value)} placeholder="使用課程預設" />
-      <datalist id="known-models">
-        {[...new Set(validCourses.map((item) => item.model).filter(Boolean))].map((name) => <option value={name} key={name} />)}
-      </datalist>
+      <span>總結模型（選填）</span>
+      <select value={model} onChange={(event) => setModel(event.target.value)} disabled={!models}>
+        <option value="">{models
+          ? `使用課程預設${defaultModel ? `（${defaultModel}${defaultModelInfo && !defaultModelInfo.available ? "，未安裝" : ""}）` : ""}`
+          : "正在載入模型清單…"}</option>
+        {models?.summary.models.map((item) => <option value={item.id} disabled={!item.available} key={item.id}>
+          {item.id}{item.available
+            ? formatModelSize(item.size_bytes) ? ` · ${formatModelSize(item.size_bytes)}` : ""
+            : "（未安裝）"}
+        </option>)}
+      </select>
     </label>
     <label className="check-field">
       <input type="checkbox" checked={transcribeOnly} onChange={(event) => setTranscribeOnly(event.target.checked)} />

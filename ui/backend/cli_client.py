@@ -99,6 +99,20 @@ class LecClient:
             raise LecCommandError("cli_invalid_response", "lec courses returned an invalid response")
         return result
 
+    async def models(self):
+        result = await self.run_json("models", "--json")
+        if not isinstance(result, dict) or not isinstance(result.get("schema_version"), int):
+            raise LecCommandError("cli_invalid_response", "lec models returned an invalid response")
+        for key in ("summary", "whisper"):
+            group = result.get(key)
+            if (not isinstance(group, dict) or not isinstance(group.get("selected"), str)
+                    or not isinstance(group.get("models"), list)
+                    or not all(isinstance(item, dict) for item in group["models"])):
+                raise LecCommandError(
+                    "cli_invalid_response", "lec models returned an invalid response",
+                )
+        return result
+
     async def create_course(self, course_id):
         return (await self.run_text("new", course_id)).strip()
 

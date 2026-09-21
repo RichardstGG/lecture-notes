@@ -39,6 +39,28 @@ class LecClientTests(unittest.IsolatedAsyncioTestCase):
             await client.courses()
         self.assertEqual(ctx.exception.code, "cli_invalid_response")
 
+    async def test_models_runs_versioned_json_command(self):
+        client = self.write_script("""
+            import json, sys
+            assert sys.argv[1:] == ["models", "--json"]
+            print(json.dumps({
+                "schema_version": 1,
+                "summary": {"selected": "qwen", "models": []},
+                "whisper": {"selected": "large", "models": []},
+            }))
+        """)
+        data = await client.models()
+        self.assertEqual(data["summary"]["selected"], "qwen")
+
+    async def test_models_rejects_incomplete_json_contract(self):
+        client = self.write_script("""
+            import json
+            print(json.dumps({"schema_version": 1, "summary": {"models": []}}))
+        """)
+        with self.assertRaises(LecCommandError) as ctx:
+            await client.models()
+        self.assertEqual(ctx.exception.code, "cli_invalid_response")
+
     async def test_nonzero_exit_is_structured(self):
         client = self.write_script("""
             import sys

@@ -22,7 +22,7 @@ EPILOG = """範例：
   lec summarize outputs/測試課_20260918 --redo 00:05:13
   lec summarize outputs/測試課_20260918 --redo all --model qwen3-4b
   lec config 計算機概論                      印出合併後的設定
-  lec courses / lec new 課名 / lec status / lec stop
+  lec courses / lec models / lec new 課名 / lec status / lec stop
   lec devices [--test 編號] [--save 編號]    列出 / 測試 / 設定麥克風
   lec doctor [課名] [--mic]                  檢查環境（回報問題時請附上輸出）
 """
@@ -125,6 +125,57 @@ def cmd_courses(args):
             print(f"{f.stem:<16} 模型 {cfg['summary']['model']:<10} 術語 {len(cfg['whisper']['terms'])} 個")
         except C.ConfigError as e:
             print(f"{f.stem:<16} ✖ {e}")
+    return 0
+
+
+def _model_inventory(cfg):
+    def entries(models, kind):
+        out = []
+        for model_id, spec in models.items():
+            configured = spec if isinstance(spec, dict) else {}
+            path = cfg.path(configured.get("path", model_id)).resolve()
+            available = path.is_file()
+            entry = {
+                "id": str(model_id),
+                "path": str(path),
+                "available": available,
+            }
+            if available:
+                entry["size_bytes"] = path.stat().st_size
+            if kind == "summary":
+                entry["disable_thinking"] = bool(configured.get("disable_thinking", False))
+            out.append(entry)
+        return out
+
+    return {
+        "schema_version": 1,
+        "summary": {
+            "selected": str(cfg["summary"]["model"]),
+            "models": entries(cfg.data.get("models", {}), "summary"),
+        },
+        "whisper": {
+            "selected": str(cfg["whisper"]["model"]),
+            "models": entries(cfg["whisper"].get("models", {}), "whisper"),
+        },
+    }
+
+
+def cmd_models(args):
+    try:
+        cfg, _ = C.load(args.course)
+    except C.ConfigError as exc:
+        die(str(exc))
+    inventory = _model_inventory(cfg)
+    if args.json:
+        print(json.dumps(inventory, ensure_ascii=False, indent=2))
+        return 0
+    for key, title in (("summary", "總結模型"), ("whisper", "Whisper 模型")):
+        group = inventory[key]
+        print(f"{title}：")
+        for model in group["models"]:
+            mark = "*" if model["id"] == group["selected"] else " "
+            status = "✔ 已安裝" if model["available"] else "✖ 未安裝"
+            print(f"{mark} {model['id']:<24} {status}  {model['path']}")
     return 0
 
 
@@ -273,6 +324,11 @@ def main(argv=None):
     p = sub.add_parser("courses", help="列出課程設定檔")
     p.add_argument("--json", action="store_true")
     p.set_defaults(func=cmd_courses)
+
+    p = sub.add_parser("models", help="列出設定中的模型與本機檔案狀態")
+    p.add_argument("course", nargs="?", help="套用指定課程的模型設定")
+    p.add_argument("--json", action="store_true")
+    p.set_defaults(func=cmd_models)
 
     p = sub.add_parser("new", help="從範本建立課程設定檔")
     p.add_argument("course")

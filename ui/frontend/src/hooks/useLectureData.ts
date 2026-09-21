@@ -3,6 +3,7 @@ import { api, ApiError } from "../api";
 import type {
   ContentEvent,
   Course,
+  ModelInventory,
   RuntimeStatus,
   SessionDetail,
   SessionSummary,
@@ -14,6 +15,7 @@ const idleStatus: RuntimeStatus = { schema_version: 1, running: false };
 export function useLectureData() {
   const [status, setStatus] = useState<RuntimeStatus>(idleStatus);
   const [courses, setCourses] = useState<Course[]>([]);
+  const [models, setModels] = useState<ModelInventory>();
   const [sessions, setSessions] = useState<SessionSummary[]>([]);
   const [selectedId, setSelectedId] = useState<string>();
   const [detail, setDetail] = useState<SessionDetail>();
@@ -31,11 +33,12 @@ export function useLectureData() {
   const refresh = useCallback(async () => {
     setLoading(true);
     try {
-      const [nextStatus, nextCourses, nextSessions] = await Promise.all([
-        api.status(), api.courses(), api.sessions(),
+      const [nextStatus, nextCourses, nextModels, nextSessions] = await Promise.all([
+        api.status(), api.courses(), api.models(), api.sessions(),
       ]);
       setStatus(nextStatus);
       setCourses(nextCourses);
+      setModels(nextModels);
       setSessions(nextSessions);
       setSelectedId((current) => current ?? nextSessions[0]?.id);
       setError(undefined);
@@ -89,7 +92,7 @@ export function useLectureData() {
   }, [selectedId]);
 
   return {
-    status, courses, sessions, selectedId, setSelectedId, detail,
+    status, courses, models, sessions, selectedId, setSelectedId, detail,
     connected, loading, error, setError, refresh, refreshSessions,
   };
 }
