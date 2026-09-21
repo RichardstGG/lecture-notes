@@ -60,7 +60,7 @@ def test_volume(source, seconds=3, backend=None):
     cmd = ["ffmpeg", "-hide_banner", "-nostdin", *P.ffmpeg_input(target, backend),
            "-t", str(seconds), "-af", "volumedetect", "-f", "null", "-"]
     try:
-        r = subprocess.run(cmd, capture_output=True, text=True, errors="replace",
+        r = subprocess.run(cmd, capture_output=True, text=True, encoding="utf-8", errors="replace",
                            timeout=seconds + 20)
     except subprocess.TimeoutExpired as e:
         if backend == "avfoundation":

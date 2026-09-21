@@ -57,7 +57,7 @@ def opencc_convert(texts):
         return texts
     try:
         out = subprocess.run(["opencc", "-c", "s2twp.json"], input="\n".join(texts),
-                             capture_output=True, text=True, timeout=20, check=True).stdout
+                             capture_output=True, text=True, encoding="utf-8", errors="replace", timeout=20, check=True).stdout
         lines = out.rstrip("\n").split("\n")
         if len(lines) != len(texts):
             return texts

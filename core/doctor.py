@@ -29,7 +29,7 @@ def read_lock(path):
 
 def git_head(d):
     try:
-        r = subprocess.run(["git", "-C", str(d), "rev-parse", "HEAD"], capture_output=True, text=True, timeout=5)
+        r = subprocess.run(["git", "-C", str(d), "rev-parse", "HEAD"], capture_output=True, text=True, encoding="utf-8", errors="replace", timeout=5)
         return r.stdout.strip() or None
     except (OSError, subprocess.TimeoutExpired):
         return None
@@ -116,7 +116,7 @@ def run(course=None, sets=(), mic=False):
     b = Path(l.binary())
     if os.access(b, os.X_OK):
         try:
-            r = subprocess.run([str(b), "--list-devices"], capture_output=True, text=True, timeout=30,
+            r = subprocess.run([str(b), "--list-devices"], capture_output=True, text=True, encoding="utf-8", errors="replace", timeout=30,
                                env=l._env(b))
             devs = [x.strip() for x in (r.stdout + r.stderr).splitlines()
                     if x.strip().lower().startswith(("vulkan", "cuda", "metal"))]

@@ -232,7 +232,7 @@ class Inhibitor:
 def _run(cmd, timeout=15):
     try:
         kw = {"creationflags": subprocess.CREATE_NO_WINDOW} if IS_WINDOWS else {}
-        r = subprocess.run(cmd, capture_output=True, text=True, errors="replace",
+        r = subprocess.run(cmd, capture_output=True, text=True, encoding="utf-8", errors="replace",
                            timeout=timeout, **kw)
         return (r.stdout or "") + (r.stderr or "")
     except (OSError, subprocess.TimeoutExpired):

@@ -75,7 +75,7 @@ def run(cmd, hint=None, **kw):
 
 def out(cmd):
     try:
-        r = subprocess.run([str(c) for c in cmd], capture_output=True, text=True,
+        r = subprocess.run([str(c) for c in cmd], capture_output=True, text=True, encoding="utf-8",
                            errors="replace", timeout=60)
         return (r.stdout or "").strip()
     except (OSError, subprocess.TimeoutExpired):
