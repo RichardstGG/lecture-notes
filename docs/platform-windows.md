@@ -60,6 +60,22 @@ Windows 上，`lec devices` 應該會回報找不到任何麥克風**，即使 f
   已經在 `lec`（CLI 入口）裡補上 `P.force_utf8()`，在 import `core.cli` 之後、
   執行任何指令之前就先重設好編碼。
 
+## 子行程的文字編碼（實機回報，2026-09）
+
+`lec run 測試課 --file samples/test8min.ogg` 在 Windows 上轉錄到 00:03:13 那段時印出
+`UnicodeEncodeError: 'cp950' codec can't encode character '\u6269'`，那一段轉錄花了
+20.7 秒（其他段不到 1 秒），而且沒轉成繁體。
+
+原因：`subprocess.run(..., text=True)` 沒指定 `encoding` 時會用系統 locale 編碼，
+繁體中文 Windows 是 cp950（Big5）。whisper 偶爾輸出簡體字（「扩」U+6269），
+這個字不在 cp950 裡，送進 opencc 的寫入執行緒就丟出例外、stdin 沒被關閉，
+opencc 一直等到 20 秒逾時，`opencc_convert()` 只好回傳沒轉換的原文。
+
+修正：`core/` 與 `setup_engines.py` 裡所有 `text=True` 的 subprocess 呼叫都明確指定
+`encoding="utf-8"`（opencc、ffmpeg、whisper/llama-server、git 的輸出都是 UTF-8）。
+`tests/test_platform_subprocess_encoding.py` 有一個靜態檢查，之後新增的
+`text=True` 呼叫如果忘了指定 encoding，測試會失敗。
+
 ## 行程與停止
 
 - Windows 沒辦法對別的行程送 `SIGINT`（`interrupt()` 直接回傳 `False`），

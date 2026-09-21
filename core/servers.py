@@ -134,7 +134,7 @@ class ManagedServer:
                 pass
             time.sleep(1)
         try:
-            out = subprocess.run([str(binary), "--list-devices"], capture_output=True, text=True,
+            out = subprocess.run([str(binary), "--list-devices"], capture_output=True, text=True, encoding="utf-8",
                                  errors="replace", timeout=30, env=self._env(binary))
             devs = [l.strip() for l in (out.stdout + out.stderr).splitlines()
                     if l.strip().lower().startswith(("vulkan", "cuda", "metal", "rocm"))]
