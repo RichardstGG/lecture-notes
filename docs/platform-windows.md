@@ -1,40 +1,40 @@
-# Windows 平台備忘（實驗中，尚未實機驗證）
+# Windows 平台備忘（實測中）
 
-狀態：**程式已支援，尚未在真正的 Windows 上跑過**。這次修改在程式碼審查中
-發現並修正了一個會讓 Windows 麥克風清單永遠是空的解析 bug（見下方），但因為
-沒有 Windows 實機，只能用假造的 ffmpeg 輸出做 mock 測試，**沒有**在真正的
-Windows 環境驗證過。
+狀態：**實測中**。已在 Windows 實機跑過 `setup_engines.py --backend cuda`、
+`lec run --file`（CUDA）與 `lec devices`，下面標註「實機」的段落是依實機結果修正的；
+其餘仍是依文件推導與 mock test。
 
-## 這次修好的 bug：DirectShow 麥克風列表永遠是空的
+## DirectShow 裝置列表的兩種格式（實機更正，2026-09）
 
-`core/platform.py::_dshow_sources()` 原本的 regex 假設 ffmpeg 列出裝置時，
-名稱後面會標註 `"裝置名稱" (audio)`：
+ffmpeg `-f dshow -list_devices true` 的輸出有兩種格式，`parse_dshow_devices()` 兩種都支援：
 
-```python
-_DSHOW_NAME = re.compile(r'"([^"]+)"\s*\((audio|video)\)')
-```
-
-但 ffmpeg 實際的 `-f dshow -list_devices true` 輸出是先印一行**區段標題**
-（`DirectShow video devices` / `DirectShow audio devices`），裝置本身只印
-`"名稱"`，並不會在名稱後面加註 `(audio)`／`(video)`：
+新版（Windows 實機 gyan.dev ffmpeg 9.0.1 的原文）：類型直接寫在名稱後面，沒有區段標題。
 
 ```
-[dshow @ 0x...] DirectShow video devices (some may be both video and audio devices)
-[dshow @ 0x...]  "Integrated Webcam"
-[dshow @ 0x...]     Alternative name "@device_pnp_...#{...}"
-[dshow @ 0x...] DirectShow audio devices
-[dshow @ 0x...]  "麥克風陣列 (Realtek(R) Audio)"
-[dshow @ 0x...]     Alternative name "@device_cm_{...}\wave_{...}"
+[in#0 @ …] "Integrated Camera" (video)
+[in#0 @ …]   Alternative name "@device_pnp_\\?\usb#vid_174f&…\global"
+[in#0 @ …] "OBS Virtual Camera" (none)
+[in#0 @ …]   Alternative name "@device_sw_{…}\{…}"
+[in#0 @ …] "麥克風排列 (Realtek(R) Audio)" (audio)
+[in#0 @ …]   Alternative name "@device_cm_{33D9A762-…}\wave_{…}"
 ```
 
-舊的 regex 在這種真實輸出上永遠 match 不到（`tests/test_platform_parsers.py`
-裡的 `DshowSourcesTests` 用同樣的字串證實了這點），也就是說**在真正的
-Windows 上，`lec devices` 應該會回報找不到任何麥克風**，即使 ffmpeg 有正確
-列出裝置。這應該是 Windows 目前還沒實測出問題、但邏輯上一定會炸的地方。
+類型可能是 `audio`、`video`、`none`，或同時有兩種的 `audio, video`。
 
-修好後的解析方式改成：先追蹤目前在哪個區段（`video` / `audio`），只在
-`audio` 區段內把 `"名稱"` 當成一個裝置，下一行如果有 `Alternative name`
-就把裝置路徑存成 `id`（比顯示名稱穩定，不受中文、逗號、重複名稱影響）。
+舊版：先印 `DirectShow video devices` / `DirectShow audio devices` 區段標題，裝置只印
+`"名稱"`，要看所在區段判斷類型。
+
+**更正**：第一個跨平台 PR（`f324e10`）在沒有 Windows 實機的情況下，以為 ffmpeg 只用
+舊版的區段標題格式，把原本會認 `"名稱" (audio)` 的解析器改成只認區段標題。結果在新版
+ffmpeg 上 `lec devices` 一個裝置都列不出來，`default` 解析成 `None`，
+`lec devices --test default` 把 `audio=None` 交給 ffmpeg 而得到 `I/O error`；當時的權限
+提示又把 `I/O error` 當成權限問題，錯誤地叫使用者去檢查隱私權設定。修正內容：
+
+- 兩種格式都解析，只收類型含 `audio` 的裝置；Alternative name 只接在剛解析出來的
+  音訊裝置後面。`DshowModernFormatTests` 用的是上面的實機原文。
+- 找不到任何裝置時，`test_volume()` 直接回報「找不到任何錄音裝置」，不再執行
+  `ffmpeg -i audio=None`。
+- dshow 的權限提示只認 `Access is denied`，不再把 `I/O error` 當成權限問題。
 
 ## 錄音（DirectShow）
 
@@ -43,6 +43,9 @@ Windows 上，`lec devices` 應該會回報找不到任何麥克風**，即使 f
   `@device_cm_{33D9A762-...}\wave_{...}`），這個字串不含中文或逗號，交給
   ffmpeg 當 `-i audio=<id>` 時不需要額外處理跳脫字元；只有在裝置沒有
   Alternative name 時才會退回用顯示名稱本身當 `id`。
+- **待實機確認**：用 Alternative name 開裝置（`-i "audio=@device_cm_{…}\wave_{…}"`）
+  還沒在實機上成功驗證過；已確認的是用顯示名稱 `-i "audio=麥克風排列 (Realtek(R) Audio)"`
+  可以錄音。如果 Alternative name 開不起來，要改成用顯示名稱開裝置。
 - 重複裝置名稱（兩個麥克風顯示同一個名字）沒問題：因為 `id` 用的是
   Alternative name／裝置路徑，兩個裝置的路徑一定不同，`lec devices --save`
   存的是 `id` 不是顯示名稱，所以不會選錯。

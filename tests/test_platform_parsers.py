@@ -3,12 +3,11 @@
 涵蓋：
 - PulseAudio（Linux）：JSON 與 short 格式、缺 pactl
 - AVFoundation（macOS）：中文/空白裝置名稱、video/audio 分段
-- DirectShow（Windows）：迴歸測試 _dshow_sources() 的解析 bug 修正
-  （舊版 regex 假設裝置名稱後面會標註 "(audio)"／"(video)"，但 ffmpeg 實際輸出
-  是用兩個分開的區段標題「DirectShow video devices」／「DirectShow audio devices」，
-  裝置名稱本身沒有這個標註；舊版因此在真實 Windows 上永遠列不出麥克風）。
+- DirectShow（Windows）：兩種 ffmpeg 輸出格式都要能解析——新版把類型寫在名稱後面
+  （"名稱" (audio)，DshowModernFormatTests 用的是 Windows 實機 ffmpeg 9.0.1 的原文），
+  舊版用「DirectShow audio devices」區段標題（DshowSourcesTests）。
 
-靜態驗證：全部用假造的 ffmpeg/pactl 輸出字串做 mock，不代表已在真機測過。
+除了 DshowModernFormatTests 的實機樣本，其餘都是依文件推導的假造輸出。
 """
 import unittest
 from unittest import mock
@@ -99,8 +98,8 @@ class AvfoundationSourcesTests(unittest.TestCase):
 
 
 class DshowSourcesTests(unittest.TestCase):
-    """迴歸測試：舊版 regex `"([^"]+)"\\s*\\((audio|video)\\)` 在真實 ffmpeg 輸出上永遠
-    match 不到（裝置名稱後面根本沒有 "(audio)" 這種標註），導致 Windows 麥克風列表永遠是空的。
+    """舊版 ffmpeg 的格式：先印「DirectShow audio devices」區段標題，裝置只印 "名稱"。
+    （新版格式見 DshowModernFormatTests。兩種都要能解析。）
     """
 
     SAMPLE = "\n".join([
@@ -167,6 +166,55 @@ class DshowSourcesTests(unittest.TestCase):
     def test_missing_ffmpeg_returns_none(self):
         with mock.patch.object(P.shutil, "which", return_value=None):
             self.assertIsNone(P.list_sources(backend="dshow"))
+
+
+
+class DshowModernFormatTests(unittest.TestCase):
+    """新版 ffmpeg（實測 Windows 上 gyan.dev 9.0.1 full build）的格式：沒有區段標題，
+    類型直接寫在名稱後面。迴歸：只認區段標題的解析器在這種輸出上一個裝置都列不到，
+    `lec devices` 空白、default 解析成 None，錄音測試變成 `audio=None` → I/O error。
+    SAMPLE 是實機輸出原文。"""
+
+    SAMPLE = "\n".join([
+        '[in#0 @ 00000220aef14080] "Integrated Camera" (video)',
+        '[in#0 @ 00000220aef14080]   Alternative name "@device_pnp_\\\\?\\usb#vid_174f&pid_244c&mi_00'
+        '#6&29ecd27f&1&0000#{65e8773d-8f56-11d0-a3b9-00a0c9223196}\\global"',
+        '[in#0 @ 00000220aef14080] "OBS Virtual Camera" (none)',
+        '[in#0 @ 00000220aef14080]   Alternative name "@device_sw_{860BB310-5D01-11D0-BD3B-00A0C911CE86}'
+        '\\{A3FCE0F5-3493-419F-958A-ABA1250EC20B}"',
+        '[in#0 @ 00000220aef14080] "麥克風排列 (Realtek(R) Audio)" (audio)',
+        '[in#0 @ 00000220aef14080]   Alternative name "@device_cm_{33D9A762-90C8-11D0-BD43-00A0C911CE86}'
+        '\\wave_{DDAAF580-FA22-411C-9EAB-576F318FEDC7}"',
+        "Error opening input file dummy.",
+    ])
+
+    def test_lists_only_the_audio_device(self):
+        rows = P.parse_dshow_devices(self.SAMPLE)
+        self.assertEqual([r["name"] for r in rows], ["麥克風排列 (Realtek(R) Audio)"])
+
+    def test_alternative_name_becomes_id(self):
+        rows = P.parse_dshow_devices(self.SAMPLE)
+        self.assertEqual(rows[0]["id"], "@device_cm_{33D9A762-90C8-11D0-BD43-00A0C911CE86}"
+                                        "\\wave_{DDAAF580-FA22-411C-9EAB-576F318FEDC7}")
+
+    def test_default_resolves_to_the_microphone(self):
+        with mock.patch.object(P, "_run", return_value=self.SAMPLE), \
+                mock.patch.object(P.shutil, "which", return_value="ffmpeg"):
+            self.assertEqual(P.resolve_source("default", backend="dshow"),
+                             P.parse_dshow_devices(self.SAMPLE)[0]["id"])
+
+    def test_audio_video_combined_type(self):
+        rows = P.parse_dshow_devices('[in#0 @ 0] "Capture Card" (audio, video)')
+        self.assertEqual([r["name"] for r in rows], ["Capture Card"])
+
+    def test_alt_name_of_skipped_device_is_not_attached_to_previous(self):
+        sample = "\n".join([
+            '[in#0 @ 0] "Mic A" (audio)',
+            '[in#0 @ 0]   Alternative name "@device_cm_A"',
+            '[in#0 @ 0] "Cam" (video)',
+            '[in#0 @ 0]   Alternative name "@device_pnp_CAM"',
+        ])
+        self.assertEqual([r["id"] for r in P.parse_dshow_devices(sample)], ["@device_cm_A"])
 
 
 class ResolveAndInputTests(unittest.TestCase):

@@ -38,7 +38,8 @@ _PERMISSION_HINTS = {
         "麥克風權限被拒絕：請至「系統設定 > 隱私權與安全性 > 麥克風」允許執行 lec 的終端機／Python",
     ),
     "dshow": (
-        ("Access is denied", "could not open", "I/O error"),
+        # 不要放 "I/O error"：裝置名稱錯誤、裝置不存在也會出現，實測曾把這種情況誤報成權限問題
+        ("Access is denied",),
         "無法開啟麥克風：請至「設定 > 隱私權 > 麥克風」允許桌面應用程式使用麥克風，並確認裝置未被其他程式獨佔",
     ),
 }
@@ -57,6 +58,8 @@ def test_volume(source, seconds=3, backend=None):
     """錄幾秒，回傳 (mean_db, max_db)；失敗回傳 (None, 錯誤訊息)。"""
     backend = P.audio_backend(backend)
     target = P.resolve_source(source, backend)
+    if target is None:   # 列不到任何裝置時 default 會解析成 None；不要把 "audio=None" 交給 ffmpeg
+        return None, f"找不到任何錄音裝置（lec devices 沒有列出麥克風）。{hint()}"
     cmd = ["ffmpeg", "-hide_banner", "-nostdin", *P.ffmpeg_input(target, backend),
            "-t", str(seconds), "-af", "volumedetect", "-f", "null", "-"]
     try:
@@ -64,8 +67,8 @@ def test_volume(source, seconds=3, backend=None):
                            timeout=seconds + 20)
     except subprocess.TimeoutExpired as e:
         if backend == "avfoundation":
-            hint = _PERMISSION_HINTS["avfoundation"][1]
-            return None, f"錄音逾時，若麥克風硬體正常，很可能是權限問題：{hint}"
+            perm = _PERMISSION_HINTS["avfoundation"][1]
+            return None, f"錄音逾時，若麥克風硬體正常，很可能是權限問題：{perm}"
         return None, str(e)
     except OSError as e:
         return None, str(e)
@@ -73,8 +76,8 @@ def test_volume(source, seconds=3, backend=None):
     peak = re.search(r"max_volume:\s*(-?[\d.]+|-inf) dB", r.stderr)
     if not mean:
         last = (r.stderr.strip().splitlines() or ["ffmpeg 沒有輸出"])[-1][:200]
-        hint = _permission_hint(backend, r.stderr)
-        return None, f"{last}（{hint}）" if hint else last
+        perm = _permission_hint(backend, r.stderr)
+        return None, f"{last}（{perm}）" if perm else last
     f = lambda m: float("-inf") if m.group(1) == "-inf" else float(m.group(1))
     return f(mean), f(peak) if peak else None
 

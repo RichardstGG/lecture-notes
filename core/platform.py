@@ -285,15 +285,22 @@ def _avfoundation_sources():
 
 
 _DSHOW_SECTION = re.compile(r"DirectShow\s+(audio|video)\s+devices", re.I)
+_DSHOW_TYPED = re.compile(r'"([^"]+)"\s*\(([^()]*)\)\s*$')
 _DSHOW_NAME = re.compile(r'"([^"]+)"')
 _DSHOW_ALT = re.compile(r'Alternative name\s+"([^"]+)"')
 
 
-def _dshow_sources():
-    """ffmpeg 的 dshow -list_devices 輸出是先印一行區段標題（video/audio 各一段），
-    段內每個裝置一行「"名稱"」，下一行可能是「Alternative name "裝置路徑"」。
-    裝置名稱本身不會標註 (audio)/(video)，只能靠區段標題判斷。"""
-    out = _run(["ffmpeg", "-hide_banner", "-f", "dshow", "-list_devices", "true", "-i", "dummy"])
+def parse_dshow_devices(out):
+    """解析 ffmpeg -f dshow -list_devices true 的輸出，只回傳音訊裝置。
+
+    兩種格式都要支援：
+    - 新版 ffmpeg（實測 9.0.1）：類型寫在名稱後面，沒有區段標題
+        [in#0 @ …] "麥克風排列 (Realtek(R) Audio)" (audio)
+        [in#0 @ …]   Alternative name "@device_cm_{…}\\wave_{…}"
+      類型可能是 audio、video、none，或 "audio, video"。
+    - 舊版 ffmpeg：先印「DirectShow video devices」/「DirectShow audio devices」
+      區段標題，裝置只印 "名稱"，用所在區段判斷類型。
+    """
     rows, pending, section = [], None, None
     for line in out.splitlines():
         sec = _DSHOW_SECTION.search(line)
@@ -309,13 +316,27 @@ def _dshow_sources():
                 pending["description"] = pending["name"]
             pending = None
             continue
-        if section == "audio":
+        typed = _DSHOW_TYPED.search(line)
+        if typed:
+            kinds = {k.strip().lower() for k in typed.group(2).split(",")}
+            name = typed.group(1)
+        else:
             m = _DSHOW_NAME.search(line)
-            if m:
-                pending = {"id": m.group(1), "name": m.group(1), "description": "",
-                           "state": "", "kind": "audio"}
-                rows.append(pending)
-    return [r for r in rows if r.get("kind") == "audio"]
+            if not m:
+                continue
+            kinds = {section} if section else set()
+            name = m.group(1)
+        if "audio" in kinds:
+            pending = {"id": name, "name": name, "description": "", "state": "", "kind": "audio"}
+            rows.append(pending)
+        else:
+            pending = None
+    return rows
+
+
+def _dshow_sources():
+    out = _run(["ffmpeg", "-hide_banner", "-f", "dshow", "-list_devices", "true", "-i", "dummy"])
+    return parse_dshow_devices(out)
 
 
 def list_sources(backend=None, include_monitors=False):

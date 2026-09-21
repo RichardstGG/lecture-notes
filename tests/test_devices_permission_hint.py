@@ -30,6 +30,21 @@ class PermissionHintTests(unittest.TestCase):
         self.assertIsNone(D._permission_hint("pulse", "not authorized"))
 
 
+class DshowFalsePositiveTests(unittest.TestCase):
+    def test_io_error_from_wrong_device_name_is_not_a_permission_problem(self):
+        # 實機：裝置名稱錯誤時 ffmpeg 印的是這段，跟權限無關
+        text = ("Could not find audio only device with name [x] among source devices of type audio.\n"
+                "Error opening input files: I/O error")
+        self.assertIsNone(D._permission_hint("dshow", text))
+
+    def test_no_device_found_gives_clear_message_without_running_ffmpeg(self):
+        with mock.patch.object(D.P, "resolve_source", return_value=None), \
+                mock.patch.object(D.subprocess, "run") as run:
+            mean, msg = D.test_volume("default", backend="dshow")
+        self.assertIsNone(mean)
+        self.assertIn("找不到任何錄音裝置", msg)
+        run.assert_not_called()
+
 class TestVolumeTests(unittest.TestCase):
     def test_avfoundation_timeout_gets_permission_hint(self):
         with mock.patch.object(D.P, "resolve_source", return_value="0"), \
