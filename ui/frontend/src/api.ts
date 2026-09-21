@@ -2,6 +2,7 @@ import type {
   ActionResponse,
   ApiErrorEnvelope,
   Course,
+  CourseDetail,
   RunRequest,
   RuntimeStatus,
   SessionDetail,
@@ -52,6 +53,17 @@ async function request<T>(path: string, init?: RequestInit): Promise<T> {
 export const api = {
   status: () => request<RuntimeStatus>("/api/v1/status"),
   courses: () => request<Course[]>("/api/v1/courses"),
+  course: (id: string) => request<CourseDetail>(
+    `/api/v1/courses/${encodeURIComponent(id)}`,
+  ),
+  createCourse: (id: string) => request<CourseDetail>("/api/v1/courses", {
+    method: "POST",
+    body: JSON.stringify({ id }),
+  }),
+  updateCourse: (id: string, content: string) => request<CourseDetail>(
+    `/api/v1/courses/${encodeURIComponent(id)}`,
+    { method: "PUT", body: JSON.stringify({ content }) },
+  ),
   sessions: () => request<SessionSummary[]>("/api/v1/sessions"),
   session: (id: string) => request<SessionDetail>(`/api/v1/sessions/${encodeURIComponent(id)}`),
   start: (payload: RunRequest) => request<ActionResponse>("/api/v1/runs", {

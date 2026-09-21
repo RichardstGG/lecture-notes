@@ -47,6 +47,13 @@ export interface Course {
   error?: string;
 }
 
+export interface CourseDetail {
+  api_version: number;
+  id: string;
+  file: string;
+  content: string;
+}
+
 export interface SessionSummary {
   id: string;
   course?: string;
