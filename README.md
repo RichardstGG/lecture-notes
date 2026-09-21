@@ -16,10 +16,45 @@ Repo：<https://github.com/RichardstGG/lecture-notes>
 
 ## 安裝
 
+Linux／macOS：
+
 ```bash
 git clone https://github.com/RichardstGG/lecture-notes.git ~/lecture-notes
 cd ~/lecture-notes
 ```
+
+Windows（cmd）：
+
+```bat
+cd /d %USERPROFILE%
+git clone https://github.com/RichardstGG/lecture-notes.git lecture-notes
+cd lecture-notes
+```
+
+Windows（PowerShell）：
+
+```powershell
+cd $HOME
+git clone https://github.com/RichardstGG/lecture-notes.git lecture-notes
+cd lecture-notes
+```
+
+> **Windows 注意**：不要把 `~/lecture-notes` 交給 `git clone`。cmd 完全不認得 `~`；
+> PowerShell 只在自己的指令（例如 `cd ~`）裡展開 `~`，傳給 `git` 這類外部程式時
+> （Windows 內建的 PowerShell 5.1）會原樣傳過去。結果都是建立一個名字就叫 `~` 的
+> 資料夾，變成 `C:\Users\<你>\~\lecture-notes`。已經這樣 clone 的話，在 cmd 搬回正確位置：
+>
+> ```bat
+> cd /d %USERPROFILE%
+> move "%USERPROFILE%\~\lecture-notes" "%USERPROFILE%\lecture-notes"
+> rmdir "%USERPROFILE%\~"
+> ```
+>
+> `rmdir` 不加 `/s` 只會刪空資料夾。**不要**在 PowerShell 用 `Remove-Item ~ -Recurse`
+> 或 `rm -r ~` 刪它：PowerShell 會把 `~` 當成整個家目錄。
+>
+> 本文件其他地方的 `cd ~/lecture-notes`：PowerShell 可以照打；cmd 請改成
+> `cd /d %USERPROFILE%\lecture-notes`。
 
 **1. 系統套件**
 
@@ -64,10 +99,29 @@ python3 setup_engines.py whisper    # Linux/macOS；Windows 用 python setup_eng
 
 **3. 下載 LLM 模型（Qwen 官方 GGUF，約 5GB）**
 
+在 repo 資料夾裡執行（模型要放在 repo 裡的 `models/`，`lec` 才找得到）。
+
+Linux／macOS：
+
 ```bash
-curl -L -C - -o models/Qwen3-8B-Q4_K_M.gguf \
+curl -L -C - --create-dirs -o models/Qwen3-8B-Q4_K_M.gguf \
   https://huggingface.co/Qwen/Qwen3-8B-GGUF/resolve/main/Qwen3-8B-Q4_K_M.gguf
 ```
+
+Windows（cmd 或 PowerShell，整條寫成一行）：
+
+```bat
+curl.exe -L -C - --create-dirs -o models\Qwen3-8B-Q4_K_M.gguf https://huggingface.co/Qwen/Qwen3-8B-GGUF/resolve/main/Qwen3-8B-Q4_K_M.gguf
+```
+
+- 行尾的 `\` 換行是 bash／zsh 的寫法，cmd 不認得，會把第一行當成少了網址的
+  指令而出現 `curl: (3) URL rejected: Bad hostname`；所以 Windows 版寫成一行。
+- `--create-dirs` 會在 `models` 資料夾不存在時自動建立。少了它、又不在 repo
+  資料夾裡執行，curl 會回報 `Failed to open the file` 與 `(23)`。
+- 用 `curl.exe` 而不是 `curl`：Windows 內建的 PowerShell 5.1 裡 `curl` 是
+  `Invoke-WebRequest` 的別名，不認得 `-L`、`-C` 這些參數；`curl.exe` 在 cmd 和
+  PowerShell 都會叫到真正的 curl（Windows 10 以後內建）。
+- `-C -` 可以續傳，中途斷掉就重跑同一行。
 
 **4. 讓 `lec` 可以直接執行**
 
