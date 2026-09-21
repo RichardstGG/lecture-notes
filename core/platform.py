@@ -338,7 +338,18 @@ def list_sources(backend=None, include_monitors=False):
 def default_source(backend=None):
     backend = audio_backend(backend)
     if backend == "pulse":
-        return (_run(["pactl", "get-default-source"]).strip() or None) if shutil.which("pactl") else None
+        if not shutil.which("pactl"):
+            return None
+        try:
+            result = subprocess.run(
+                ["pactl", "get-default-source"], capture_output=True, text=True,
+                encoding="utf-8", errors="replace", timeout=15,
+            )
+        except (OSError, subprocess.TimeoutExpired):
+            return None
+        if result.returncode != 0:
+            return None
+        return result.stdout.strip() or None
     rows = list_sources(backend) or []
     return rows[0]["id"] if rows else None
 

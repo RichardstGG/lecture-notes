@@ -40,7 +40,7 @@ class LecClient:
         root = Path(repo_root).resolve()
         return cls((sys.executable, root / "lec"), cwd=root, timeout=timeout)
 
-    async def run_text(self, *args):
+    async def run_text(self, *args, allowed_exit_codes=(0,)):
         env = os.environ.copy()
         env["PYTHONUTF8"] = "1"
         env["PYTHONIOENCODING"] = "utf-8"
@@ -71,15 +71,15 @@ class LecClient:
 
         out = stdout.decode("utf-8", errors="replace")
         err = stderr.decode("utf-8", errors="replace").strip()
-        if process.returncode:
+        if process.returncode not in allowed_exit_codes:
             raise LecCommandError(
                 "cli_failed", err or out.strip() or "lec command failed",
                 exit_code=process.returncode, stderr=err[:2000],
             )
         return out
 
-    async def run_json(self, *args):
-        out = await self.run_text(*args)
+    async def run_json(self, *args, allowed_exit_codes=(0,)):
+        out = await self.run_text(*args, allowed_exit_codes=allowed_exit_codes)
         try:
             return json.loads(out)
         except json.JSONDecodeError as exc:
@@ -110,6 +110,57 @@ class LecClient:
                     or not all(isinstance(item, dict) for item in group["models"])):
                 raise LecCommandError(
                     "cli_invalid_response", "lec models returned an invalid response",
+                )
+        return result
+
+    async def devices(self):
+        result = await self.run_json("devices", "--json")
+        if (not isinstance(result, dict) or not isinstance(result.get("current"), str)
+                or result.get("default") is not None
+                and not isinstance(result.get("default"), str)
+                or not isinstance(result.get("sources"), list)):
+            raise LecCommandError(
+                "cli_invalid_response", "lec devices returned an invalid response",
+            )
+        for source in result["sources"]:
+            if (not isinstance(source, dict) or not isinstance(source.get("id"), str)
+                    or not isinstance(source.get("name"), str)):
+                raise LecCommandError(
+                    "cli_invalid_response", "lec devices returned an invalid response",
+                )
+        return result
+
+    async def save_device(self, source):
+        if not source or "\x00" in source:
+            raise LecCommandError("invalid_argument", "Invalid device source")
+        return (await self.run_text("devices", f"--save={source}")).strip()
+
+    async def test_device(self, source):
+        if not source or "\x00" in source:
+            raise LecCommandError("invalid_argument", "Invalid device source")
+        return (await self.run_text("devices", f"--test={source}")).strip()
+
+    async def doctor(self, course=None, mic=False):
+        if course and (course[0] in ".-" or "\x00" in course
+                       or "/" in course or "\\" in course):
+            raise LecCommandError("invalid_argument", "Invalid course argument")
+        args = ["doctor"]
+        if course:
+            args.append(course)
+        if mic:
+            args.append("--mic")
+        args.append("--json")
+        result = await self.run_json(*args, allowed_exit_codes=(0, 1))
+        if not isinstance(result, list):
+            raise LecCommandError(
+                "cli_invalid_response", "lec doctor returned an invalid response",
+            )
+        for item in result:
+            if (not isinstance(item, dict)
+                    or not all(isinstance(item.get(key), str)
+                               for key in ("status", "name", "detail"))):
+                raise LecCommandError(
+                    "cli_invalid_response", "lec doctor returned an invalid response",
                 )
         return result
 

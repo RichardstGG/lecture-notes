@@ -4,6 +4,9 @@ import type {
   Course,
   CourseDetail,
   CourseVocabulary,
+  DeviceInventory,
+  DeviceTestResult,
+  DoctorResult,
   ModelInventory,
   RunRequest,
   RuntimeStatus,
@@ -56,6 +59,23 @@ export const api = {
   status: () => request<RuntimeStatus>("/api/v1/status"),
   courses: () => request<Course[]>("/api/v1/courses"),
   models: () => request<ModelInventory>("/api/v1/models"),
+  devices: () => request<DeviceInventory>("/api/v1/devices"),
+  selectDevice: (source: string) => request<DeviceInventory>("/api/v1/devices/current", {
+    method: "PUT",
+    body: JSON.stringify({ source }),
+  }),
+  testDevice: (source: string) => request<DeviceTestResult>("/api/v1/devices/test", {
+    method: "POST",
+    body: JSON.stringify({ source }),
+  }),
+  doctor: (course?: string, mic = false) => {
+    const query = new URLSearchParams();
+    if (course) query.set("course", course);
+    if (mic) query.set("mic", "true");
+    const encoded = query.toString();
+    const suffix = encoded ? `?${encoded}` : "";
+    return request<DoctorResult>(`/api/v1/doctor${suffix}`);
+  },
   course: (id: string) => request<CourseDetail>(
     `/api/v1/courses/${encodeURIComponent(id)}`,
   ),

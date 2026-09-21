@@ -61,6 +61,73 @@ class LecClientTests(unittest.IsolatedAsyncioTestCase):
             await client.models()
         self.assertEqual(ctx.exception.code, "cli_invalid_response")
 
+    async def test_devices_uses_json_contract(self):
+        client = self.write_script("""
+            import json, sys
+            assert sys.argv[1:] == ["devices", "--json"]
+            print(json.dumps({
+                "current": "mic-1", "default": "mic-2",
+                "sources": [{"id": "mic-1", "name": "教室麥克風"}],
+            }))
+        """)
+        result = await client.devices()
+        self.assertEqual(result["sources"][0]["name"], "教室麥克風")
+
+    async def test_devices_rejects_incomplete_source_contract(self):
+        client = self.write_script("""
+            import json
+            print(json.dumps({"current": "default", "default": None,
+                              "sources": [{"name": "missing id"}]}))
+        """)
+        with self.assertRaises(LecCommandError) as ctx:
+            await client.devices()
+        self.assertEqual(ctx.exception.code, "cli_invalid_response")
+
+    async def test_device_actions_use_single_fixed_option_arguments(self):
+        client = self.write_script("""
+            import sys
+            if sys.argv[2].startswith("--save="):
+                assert sys.argv[1:] == ["devices", "--save=mic with spaces"]
+                print("已儲存")
+            else:
+                assert sys.argv[1:] == ["devices", "--test=mic with spaces"]
+                print("音量正常")
+        """)
+        self.assertEqual(await client.save_device("mic with spaces"), "已儲存")
+        self.assertEqual(await client.test_device("mic with spaces"), "音量正常")
+
+    async def test_device_actions_reject_null_bytes_before_spawning(self):
+        client = self.write_script("raise AssertionError('must not run')")
+        for action in (client.save_device, client.test_device):
+            with self.subTest(action=action.__name__), self.assertRaises(LecCommandError) as ctx:
+                await action("mic\x00bad")
+            self.assertEqual(ctx.exception.code, "invalid_argument")
+
+    async def test_doctor_accepts_json_diagnostics_with_exit_one(self):
+        client = self.write_script("""
+            import json, sys
+            assert sys.argv[1:] == ["doctor", "測試課", "--mic", "--json"]
+            print(json.dumps([
+                {"status": "✔", "name": "Python", "detail": "3.13"},
+                {"status": "✖", "name": "麥克風", "detail": "missing"},
+            ]))
+            raise SystemExit(1)
+        """)
+        result = await client.doctor(course="測試課", mic=True)
+        self.assertEqual(result[1]["status"], "✖")
+
+    async def test_doctor_rejects_option_like_course(self):
+        client = self.write_script("raise AssertionError('must not run')")
+        with self.assertRaises(LecCommandError) as ctx:
+            await client.doctor(course="--help")
+        self.assertEqual(ctx.exception.code, "invalid_argument")
+
+    async def test_doctor_rejects_course_paths(self):
+        client = self.write_script("raise AssertionError('must not run')")
+        with self.assertRaises(LecCommandError) as ctx:
+            await client.doctor(course="../private.toml")
+        self.assertEqual(ctx.exception.code, "invalid_argument")
+
     async def test_nonzero_exit_is_structured(self):
         client = self.write_script("""
             import sys

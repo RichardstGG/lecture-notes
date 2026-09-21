@@ -67,6 +67,22 @@ class PulseSourcesTests(unittest.TestCase):
             self.assertIsNone(P._pulse_sources())
             self.assertIsNone(P.list_sources(backend="pulse"))
 
+    def test_default_source_ignores_pactl_errors(self):
+        failed = P.subprocess.CompletedProcess(
+            [], 1, stdout="", stderr="Connection failure: Connection refused",
+        )
+        with mock.patch.object(P.shutil, "which", return_value="/usr/bin/pactl"), \
+                mock.patch.object(P.subprocess, "run", return_value=failed):
+            self.assertIsNone(P.default_source("pulse"))
+
+    def test_default_source_uses_successful_stdout(self):
+        success = P.subprocess.CompletedProcess(
+            [], 0, stdout="alsa_input.usb-Mic\n", stderr="",
+        )
+        with mock.patch.object(P.shutil, "which", return_value="/usr/bin/pactl"), \
+                mock.patch.object(P.subprocess, "run", return_value=success):
+            self.assertEqual(P.default_source("pulse"), "alsa_input.usb-Mic")
+
 
 class AvfoundationSourcesTests(unittest.TestCase):
     SAMPLE = "\n".join([

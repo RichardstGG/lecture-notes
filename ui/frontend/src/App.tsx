@@ -3,6 +3,7 @@ import { api } from "./api";
 import { Icon } from "./components/Icon";
 import { CourseEditor } from "./components/CourseEditor";
 import { MarkdownPane } from "./components/MarkdownPane";
+import { LocalSettings } from "./components/LocalSettings";
 import { RunPanel } from "./components/RunPanel";
 import { useLectureData } from "./hooks/useLectureData";
 import { zhTW as t } from "./i18n/zh-TW";
@@ -77,6 +78,7 @@ export default function App() {
         <a className="active" href="#live"><Icon name="wave" />課堂工作台</a>
         <a href="#history"><Icon name="history" />歷史紀錄</a>
         <a href="#courses"><Icon name="book" />課程設定</a>
+        <a href="#local-settings"><Icon name="mic" />本機設定</a>
       </nav>
       <div className="privacy-note"><span>LOCAL</span><p>錄音與筆記只保存在這台電腦。</p></div>
     </aside>
@@ -111,7 +113,7 @@ export default function App() {
           {data.status.status?.last_error && <p className="inline-error">{data.status.status.last_error}</p>}
         </>}
 
-        <RunPanel courses={data.courses} models={data.models} status={data.status} onChanged={data.refresh} onError={data.setError} />
+        <RunPanel courses={data.courses} devices={data.devices} models={data.models} status={data.status} onChanged={data.refresh} onError={data.setError} />
       </section>
 
       <div className="workspace-grid">
@@ -146,6 +148,17 @@ export default function App() {
       <CourseEditor
         courses={data.courses}
         onChanged={data.refresh}
+        onError={data.setError}
+        onMessage={setActionMessage}
+      />
+
+      <LocalSettings
+        courses={data.courses}
+        devices={data.devices}
+        devicesError={data.devicesError}
+        devicesLoading={data.devicesLoading}
+        onDevicesChanged={data.setDevices}
+        onRefreshDevices={data.refreshDevices}
         onError={data.setError}
         onMessage={setActionMessage}
       />

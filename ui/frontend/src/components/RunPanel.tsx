@@ -1,10 +1,11 @@
 import { useEffect, useMemo, useState, type FormEvent } from "react";
 import { api } from "../api";
-import type { Course, ModelInventory, RuntimeStatus } from "../types";
+import type { Course, DeviceInventory, ModelInventory, RuntimeStatus } from "../types";
 import { Icon } from "./Icon";
 
 interface Props {
   courses: Course[];
+  devices?: DeviceInventory;
   models?: ModelInventory;
   status: RuntimeStatus;
   onChanged: () => Promise<unknown>;
@@ -16,12 +17,13 @@ function formatModelSize(bytes?: number): string | undefined {
   return `${(bytes / (1024 ** 3)).toFixed(1)} GB`;
 }
 
-export function RunPanel({ courses, models, status, onChanged, onError }: Props) {
+export function RunPanel({ courses, devices, models, status, onChanged, onError }: Props) {
   const validCourses = useMemo(() => courses.filter((course) => !course.error), [courses]);
   const [course, setCourse] = useState("");
   const [mode, setMode] = useState<"live" | "file">("live");
   const [inputFile, setInputFile] = useState("");
   const [model, setModel] = useState("");
+  const [source, setSource] = useState("");
   const [transcribeOnly, setTranscribeOnly] = useState(false);
   const [starting, setStarting] = useState(false);
   const [stopMode, setStopMode] = useState<"normal" | "force">();
@@ -48,6 +50,7 @@ export function RunPanel({ courses, models, status, onChanged, onError }: Props)
         course,
         input_file: mode === "file" ? inputFile.trim() : undefined,
         model: model || undefined,
+        ...(mode === "live" && source ? { source } : {}),
         overrides: transcribeOnly ? { "summary.enabled": false } : undefined,
       });
       await onChanged();
@@ -102,6 +105,19 @@ export function RunPanel({ courses, models, status, onChanged, onError }: Props)
     {mode === "file" && <label className="wide-field">
       <span>本機音檔路徑</span>
       <input value={inputFile} onChange={(event) => setInputFile(event.target.value)} placeholder="/home/you/lecture.ogg" required />
+    </label>}
+    {mode === "live" && <label>
+      <span>麥克風（選填）</span>
+      <select value={source} onChange={(event) => setSource(event.target.value)} disabled={!devices}>
+        <option value="">{devices
+          ? `使用本機設定（${devices.current === "default"
+            ? `系統預設${devices.default ? ` → ${devices.default}` : ""}`
+            : devices.current}）`
+          : "正在載入麥克風…"}</option>
+        {devices?.sources.map((item) => <option value={item.id} key={item.id}>
+          {item.description || item.name}{item.state ? ` · ${item.state}` : ""}
+        </option>)}
+      </select>
     </label>}
     <label>
       <span>總結模型（選填）</span>

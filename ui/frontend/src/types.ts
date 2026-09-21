@@ -69,6 +69,47 @@ export interface ModelInventory {
   [key: string]: unknown;
 }
 
+export interface AudioSource {
+  id: string;
+  name: string;
+  description?: string;
+  state?: string;
+  index?: number;
+  [key: string]: unknown;
+}
+
+export interface DeviceInventory {
+  api_version: number;
+  current: string;
+  default?: string;
+  sources: AudioSource[];
+}
+
+export interface DeviceTestResult {
+  api_version: number;
+  source: string;
+  message: string;
+}
+
+export interface DoctorItem {
+  status: string;
+  name: string;
+  detail: string;
+  [key: string]: unknown;
+}
+
+export interface DoctorResult {
+  api_version: number;
+  course?: string;
+  microphone_test: boolean;
+  summary: {
+    ok: number;
+    warnings: number;
+    failures: number;
+  };
+  items: DoctorItem[];
+}
+
 export interface CourseDetail {
   api_version: number;
   id: string;

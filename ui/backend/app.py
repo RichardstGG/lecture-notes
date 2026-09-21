@@ -2,7 +2,7 @@
 import asyncio
 import json
 
-from fastapi import FastAPI, Request
+from fastapi import FastAPI, Query, Request
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import HTMLResponse, JSONResponse, StreamingResponse
 from fastapi.staticfiles import StaticFiles
@@ -13,8 +13,9 @@ from .process_control import (ControlError, LecProcessLauncher,
                               ProcessController)
 from .schemas import (ApiErrorResponse, CourseCreateRequest, CourseDetail,
                       CourseSummary, CourseUpdateRequest,
-                      CourseVocabularyUpdateRequest, HealthResponse,
-                      ModelInventoryResponse,
+                      CourseVocabularyUpdateRequest, DeviceInventoryResponse,
+                      DeviceSelectionRequest, DeviceTestResponse,
+                      DoctorResponse, HealthResponse, ModelInventoryResponse,
                       ProcessActionResponse, RunStartRequest,
                       RuntimeStatusResponse, SessionDetail, SessionSummary,
                       StopRequest, SummarizeRequest)
@@ -124,7 +125,12 @@ def create_app(
 
     @app.exception_handler(LecCommandError)
     async def lec_error_handler(_request, exc):
-        status_code = 503 if exc.code in {"cli_unavailable", "cli_timeout"} else 502
+        if exc.code == "invalid_argument":
+            status_code = 400
+        elif exc.code in {"cli_unavailable", "cli_timeout"}:
+            status_code = 503
+        else:
+            status_code = 502
         return JSONResponse(status_code=status_code, content={"error": exc.as_detail()})
 
     @app.exception_handler(SessionStoreError)
@@ -166,6 +172,56 @@ def create_app(
     )
     async def models(request: Request):
         return await request.app.state.lec_client.models()
+
+    @app.get(
+        "/api/v1/devices", response_model=DeviceInventoryResponse,
+        response_model_exclude_none=True,
+        responses={502: {"model": ApiErrorResponse}, 503: {"model": ApiErrorResponse}},
+    )
+    async def devices(request: Request):
+        return await request.app.state.lec_client.devices()
+
+    @app.put(
+        "/api/v1/devices/current", response_model=DeviceInventoryResponse,
+        response_model_exclude_none=True,
+        responses={400: {"model": ApiErrorResponse}, 502: {"model": ApiErrorResponse},
+                   503: {"model": ApiErrorResponse}},
+    )
+    async def device_select(payload: DeviceSelectionRequest, request: Request):
+        await request.app.state.lec_client.save_device(payload.source)
+        return await request.app.state.lec_client.devices()
+
+    @app.post(
+        "/api/v1/devices/test", response_model=DeviceTestResponse,
+        responses={400: {"model": ApiErrorResponse}, 502: {"model": ApiErrorResponse},
+                   503: {"model": ApiErrorResponse}},
+    )
+    async def device_test(payload: DeviceSelectionRequest, request: Request):
+        message = await request.app.state.lec_client.test_device(payload.source)
+        return DeviceTestResponse(source=payload.source, message=message)
+
+    @app.get(
+        "/api/v1/doctor", response_model=DoctorResponse,
+        response_model_exclude_none=True,
+        responses={400: {"model": ApiErrorResponse}, 502: {"model": ApiErrorResponse},
+                   503: {"model": ApiErrorResponse}},
+    )
+    async def doctor(
+        request: Request,
+        course: str | None = Query(default=None, min_length=1, max_length=100),
+        mic: bool = False,
+    ):
+        items = await request.app.state.lec_client.doctor(course=course, mic=mic)
+        return DoctorResponse(
+            course=course,
+            microphone_test=mic,
+            summary={
+                "ok": sum(item["status"] == "✔" for item in items),
+                "warnings": sum(item["status"] == "⚠" for item in items),
+                "failures": sum(item["status"] == "✖" for item in items),
+            },
+            items=items,
+        )
 
     @app.post(
         "/api/v1/courses", response_model=CourseDetail, status_code=201,
