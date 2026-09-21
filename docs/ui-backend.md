@@ -14,12 +14,15 @@ cd ui/frontend
 npm install
 npm run build
 cd ../..
-python -m ui.backend
+lec --start-ui
 ```
 
 The service binds only to `127.0.0.1` and defaults to port `8765`. Use
-`python -m ui.backend --port <port>` to choose another local port. Interactive
-API documentation is available at `/api/docs`. When `ui/frontend/dist` exists,
+`lec --start-ui --port <port>` to choose another local port. The launcher uses
+the repository's `.venv` automatically when it exists. Direct invocation with
+`python -m ui.backend [--port <port>]` remains available for development.
+Interactive API documentation is available at `/api/docs`. When
+`ui/frontend/dist` exists,
 the same service hosts the browser UI at `/`; no separate frontend server is
 needed for production-style local use.
 

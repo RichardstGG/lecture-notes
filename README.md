@@ -180,12 +180,13 @@ cd ../..
 
 ```bash
 cd ~/lecture-notes
-source .venv/bin/activate                # Windows PowerShell：.venv\Scripts\Activate.ps1
-python -m ui.backend
+lec --start-ui                           # Windows：python lec --start-ui
 ```
 
+這個指令會自動使用專案的 `.venv` 啟動 service，不需要先 activate。
 然後開啟 <http://127.0.0.1:8765>。若要改 port：
-`python -m ui.backend --port 9876`。
+`lec --start-ui --port 9876`。原本的
+`python -m ui.backend [--port PORT]` 仍保留給開發與除錯使用。
 
 ### UI 操作
 

@@ -169,8 +169,8 @@ def main(argv=None):
     if args.whisper_only:
         print("只轉錄：./lec run <課名> --transcribe-only")
     if not args.skip_ui:
-        print("啟動 UI：.venv/bin/python -m ui.backend"
-              if os.name != "nt" else "啟動 UI：.venv\\Scripts\\python -m ui.backend")
+        print("啟動 UI：./lec --start-ui"
+              if os.name != "nt" else "啟動 UI：python lec --start-ui")
     return 0
 
 
