@@ -4,6 +4,20 @@
 （讀 ffmpeg / AVFoundation 官方行為推導）與 mock test，不是「已測過沒問題」。
 第一次在真機上跑之前請先看完「還需要哪些實機測試」一節。
 
+## 安裝時的 macOS 差異（實機回報，2026-09）
+
+在 MacBook 上照 README 安裝時遇到的三個問題，都已經寫進 README 的安裝步驟：
+
+- **zsh 把 `#` 當參數**：zsh 預設沒開 `interactivecomments`，貼上
+  `python3 setup_engines.py whisper    # Linux/macOS；…` 時 `#` 和後面的字都被當成
+  參數，`setup_engines.py` 回報「未知的引擎：#」。解法是只複製指令本身，或
+  `setopt interactivecomments`。
+- **`~/.local/bin` 不存在、也不在 PATH**：這是 Linux（XDG）的慣例，macOS 沒有。
+  `ln -s … ~/.local/bin/lec` 會回報 `No such file or directory`。要先 `mkdir -p`，
+  再把它加進 `~/.zshrc` 的 PATH。
+- **內建 `python3` 太舊**：Command Line Tools 附的 `python3` 通常是 3.9，`lec` 需要
+  3.11+（`tomllib`）。README 的 brew 指令已加上 `python`。
+
 ## 錄音（AVFoundation）
 
 - 後端固定用 `avfoundation`。裝置列表靠解析
