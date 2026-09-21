@@ -29,7 +29,7 @@ sudo apt install ffmpeg curl pulseaudio-utils opencc \
                  git cmake build-essential pkg-config libvulkan-dev glslc vulkan-tools
 
 # macOS
-xcode-select --install && brew install python cmake ffmpeg opencc
+brew install python cmake ffmpeg opencc
 
 # Windows（PowerShell；另需 Visual Studio Build Tools 的「C++ 桌面開發」與 Vulkan SDK）
 winget install Git.Git Kitware.CMake Gyan.FFmpeg Python.Python.3.13
@@ -162,19 +162,16 @@ UI 是本機 React 頁面，透過 HTTP / SSE 連到同一台電腦上的 FastAP
 service 再以 subprocess 呼叫 `lec`，不會把錄音、逐字稿或課程設定上傳到外部。
 服務只綁定 `127.0.0.1`。
 
-額外需求：Node.js 22.22+。第一次使用先安裝 UI dependencies 並 build：
+額外需求：Node.js 22.22+。第一次使用交給 `upgrade.py` 建立 `.venv`、
+安裝 backend dependencies，並執行 `npm ci` 與 frontend build：
 
 ```bash
 cd ~/lecture-notes
-python3 -m venv .venv                    # Windows PowerShell：py -3 -m venv .venv
-source .venv/bin/activate                # Windows PowerShell：.venv\Scripts\Activate.ps1
-python -m pip install -r ui/backend/requirements.txt
-
-cd ui/frontend
-npm ci
-npm run build
-cd ../..
+python3 upgrade.py --skip-engines        # Windows：python upgrade.py --skip-engines
 ```
+
+`--skip-engines` 是因為前面已完成引擎編譯；後續日常升級直接執行
+`python3 upgrade.py`，會同時更新引擎與 UI。
 
 啟動 UI：
 
