@@ -53,6 +53,10 @@ Optional environment variables:
 | `GET` | `/api/v1/status` | Pass through the versioned `lec status --json` contract |
 | `GET` | `/api/v1/courses` | Pass through `lec courses --json` with response validation |
 | `GET` | `/api/v1/models` | Discover configured summary and Whisper models |
+| `GET` | `/api/v1/devices` | List microphone sources and the current local selection |
+| `PUT` | `/api/v1/devices/current` | Save `audio.source` through `lec devices --save` |
+| `POST` | `/api/v1/devices/test` | Record a three-second volume test through `lec devices --test` |
+| `GET` | `/api/v1/doctor` | Run environment diagnostics; accepts `course` and `mic` query parameters |
 | `POST` | `/api/v1/courses` | Create a course from `config/template.toml` |
 | `GET` | `/api/v1/courses/{id}` | Read the editable course TOML source |
 | `PUT` | `/api/v1/courses/{id}` | Validate and atomically replace course TOML |
@@ -119,6 +123,20 @@ files also report `size_bytes`. Summary entries additionally expose
 `disable_thinking`. Unknown fields are preserved for additive compatibility.
 The browser uses the summary inventory for its run override selector and
 disables entries whose local model file is missing.
+
+Device discovery invokes the fixed `lec devices --json` command. The HTTP
+response adds `api_version` and exposes `current`, the operating-system
+`default`, and a dynamic `sources` array. Saving a source accepts
+`{"source": "<device id>"}` and delegates to `lec devices --save`, which updates
+the ignored `config/local.toml`; it does not edit that file directly. Device
+tests use the same request shape and synchronously return the CLI's three-second
+volume-test message.
+
+Doctor responses wrap `lec doctor [course] [--mic] --json` with `api_version`,
+the selected options, summary counts, and the original diagnostic items. Exit
+code `1` is expected when diagnostics contain failures and still returns HTTP
+`200`; malformed output or failure to run the command uses the normal API error
+envelope.
 
 Session discovery recursively searches the configured output root for session
 marker files. Nested session ids are slash-separated paths relative to that

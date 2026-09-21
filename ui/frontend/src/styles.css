@@ -185,6 +185,40 @@ input:focus, select:focus, textarea:focus { border-color: #5a806b; box-shadow: 0
 .vocabulary-unavailable p { margin: 8px 0 16px; color: var(--muted); font-size: 11px; line-height: 1.6; }
 .course-editor-actions { margin-top: 12px; display: flex; justify-content: flex-end; gap: 8px; }
 .course-editor-empty { margin: auto; color: var(--muted); font-size: 12px; }
+
+.local-card { margin-top: 24px; border: 1px solid var(--line); background: var(--paper); border-radius: 16px; overflow: hidden; }
+.local-card-header { padding: 22px 24px; border-bottom: 1px solid var(--line); display: flex; align-items: center; justify-content: space-between; gap: 24px; }
+.local-card-header h2 { margin-bottom: 6px; font-size: 19px; }
+.local-card-header > div > p:last-child { margin: 0; color: var(--muted); font-size: 12px; }
+.icon-button { flex: 0 0 auto; width: 38px; height: 38px; border: 1px solid var(--line); border-radius: 9px; background: #fff; color: var(--muted); display: grid; place-items: center; }
+.icon-button:disabled { opacity: .5; cursor: not-allowed; }
+.icon-button svg { width: 16px; }
+.local-grid { display: grid; grid-template-columns: minmax(280px, .8fr) minmax(420px, 1.2fr); }
+.local-pane { min-width: 0; padding: 22px 24px 24px; }
+.local-pane + .local-pane { border-left: 1px solid var(--line); }
+.local-pane-heading { min-height: 48px; margin-bottom: 17px; display: flex; align-items: flex-start; justify-content: space-between; gap: 18px; }
+.local-pane-heading h3 { margin: 0 0 5px; font-size: 15px; }
+.local-pane-heading p { margin: 0; color: var(--muted); font-size: 11px; line-height: 1.55; }
+.local-pane-heading > span { flex: 0 0 auto; padding: 4px 7px; border-radius: 99px; background: var(--green-soft); color: var(--green); font-size: 10px; }
+.local-pane-heading > span.has-failures { background: #fff0ec; color: #9e4936; }
+.local-pane > label, .doctor-controls > label:not(.check-field) { display: grid; gap: 7px; }
+.local-pane label > span { color: var(--muted); font-size: 11px; font-weight: 600; }
+.local-actions { margin-top: 14px; display: flex; justify-content: flex-end; gap: 8px; }
+.local-hint, .local-inline-error { margin: 12px 0 0; font-size: 11px; line-height: 1.6; }
+.local-hint { color: var(--muted); }
+.local-inline-error { color: #a13f2d; }
+.doctor-controls { display: grid; grid-template-columns: minmax(150px, 1fr) auto auto; gap: 10px; align-items: end; }
+.doctor-controls .check-field { height: 42px; display: flex; align-items: center; gap: 7px; }
+.doctor-controls .check-field input { width: 16px; height: 16px; accent-color: var(--green); }
+.doctor-results { max-height: 330px; margin-top: 16px; border: 1px solid var(--line); border-radius: 10px; overflow: auto; background: #fff; }
+.doctor-row { display: grid; grid-template-columns: 24px 130px minmax(0, 1fr); gap: 8px; align-items: start; padding: 9px 11px; border-bottom: 1px solid #ecebe5; font-size: 11px; }
+.doctor-row:last-child { border-bottom: 0; }
+.doctor-row strong { padding-top: 1px; }
+.doctor-row p { margin: 0; color: var(--muted); line-height: 1.5; overflow-wrap: anywhere; }
+.doctor-status { font-weight: 700; }
+.doctor-status.ok { color: #3f8b65; }
+.doctor-status.warn { color: #b2762c; }
+.doctor-status.fail { color: #b54d37; }
 .sr-only { position: absolute; width: 1px; height: 1px; padding: 0; margin: -1px; overflow: hidden; clip: rect(0, 0, 0, 0); white-space: nowrap; border: 0; }
 
 @keyframes pulse-ring { 0%, 100% { transform: scale(.94); opacity: .3; } 50% { transform: scale(1.08); opacity: 1; } }
@@ -201,6 +235,8 @@ input:focus, select:focus, textarea:focus { border-color: #5a806b; box-shadow: 0
   .run-form { grid-template-columns: 1fr 1fr; }
   .workspace-grid { grid-template-columns: minmax(0,1fr) 280px; }
   .course-editor-grid { grid-template-columns: 210px minmax(0, 1fr); }
+  .local-grid { grid-template-columns: 1fr; }
+  .local-pane + .local-pane { border-left: 0; border-top: 1px solid var(--line); }
 }
 
 @media (max-width: 760px) {
@@ -239,4 +275,12 @@ input:focus, select:focus, textarea:focus { border-color: #5a806b; box-shadow: 0
   .vocabulary-heading .button { align-self: flex-start; }
   .glossary-row { grid-template-columns: 1fr; }
   .glossary-remove { justify-self: end; height: 32px; }
+  .local-card-header { align-items: flex-start; }
+  .local-pane { padding: 18px; }
+  .local-pane-heading { align-items: stretch; flex-direction: column; }
+  .local-pane-heading > span { align-self: flex-start; }
+  .local-actions { align-items: stretch; flex-direction: column; }
+  .doctor-controls { grid-template-columns: 1fr; }
+  .doctor-controls .check-field { height: auto; }
+  .doctor-row { grid-template-columns: 22px minmax(80px, .45fr) minmax(0, 1fr); }
 }

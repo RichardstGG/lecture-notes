@@ -61,6 +61,57 @@ class ModelInventoryResponse(BaseModel):
     whisper: ModelGroup
 
 
+class AudioSource(BaseModel):
+    model_config = ConfigDict(extra="allow")
+
+    id: str
+    name: str
+    description: str = ""
+    state: str = ""
+    index: int | None = None
+
+
+class DeviceInventoryResponse(BaseModel):
+    api_version: int = API_VERSION
+    current: str
+    default: str | None = None
+    sources: list[AudioSource]
+
+
+class DeviceSelectionRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid", str_strip_whitespace=True)
+
+    source: str = Field(min_length=1, max_length=1000)
+
+
+class DeviceTestResponse(BaseModel):
+    api_version: int = API_VERSION
+    source: str
+    message: str
+
+
+class DoctorItem(BaseModel):
+    model_config = ConfigDict(extra="allow")
+
+    status: str
+    name: str
+    detail: str
+
+
+class DoctorSummary(BaseModel):
+    ok: int = Field(ge=0)
+    warnings: int = Field(ge=0)
+    failures: int = Field(ge=0)
+
+
+class DoctorResponse(BaseModel):
+    api_version: int = API_VERSION
+    course: str | None = None
+    microphone_test: bool = False
+    summary: DoctorSummary
+    items: list[DoctorItem]
+
+
 class GlossaryEntry(BaseModel):
     model_config = ConfigDict(extra="forbid")
 

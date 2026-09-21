@@ -29,11 +29,25 @@ class StubClient:
             "summary": {"selected": "qwen3-8b", "models": []},
             "whisper": {"selected": "large-v3-turbo", "models": []},
         }
+        self.devices_result = {
+            "current": "default", "default": "mic-1",
+            "sources": [{
+                "id": "mic-1", "name": "教室麥克風", "description": "USB", "state": "idle",
+            }],
+        }
+        self.doctor_result = [
+            {"status": "✔", "name": "Python", "detail": "3.13"},
+            {"status": "⚠", "name": "GPU", "detail": "CPU fallback"},
+            {"status": "✖", "name": "麥克風", "detail": "missing"},
+        ]
         self.error = None
         self.stop_calls = []
         self.course_root = None
         self.course_create_calls = []
         self.course_validate_calls = []
+        self.device_save_calls = []
+        self.device_test_calls = []
+        self.doctor_calls = []
 
     async def status(self):
         if self.error:
@@ -49,6 +63,30 @@ class StubClient:
         if self.error:
             raise self.error
         return self.models_result
+
+    async def devices(self):
+        if self.error:
+            raise self.error
+        return self.devices_result
+
+    async def save_device(self, source):
+        if self.error:
+            raise self.error
+        self.device_save_calls.append(source)
+        self.devices_result["current"] = source
+        return "saved"
+
+    async def test_device(self, source):
+        if self.error:
+            raise self.error
+        self.device_test_calls.append(source)
+        return "✔ 平均 -24.0 dB：音量正常"
+
+    async def doctor(self, course=None, mic=False):
+        if self.error:
+            raise self.error
+        self.doctor_calls.append((course, mic))
+        return self.doctor_result
 
     async def stop(self, force=False):
         if self.error:
@@ -181,6 +219,43 @@ class BackendApiTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(response.json()["summary"]["models"][0]["id"], "future-14b")
         self.assertEqual(response.json()["summary"]["models"][0]["future_field"], "kept")
 
+    async def test_devices_exposes_and_updates_local_audio_source(self):
+        response = await self.request("GET", "/api/v1/devices")
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(response.json()["api_version"], 1)
+        self.assertEqual(response.json()["sources"][0]["name"], "教室麥克風")
+
+        response = await self.request(
+            "PUT", "/api/v1/devices/current", json={"source": "mic-1"},
+        )
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(response.json()["current"], "mic-1")
+        self.assertEqual(self.client.device_save_calls, ["mic-1"])
+
+    async def test_device_test_returns_cli_feedback(self):
+        response = await self.request(
+            "POST", "/api/v1/devices/test", json={"source": "mic-1"},
+        )
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(response.json(), {
+            "api_version": 1,
+            "source": "mic-1",
+            "message": "✔ 平均 -24.0 dB：音量正常",
+        })
+        self.assertEqual(self.client.device_test_calls, ["mic-1"])
+
+    async def test_doctor_wraps_cli_results_with_summary(self):
+        response = await self.request(
+            "GET", "/api/v1/doctor?course=%E6%B8%AC%E8%A9%A6%E8%AA%B2&mic=true",
+        )
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(response.json()["api_version"], 1)
+        self.assertEqual(response.json()["summary"], {
+            "ok": 1, "warnings": 1, "failures": 1,
+        })
+        self.assertTrue(response.json()["microphone_test"])
+        self.assertEqual(self.client.doctor_calls, [("測試課", True)])
+
     async def test_course_create_and_detail_use_versioned_contract(self):
         response = await self.request("POST", "/api/v1/courses", json={"id": "資料結構"})
         self.assertEqual(response.status_code, 201)
@@ -283,6 +358,12 @@ class BackendApiTests(unittest.IsolatedAsyncioTestCase):
         response = await self.request("GET", "/api/v1/courses")
         self.assertEqual(response.status_code, 503)
         self.assertEqual(response.json()["error"]["code"], "cli_timeout")
+
+    async def test_invalid_cli_argument_is_bad_request(self):
+        self.client.error = LecCommandError("invalid_argument", "bad argument")
+        response = await self.request("GET", "/api/v1/doctor")
+        self.assertEqual(response.status_code, 400)
+        self.assertEqual(response.json()["error"]["code"], "invalid_argument")
 
     async def test_start_run_builds_fixed_cli_arguments(self):
         input_file = Path(self.tmp.name) / "lecture.ogg"

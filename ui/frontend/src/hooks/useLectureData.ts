@@ -3,6 +3,7 @@ import { api, ApiError } from "../api";
 import type {
   ContentEvent,
   Course,
+  DeviceInventory,
   ModelInventory,
   RuntimeStatus,
   SessionDetail,
@@ -16,6 +17,9 @@ export function useLectureData() {
   const [status, setStatus] = useState<RuntimeStatus>(idleStatus);
   const [courses, setCourses] = useState<Course[]>([]);
   const [models, setModels] = useState<ModelInventory>();
+  const [devices, setDevices] = useState<DeviceInventory>();
+  const [devicesLoading, setDevicesLoading] = useState(true);
+  const [devicesError, setDevicesError] = useState<string>();
   const [sessions, setSessions] = useState<SessionSummary[]>([]);
   const [selectedId, setSelectedId] = useState<string>();
   const [detail, setDetail] = useState<SessionDetail>();
@@ -28,6 +32,18 @@ export function useLectureData() {
     const result = await api.sessions();
     setSessions(result);
     setSelectedId((current) => current ?? result[0]?.id);
+  }, []);
+
+  const refreshDevices = useCallback(async () => {
+    setDevicesLoading(true);
+    try {
+      setDevices(await api.devices());
+      setDevicesError(undefined);
+    } catch (reason) {
+      setDevicesError(reason instanceof Error ? reason.message : "無法讀取麥克風清單");
+    } finally {
+      setDevicesLoading(false);
+    }
   }, []);
 
   const refresh = useCallback(async () => {
@@ -50,6 +66,7 @@ export function useLectureData() {
   }, []);
 
   useEffect(() => { void refresh(); }, [refresh]);
+  useEffect(() => { void refreshDevices(); }, [refreshDevices]);
 
   useEffect(() => {
     const events = new EventSource("/api/v1/status/stream");
@@ -92,7 +109,8 @@ export function useLectureData() {
   }, [selectedId]);
 
   return {
-    status, courses, models, sessions, selectedId, setSelectedId, detail,
-    connected, loading, error, setError, refresh, refreshSessions,
+    status, courses, models, devices, setDevices, devicesLoading, devicesError, refreshDevices,
+    sessions, selectedId, setSelectedId, detail, connected, loading, error, setError,
+    refresh, refreshSessions,
   };
 }
