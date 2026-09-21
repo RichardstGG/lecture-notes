@@ -58,6 +58,28 @@ class UpgradeTests(unittest.TestCase):
             "--backend", "cpu", "--generator", "Ninja", "--rebuild", "whisper",
         ])
 
+    def test_default_upgrade_includes_ui_install_and_build(self):
+        args = U.parse_args(["--skip-pull"])
+        with mock.patch.object(U, "ensure_no_active_run") as ensure_no_active_run, \
+                mock.patch.object(U, "run", return_value=self.completed()) as run, \
+                mock.patch.object(U, "install_ui") as install_ui:
+            U.perform_upgrade(args)
+
+        ensure_no_active_run.assert_called_once_with()
+        run.assert_called_once_with(U.engine_command(args))
+        install_ui.assert_called_once_with()
+
+    def test_skip_engines_installs_ui_only(self):
+        args = U.parse_args(["--skip-pull", "--skip-engines"])
+        with mock.patch.object(U, "ensure_no_active_run") as ensure_no_active_run, \
+                mock.patch.object(U, "run") as run, \
+                mock.patch.object(U, "install_ui") as install_ui:
+            U.perform_upgrade(args)
+
+        ensure_no_active_run.assert_not_called()
+        run.assert_not_called()
+        install_ui.assert_called_once_with()
+
     def test_active_run_blocks_upgrade_without_stopping_it(self):
         status = self.completed('{"running": true, "course": "作業系統"}')
         with mock.patch.object(U, "run", return_value=status) as run, \
