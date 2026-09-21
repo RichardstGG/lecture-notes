@@ -29,12 +29,21 @@ sudo apt install ffmpeg curl pulseaudio-utils opencc \
                  git cmake build-essential pkg-config libvulkan-dev glslc vulkan-tools
 
 # macOS
-xcode-select --install && brew install cmake ffmpeg opencc
+xcode-select --install && brew install python cmake ffmpeg opencc
 
 # Windows（PowerShell；另需 Visual Studio Build Tools 的「C++ 桌面開發」與 Vulkan SDK）
 winget install Git.Git Kitware.CMake Gyan.FFmpeg Python.Python.3.13
 winget install LunarG.VulkanSDK
 ```
+
+macOS 內建的 `python3` 通常是 3.9，低於需求的 3.11；上面的 `brew install python`
+會裝新版。裝完先開新的終端機，用 `python3 --version` 確認是 3.11 以上。
+
+> **macOS（zsh）注意**：zsh 預設不把 `#` 當註解。本文件指令後面的 `# …` 說明
+> 如果一起貼上，會被當成參數（例如 `setup_engines.py` 回報「未知的引擎：#」）。
+> 只複製 `#` 前面的指令，或執行一次
+> `echo 'setopt interactivecomments' >> ~/.zshrc && source ~/.zshrc`，
+> 之後就能連同註解一起貼上。
 
 **2. 編譯引擎並取得 whisper 模型**
 
@@ -60,17 +69,55 @@ curl -L -C - -o models/Qwen3-8B-Q4_K_M.gguf \
   https://huggingface.co/Qwen/Qwen3-8B-GGUF/resolve/main/Qwen3-8B-Q4_K_M.gguf
 ```
 
-**4. 設定麥克風並檢查環境**
+**4. 讓 `lec` 可以直接執行**
+
+在 repo 資料夾裡執行。`"$PWD/lec"` 會連到目前這份 repo，就算不是 clone 在
+`~/lecture-notes` 也不會連錯。
+
+Linux：
 
 ```bash
-ln -s ~/lecture-notes/lec ~/.local/bin/lec   # Linux/macOS；Windows 用 python lec …
-lec devices                     # 列出麥克風
-lec devices --test <編號>        # 錄 3 秒看音量
-lec devices --save <編號>        # 寫入 config/local.toml
-lec doctor --mic                # 全部 ✔ 就可以上課了
+mkdir -p ~/.local/bin
+ln -sf "$PWD/lec" ~/.local/bin/lec
 ```
 
-**5. 用內附的範例音檔驗證整條流程**
+多數發行版登入時會自動把已存在的 `~/.local/bin` 加進 PATH；如果剛建立這個
+資料夾，要重新登入（或開新的登入 shell）之後 `lec` 才找得到。
+
+macOS：
+
+```zsh
+mkdir -p ~/.local/bin
+ln -sf "$PWD/lec" ~/.local/bin/lec
+echo 'export PATH="$HOME/.local/bin:$PATH"' >> ~/.zshrc
+source ~/.zshrc
+```
+
+`~/.local/bin` 是 Linux 的慣例，macOS 預設既沒有這個資料夾，也不會把它放進
+PATH，所以要自己建立並加進 `~/.zshrc`。macOS 預設 PATH 裡的 `/usr/bin` 受系統
+保護不能寫入，`/usr/local/bin` 在 Apple Silicon 上需要 sudo；放在 `~/.local/bin`
+不用 sudo，也不會碰到系統或 Homebrew 的檔案。不想改 PATH 的話，也可以改連到
+Homebrew 的資料夾：`ln -sf "$PWD/lec" /opt/homebrew/bin/lec`（Homebrew 管理的
+位置，`brew doctor` 可能會提醒有非 Homebrew 的檔案）。
+
+Windows：不需要這一步，在 repo 資料夾裡把下面的 `lec` 換成 `python lec` 即可。
+
+確認：`lec --help` 能顯示說明就完成了。
+
+**5. 設定麥克風並檢查環境**
+
+```bash
+lec devices
+lec devices --test <編號>
+lec devices --save <編號>
+lec doctor --mic
+```
+
+依序是：列出麥克風、錄 3 秒看音量、把選好的麥克風寫入 `config/local.toml`、
+檢查整個環境（全部 ✔ 就可以上課了）。macOS 第一次錄音時會詢問是否允許
+終端機使用麥克風；按過拒絕的話，到「系統設定 > 隱私權與安全性 > 麥克風」打開。
+
+**6. 用內附的範例音檔驗證整條流程**
 
 ```bash
 lec run 測試課 --file samples/test8min.ogg   # 轉錄 → 總結，跑完看 outputs/
