@@ -116,6 +116,7 @@ python -m ui.backend
    合併設定；驗證失敗不會覆寫舊檔。課程檔受 `.gitignore` 保護。
 2. **開始處理**：在「課堂工作台」選擇課程與模式。「現場錄音」使用本機預設
    麥克風；「處理音檔」目前輸入本機檔案的絕對路徑。模型欄留空會使用課程預設。
+   若電腦無法執行 LLM，可勾選「只轉錄」，只產生逐字稿而不啟動總結模型。
 3. **查看進度**：NOW PROCESSING 區塊顯示目前階段、階段計時、轉錄佇列與筆記
    進度；逐字稿與筆記會透過 SSE 自動更新。
 4. **歷史紀錄／補做筆記**：右側選擇過去 session 即可查看逐字稿與筆記；只有
@@ -190,6 +191,7 @@ llama.cpp 官方有 Windows Vulkan / CUDA 版，whisper.cpp 官方只有 CPU 與
 |---|---|
 | `lec run 課名` | 上課：即時轉錄＋總結，Ctrl+C 結束（自動阻止休眠） |
 | `lec run 課名 --file 錄音.mp3` | 處理音檔：轉錄完再總結 |
+| `lec run 課名 --transcribe-only` | 只轉錄，不啟動總結模型（等同 `--set summary.enabled=false`） |
 | `lec run 課名 --model qwen3-4b --source mic2` | 臨時換模型、錄音來源 |
 | `lec run 課名 --set vad.sensitivity=3` | 臨時覆寫任一設定（可重複） |
 | `lec summarize <資料夾>` | 補做尚未完成的總結 |

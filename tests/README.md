@@ -28,6 +28,7 @@ python3 -m unittest tests.test_platform_parsers -v
 | `test_session_paths.py` | 輸出資料夾命名、分層、同名後綴與 traversal 防護 |
 | `test_devices_permission_hint.py` | 麥克風權限錯誤訊息（啟發式，非窮舉） |
 | `test_doctor_helpers.py` | `core/doctor.py` 的小工具函式，以及只轉錄模式（`summary.enabled = false`）下的檢查結果 |
+| `test_cli_transcribe_only.py` | `lec run --transcribe-only` 的設定覆寫與 help contract |
 | `test_ui_course_store.py` | UI 課程設定的安全路徑、symlink 防護、驗證與原子寫入 |
 
 macOS／Windows 相關的測試全部是靜態驗證＋mock，**不代表已經在真機上測過**，

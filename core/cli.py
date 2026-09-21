@@ -15,6 +15,7 @@ from .util import die, hms, read_json
 EPILOG = """範例：
   lec run 計算機概論                         上課：即時轉錄＋總結，Ctrl+C 結束
   lec run 計算機概論 --file 錄音.mp3         處理音檔（轉錄完再總結）
+  lec run 計算機概論 --transcribe-only       只轉錄，不啟動總結模型
   lec run 計算機概論 --model qwen3-4b        臨時換模型
   lec run 計算機概論 --set vad.sensitivity=3 --set summary.temperature=0.3
   lec summarize outputs/測試課_20260918                 補做尚未完成的總結
@@ -39,8 +40,9 @@ def _state_dir():
 
 
 def _load(args, **kw):
+    sets = kw.pop("sets", getattr(args, "set", []))
     try:
-        return C.load(sets=args.set, model=getattr(args, "model", None),
+        return C.load(sets=sets, model=getattr(args, "model", None),
                       source=getattr(args, "source", None), **kw)
     except C.ConfigError as e:
         die(str(e))
@@ -49,7 +51,13 @@ def _load(args, **kw):
 # ---------------------------------------------------------------- 子指令
 def cmd_run(args):
     from .session import LectureRun
-    cfg, created = _load(args, course_arg=args.course, create_missing=True)
+    sets = list(args.set)
+    if args.transcribe_only:
+        # Keep the explicit flag deterministic even when --set also supplies
+        # summary.enabled; this is a convenience alias for the documented
+        # --set summary.enabled=false form.
+        sets.append("summary.enabled=false")
+    cfg, created = _load(args, sets=sets, course_arg=args.course, create_missing=True)
     if created:
         print(f"▷ 已建立課程設定檔 {C.COURSES_DIR / (args.course + '.toml')}（目前使用預設值，之後可修改）")
     return LectureRun(cfg, args.file).run()
@@ -244,6 +252,8 @@ def main(argv=None):
     p.add_argument("course", help="課名（對應 courses/<課名>.toml）或 .toml 路徑")
     p.add_argument("--file", help="處理既有音檔，而不是麥克風即時錄音")
     p.add_argument("--source", help="錄音來源（[audio.sources.*] 的名稱或 pulse 來源全名）")
+    p.add_argument("--transcribe-only", action="store_true",
+                   help="只轉錄，不啟動總結模型（等同 --set summary.enabled=false）")
     _add_overrides(p)
     p.set_defaults(func=cmd_run)
 

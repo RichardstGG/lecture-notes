@@ -70,6 +70,9 @@ h1 { margin-bottom: 0; font-size: clamp(28px, 3vw, 38px); letter-spacing: -.035e
 .run-form { display: grid; grid-template-columns: minmax(170px, 1fr) auto minmax(180px, 1fr) auto; gap: 14px; align-items: end; margin-top: 26px; }
 .run-form label { display: grid; gap: 7px; }
 .run-form label > span { color: var(--muted); font-size: 11px; font-weight: 600; }
+.run-form .check-field { display: flex; align-items: center; gap: 8px; align-self: center; }
+.run-form .check-field input[type="checkbox"] { width: 16px; height: 16px; padding: 0; accent-color: var(--green); }
+.run-form .check-field > span { color: var(--ink); font-size: 12px; font-weight: 500; }
 input, select, textarea { min-width: 0; border: 1px solid #d6d7d0; background: #fff; color: var(--ink); border-radius: 9px; outline: none; }
 input, select { height: 42px; padding: 0 12px; }
 textarea { padding: 12px; }
