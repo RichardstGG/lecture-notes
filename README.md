@@ -83,7 +83,31 @@ lec run 測試課 --file samples/test8min.ogg   # 轉錄 → 總結，跑完看 
 lec new 計算機概論 --from example
 ```
 
-更新程式：`git pull`，若 `engines.lock` 有變動再執行一次 `setup_engines.py`。
+## 升級舊版安裝
+
+舊版使用者先取得升級腳本一次：
+
+```bash
+cd ~/lecture-notes
+git pull --ff-only
+```
+
+之後只需一個指令，就會更新目前 Git checkout、依 `engines.lock` clone／編譯引擎、
+建立或沿用 `.venv`、安裝 backend dependencies，並執行 `npm ci` 與 frontend build：
+
+```bash
+python3 upgrade.py                    # Windows 用 python upgrade.py
+```
+
+只使用逐字稿、不安裝 llama.cpp：
+
+```bash
+python3 upgrade.py --whisper-only
+```
+
+腳本只接受 fast-forward Git 更新；若 tracked 檔案有未提交修改或仍有課程正在執行
+會先停止，不會覆寫受 `.gitignore` 保護的課程設定、local config、模型、錄音或
+輸出。其他選項可用 `python3 upgrade.py --help` 查看。
 
 ## Web UI
 
