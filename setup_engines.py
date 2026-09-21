@@ -9,7 +9,7 @@
   python3 setup_engines.py --lock             不編譯，只把目前 checkout 的版本記進 engines.lock
   python3 setup_engines.py --backend vulkan   後端：auto（預設）/ vulkan / cuda / metal / cpu
   python3 setup_engines.py --import-models DIR  從其他位置搬入已下載的模型
-  python3 setup_engines.py --generator Ninja  指定 cmake generator（Windows 想用 Ninja 而非 Visual Studio 時）
+  python3 setup_engines.py --generator Ninja  指定 cmake generator（Windows 預設依已安裝的 Visual Studio 自動選）
 
 後端預設：Linux 與 Windows 用 Vulkan，macOS 用 Metal。
 以靜態連結編譯（BUILD_SHARED_LIBS=OFF），整個專案資料夾搬到哪裡都能執行。
@@ -63,10 +63,12 @@ def die(msg):
     sys.exit(1)
 
 
-def run(cmd, **kw):
+def run(cmd, hint=None, **kw):
     print("  $ " + " ".join(str(c) for c in cmd), flush=True)
     r = subprocess.run([str(c) for c in cmd], **kw)
     if r.returncode != 0:
+        if hint:
+            print(hint, file=sys.stderr, flush=True)
         die(f"指令失敗（{r.returncode}）：{' '.join(str(c) for c in cmd)}")
     return r
 
@@ -113,16 +115,77 @@ def build_stamp(directory, backend, args, generator=None):
     return f"{sha} BACKEND={backend}{gen} {' '.join(args)}"
 
 
+# ---------------------------------------------------------------- Windows：Visual Studio
+VC_TOOLS = "Microsoft.VisualStudio.Component.VC.Tools.x86.x64"
+VS_GENERATORS = {16: "Visual Studio 16 2019", 17: "Visual Studio 17 2022",
+                 18: "Visual Studio 18 2026"}
+WIN_CONFIGURE_HINT = (
+    "\nWindows 編譯設定失敗的常見原因：\n"
+    "  1. Visual Studio 沒有安裝「使用 C++ 的桌面開發」工作負載\n"
+    "  2. CMake 太舊、不認得已安裝的 Visual Studio：winget upgrade Kitware.CMake\n"
+    "  3. CUDA 版：CUDA Toolkit 沒有整合進 Visual Studio（重裝 CUDA 並勾選 Visual Studio Integration）；\n"
+    "     或改在「x64 Native Tools Command Prompt for VS」裡執行，並加上 --generator Ninja\n")
+
+_UNSET = object()
+
+
+def find_msvc():
+    """用 vswhere 找「有裝 C++ 工具」的 Visual Studio；回傳 {version, path} 或 None。
+    只看 Program Files 下有沒有 Microsoft Visual Studio 資料夾不夠：
+    只裝 VS Installer、沒勾 C++ 工作負載時資料夾也存在，cmake 會退回 NMake 然後失敗。"""
+    import json
+    base = os.environ.get("ProgramFiles(x86)") or "C:/Program Files (x86)"
+    vswhere = Path(base) / "Microsoft Visual Studio" / "Installer" / "vswhere.exe"
+    if not vswhere.exists():
+        return None
+    raw = out([vswhere, "-latest", "-products", "*", "-requires", VC_TOOLS,
+               "-format", "json", "-utf8"])
+    try:
+        items = json.loads(raw or "[]")
+    except ValueError:
+        return None
+    if not items:
+        return None
+    return {"version": items[0].get("installationVersion", ""),
+            "path": items[0].get("installationPath", "")}
+
+
+def pick_generator(requested, msvc):
+    """決定要傳給 cmake -G 的 generator（None = 交給 cmake）。
+
+    - 使用者用 --generator 指定：照用。
+    - 非 Windows、或 cl 已在 PATH（Developer Command Prompt）：交給 cmake。
+    - 一般 PowerShell：依 vswhere 找到的 VS 版本明確指定 Visual Studio generator，
+      並先確認這版 cmake 認得它；不認得就提早說清楚，而不是讓 cmake 默默退回 NMake。
+    """
+    if requested or P.NAME != "windows" or shutil.which("cl") or not msvc:
+        return requested or None
+    try:
+        major = int(str(msvc["version"]).split(".")[0])
+    except ValueError:
+        return None
+    gen = VS_GENERATORS.get(major)
+    if not gen:   # 比這份對照表更新的 VS：交給 cmake 自己判斷，失敗時 WIN_CONFIGURE_HINT 會說明
+        print(f"⚠ 不認得 Visual Studio {msvc['version']}，交給 cmake 自動選擇 generator")
+        return None
+    if gen not in out(["cmake", "--help"]):
+        ver = out(["cmake", "--version"]).splitlines()[:1]
+        die(f"找到 {gen}，但目前的 {ver[0] if ver else 'cmake'} 不支援它，請升級 CMake"
+            "（winget upgrade Kitware.CMake），或在「x64 Native Tools Command Prompt for VS」裡執行並加 --generator Ninja")
+    print(f"✔ Visual Studio {msvc['version']}（{gen}）")
+    return gen
+
+
 # ---------------------------------------------------------------- 前置檢查
-def check_tools(backend):
+def check_tools(backend, msvc=_UNSET):
     missing = ["git"] if not shutil.which("git") else []
     if not shutil.which("cmake"):
         missing.append("cmake")
     if P.NAME == "windows":
-        if not (shutil.which("cl") or shutil.which("ninja") or
-                Path(os.environ.get("ProgramFiles(x86)", "C:/Program Files (x86)"),
-                     "Microsoft Visual Studio").exists()):
-            missing.append("Visual Studio Build Tools")
+        if msvc is _UNSET:
+            msvc = find_msvc()
+        if not (shutil.which("cl") or msvc):
+            missing.append("Visual Studio 的「使用 C++ 的桌面開發」工作負載（MSVC 編譯器）")
         if backend == "vulkan" and not (os.environ.get("VULKAN_SDK") or shutil.which("glslc")):
             missing.append("Vulkan SDK")
     else:
@@ -167,8 +230,12 @@ def fetch_repo(directory, repo, ref):
     print("  版本：" + out(["git", "-C", directory, "log", "-1", "--format=%h %cs %s"])[:80])
 
 
-def build(directory, backend, args, targets, jobs, rebuild, generator=None):
+def build(directory, backend, args, targets, jobs, rebuild, generator=None, cmake_generator=None):
+    """generator：使用者 --generator 指定的值（記進 build stamp）；
+    cmake_generator：實際傳給 cmake -G 的值（Windows 可能是自動選的 VS generator），
+    沒給就用 generator。自動選的不記進 stamp，所以 --lock 與實際編譯的 stamp 一致。"""
     directory = Path(directory)
+    cmake_generator = cmake_generator or generator
     stamp_file = directory / "build" / ".lec-build"
     want = build_stamp(directory, backend, args, generator)
     have = all(P.find_engine_bin(directory, t).is_file() for t in targets)
@@ -180,10 +247,10 @@ def build(directory, backend, args, targets, jobs, rebuild, generator=None):
     shutil.rmtree(directory / "build", ignore_errors=True)
     cmake_cmd = ["cmake", "-S", directory, "-B", directory / "build",
                  "-DCMAKE_BUILD_TYPE=Release", "-DBUILD_SHARED_LIBS=OFF"]
-    if generator:
-        cmake_cmd += ["-G", generator]
+    if cmake_generator:
+        cmake_cmd += ["-G", cmake_generator]
     cmake_cmd += [*BACKEND_FLAGS[backend], *args]
-    run(cmake_cmd)
+    run(cmake_cmd, hint=WIN_CONFIGURE_HINT if P.NAME == "windows" else None)
     for t in targets:
         print(f"▶ 編譯 {t}")
         run(["cmake", "--build", directory / "build", "--config", "Release",
@@ -241,7 +308,7 @@ def main():
     ap.add_argument("--lock", action="store_true")
     ap.add_argument("--import-models", metavar="DIR")
     ap.add_argument("--generator", metavar="NAME",
-                    help="傳給 cmake -G（例如 Windows 上的 Ninja；預設交給 cmake 自動判斷）")
+                    help="傳給 cmake -G（例如 Ninja）。預設：Windows 依 vswhere 找到的 Visual Studio 自動指定，其他平台交給 cmake")
     args = ap.parse_args()
 
     for name in args.engines:
@@ -266,13 +333,16 @@ def main():
         return 0
 
     step("檢查編譯工具")
-    jobs = check_tools(backend)
+    msvc = find_msvc() if P.NAME == "windows" else None
+    jobs = check_tools(backend, msvc)
+    cmake_generator = pick_generator(args.generator, msvc)
 
     for name in names:
         e = ENGINES[name]
         step(e["dir"].name)
         fetch_repo(e["dir"], e["repo"], None if args.update else lock.get(e["key"]))
-        build(e["dir"], backend, e["args"], e["targets"], jobs, args.rebuild, args.generator)
+        build(e["dir"], backend, e["args"], e["targets"], jobs, args.rebuild, args.generator,
+              cmake_generator)
         check_bin(P.find_engine_bin(e["dir"], e["targets"][0]), backend)
         if args.update or not lock.get(e["key"]):
             lock_write(e["key"], e["dir"])

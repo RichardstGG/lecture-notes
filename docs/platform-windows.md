@@ -85,17 +85,31 @@ Windows 上，`lec devices` 應該會回報找不到任何麥克風**，即使 f
 
 ## CMake generator／編譯環境
 
-- `check_tools()` 檢查 `cl`（MSVC 編譯器）或 `ninja` 在 PATH 上，或是
-  `Program Files (x86)\Microsoft Visual Studio` 存在；Vulkan 後端另外檢查
-  `VULKAN_SDK` 環境變數或 `glslc`。
-- 這次新增 `setup_engines.py --generator <NAME>`：可以指定 `cmake -G` 用什麼
-  產生器（例如 `--generator Ninja`），不指定的話維持原本「交給 cmake 自動判斷」
-  的行為（在有安裝 Visual Studio 時，cmake 預設通常會選多組態的 VS 產生器）。
-  加這個選項是因為 Windows 上常見兩種編譯方式（VS 產生器 vs. Ninja +
-  Developer Command Prompt），沒有 Windows 實機沒辦法確定 cmake 的預設選擇
-  一定符合預期，所以先開放手動指定，而不是貿然幫使用者做決定。
-- `engines.lock` 的 build stamp 現在也會記錄 generator，換 generator 會觸發
-  重新編譯（避免用 Ninja 編過的 build 資料夾被 VS 產生器誤判成「已經編譯過」）。
+**實機回報（2026-09，Windows + `--backend cuda`）**：`check_tools()` 顯示「工具齊全」，
+但 cmake 印出 `Building for: NMake Makefiles`，接著 `nmake -?` 找不到、
+`CMAKE_C_COMPILER not set` 而失敗。原因是舊版 `check_tools()` 只要
+`Program Files (x86)\Microsoft Visual Studio` 資料夾存在就算有編譯器——只裝了
+VS Installer、沒勾「使用 C++ 的桌面開發」時這個資料夾也存在；cmake 找不到可用的
+Visual Studio 就退回 NMake，而一般 PowerShell 裡沒有 `nmake`／`cl`。
+
+修正後的行為：
+
+- `find_msvc()` 用 `vswhere.exe -requires Microsoft.VisualStudio.Component.VC.Tools.x86.x64`
+  確認真的有裝 MSVC；`check_tools()` 要求 `cl` 在 PATH 上（Developer Command Prompt）
+  或 vswhere 找得到，否則直接報「缺少：Visual Studio 的『使用 C++ 的桌面開發』工作負載」。
+  只有 `ninja` 不算（ninja 不是編譯器）。
+- `pick_generator()`：沒有 `--generator`、又不在 Developer Command Prompt 時，依 vswhere
+  回報的 VS 主版本明確指定 `Visual Studio 16 2019`／`17 2022`／`18 2026`，並先用
+  `cmake --help` 確認這版 cmake 認得它；不認得（例如 VS 2026 配舊版 CMake）就提早
+  叫你升級 CMake，而不是讓 cmake 默默退回 NMake。對照表以外的更新版本交給 cmake 自己判斷。
+- cmake 設定階段失敗時，Windows 會額外印出常見原因（缺 C++ 工作負載、CMake 太舊、
+  CUDA 沒整合進 Visual Studio）與改用 `--generator Ninja` 的做法。
+- `--generator <NAME>` 仍可手動指定，優先於自動選擇。build stamp 只記錄手動指定的
+  generator，自動選的不記，讓 `--lock` 與實際編譯寫出的 stamp 一致。
+- CUDA + Visual Studio generator 需要 CUDA Toolkit 的 Visual Studio Integration
+  （安裝 CUDA 時若 VS 尚未安裝就不會裝上）。沒有的話可以在「x64 Native Tools Command
+  Prompt for VS」裡執行 `python setup_engines.py --backend cuda --generator Ninja`
+  （VS 內附 Ninja）。
 
 ## doctor 訊息
 

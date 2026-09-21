@@ -172,5 +172,132 @@ class BuildGeneratorPassthroughTests(unittest.TestCase):
         self.assertEqual(self.calls, [], "版本、後端與 generator 都沒變時不應該重新編譯")
 
 
+
+class FindMsvcTests(unittest.TestCase):
+    """find_msvc()：用 vswhere 判斷「有沒有裝 C++ 工具」，而不是只看資料夾存不存在
+    （迴歸：只裝 VS Installer 時資料夾存在，舊版 check_tools 誤判工具齊全，
+    cmake 退回 NMake Makefiles 後失敗）。"""
+
+    def test_no_vswhere_returns_none(self):
+        with mock.patch.object(SE.Path, "exists", return_value=False):
+            self.assertIsNone(SE.find_msvc())
+
+    def test_vswhere_without_vc_tools_returns_none(self):
+        with mock.patch.object(SE.Path, "exists", return_value=True), \
+                mock.patch.object(SE, "out", return_value="[]"):
+            self.assertIsNone(SE.find_msvc())
+
+    def test_vswhere_with_vc_tools(self):
+        raw = '[{"installationVersion": "17.11.35222.181", "installationPath": "C:\\\\VS\\\\2022"}]'
+        with mock.patch.object(SE.Path, "exists", return_value=True), \
+                mock.patch.object(SE, "out", return_value=raw) as out:
+            got = SE.find_msvc()
+        self.assertEqual(got["version"], "17.11.35222.181")
+        self.assertIn(SE.VC_TOOLS, [str(a) for a in out.call_args[0][0]])
+
+    def test_garbage_output_returns_none(self):
+        with mock.patch.object(SE.Path, "exists", return_value=True), \
+                mock.patch.object(SE, "out", return_value="not json"):
+            self.assertIsNone(SE.find_msvc())
+
+
+class PickGeneratorTests(unittest.TestCase):
+    MSVC_2022 = {"version": "17.11.35222.181", "path": "C:/VS/2022"}
+    MSVC_2026 = {"version": "18.0.11111.1", "path": "C:/VS/2026"}
+
+    def _which(self, present):
+        return lambda name: (f"C:/bin/{name}.exe" if name in present else None)
+
+    def test_explicit_generator_wins(self):
+        with mock.patch.object(P, "NAME", "windows"):
+            self.assertEqual(SE.pick_generator("Ninja", self.MSVC_2022), "Ninja")
+
+    def test_non_windows_leaves_it_to_cmake(self):
+        with mock.patch.object(P, "NAME", "linux"):
+            self.assertIsNone(SE.pick_generator(None, None))
+
+    def test_developer_prompt_leaves_it_to_cmake(self):
+        with mock.patch.object(P, "NAME", "windows"), \
+                mock.patch.object(SE.shutil, "which", side_effect=self._which({"cl"})):
+            self.assertIsNone(SE.pick_generator(None, self.MSVC_2022))
+
+    def test_plain_powershell_picks_matching_vs_generator(self):
+        help_text = "Generators\n* Visual Studio 17 2022 = Generates Visual Studio 2022 project files."
+        with mock.patch.object(P, "NAME", "windows"), \
+                mock.patch.object(SE.shutil, "which", side_effect=self._which(set())), \
+                mock.patch.object(SE, "out", return_value=help_text):
+            self.assertEqual(SE.pick_generator(None, self.MSVC_2022), "Visual Studio 17 2022")
+
+    def test_cmake_too_old_for_installed_vs_exits_with_clear_message(self):
+        help_text = "Generators\n* Visual Studio 17 2022 = ..."   # 舊版 cmake 沒有 VS 18 2026
+        with mock.patch.object(P, "NAME", "windows"), \
+                mock.patch.object(SE.shutil, "which", side_effect=self._which(set())), \
+                mock.patch.object(SE, "out", return_value=help_text), \
+                self.assertRaises(SystemExit):
+            SE.pick_generator(None, self.MSVC_2026)
+
+    def test_unknown_future_vs_falls_back_to_cmake(self):
+        with mock.patch.object(P, "NAME", "windows"), \
+                mock.patch.object(SE.shutil, "which", side_effect=self._which(set())):
+            self.assertIsNone(SE.pick_generator(None, {"version": "99.0", "path": ""}))
+
+
+class CheckToolsMsvcTests(unittest.TestCase):
+    def _which(self, present):
+        return lambda name: (f"C:/bin/{name}.exe" if name in present else None)
+
+    def test_vs_folder_alone_is_not_enough(self):
+        # VS Installer 的資料夾存在、但 vswhere 找不到 C++ 工具 → 應該報缺少，而不是「工具齊全」
+        with mock.patch.object(P, "NAME", "windows"), \
+                mock.patch.object(SE.shutil, "which", side_effect=self._which({"git", "cmake", "nvcc"})), \
+                self.assertRaises(SystemExit):
+            SE.check_tools("cuda", msvc=None)
+
+    def test_ninja_alone_is_not_a_compiler(self):
+        with mock.patch.object(P, "NAME", "windows"), \
+                mock.patch.object(SE.shutil, "which",
+                                  side_effect=self._which({"git", "cmake", "nvcc", "ninja"})), \
+                self.assertRaises(SystemExit):
+            SE.check_tools("cuda", msvc=None)
+
+    def test_vswhere_found_msvc_passes(self):
+        with mock.patch.object(P, "NAME", "windows"), \
+                mock.patch.object(SE.shutil, "which", side_effect=self._which({"git", "cmake", "nvcc"})), \
+                mock.patch.object(SE.os, "cpu_count", return_value=16):
+            self.assertEqual(SE.check_tools("cuda", msvc={"version": "17.11", "path": "C:/VS"}), 16)
+
+
+class ConfigureHintTests(unittest.TestCase):
+    def test_windows_configure_failure_prints_hint(self):
+        with tempfile.TemporaryDirectory() as d, \
+                mock.patch.object(P, "NAME", "windows"), \
+                mock.patch.object(SE, "out", return_value="abc123"), \
+                mock.patch.object(SE.shutil, "rmtree"), \
+                mock.patch.object(P, "find_engine_bin", return_value=Path("/nonexistent")), \
+                mock.patch.object(SE.subprocess, "run", return_value=mock.Mock(returncode=1)), \
+                mock.patch("sys.stderr") as err, \
+                self.assertRaises(SystemExit):
+            SE.build(Path(d), "cuda", ["-DFOO=1"], ["whisper-server"], jobs=2, rebuild=True)
+        printed = "".join(str(c.args[0]) for c in err.write.call_args_list)
+        self.assertIn("使用 C++ 的桌面開發", printed)
+
+    def test_effective_generator_used_but_not_stamped(self):
+        calls = []
+        with tempfile.TemporaryDirectory() as d:
+            (Path(d) / "build").mkdir()
+            with mock.patch.object(SE, "out", return_value="abc123"), \
+                    mock.patch.object(SE.shutil, "rmtree"), \
+                    mock.patch.object(P, "find_engine_bin", return_value=Path("/nonexistent")), \
+                    mock.patch.object(SE.subprocess, "run",
+                                      side_effect=lambda c, **k: calls.append([str(x) for x in c])
+                                      or mock.Mock(returncode=0)):
+                SE.build(Path(d), "cuda", ["-DFOO=1"], ["whisper-server"], jobs=2, rebuild=True,
+                         generator=None, cmake_generator="Visual Studio 17 2022")
+            stamp = (Path(d) / "build" / ".lec-build").read_text(encoding="utf-8")
+        configure = [c for c in calls if "-S" in c][0]
+        self.assertEqual(configure[configure.index("-G") + 1], "Visual Studio 17 2022")
+        self.assertNotIn("GENERATOR=", stamp)
+
+
 if __name__ == "__main__":
     unittest.main()
