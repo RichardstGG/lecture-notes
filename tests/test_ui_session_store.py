@@ -59,7 +59,7 @@ class SessionStoreTests(unittest.TestCase):
 
     def make_session(self, name="測試課_20260918", updated="2026-09-18T12:00:00+08:00"):
         session = self.output / name
-        session.mkdir()
+        session.mkdir(parents=True)
         (session / "status.json").write_text(json.dumps({
             "schema_version": 1, "course": "測試課", "phase": "done",
             "mode": "live", "elapsed": 123.4, "sections_total": 3,
@@ -94,6 +94,21 @@ class SessionStoreTests(unittest.TestCase):
         self.assertEqual(detail["notes"]["content"], "# Notes\n")
         self.assertEqual(detail["session"]["elapsed"], 123.4)
 
+    def test_nested_sessions_use_unique_relative_path_ids(self):
+        first = self.make_session("UNIXops/20260921")
+        second = self.make_session("Networks/20260921", "2026-09-19T12:00:00+08:00")
+
+        sessions = self.store.list()
+
+        self.assertEqual(
+            [item["id"] for item in sessions],
+            ["Networks/20260921", "UNIXops/20260921"],
+        )
+        detail = self.store.get("UNIXops/20260921")
+        self.assertEqual(detail["session"]["id"], "UNIXops/20260921")
+        self.assertEqual(self.store.path_for("UNIXops/20260921"), first.resolve())
+        self.assertNotEqual(first, second)
+
     def test_course_falls_back_to_config_used(self):
         session = self.output / "course-fallback"
         session.mkdir()
@@ -104,6 +119,9 @@ class SessionStoreTests(unittest.TestCase):
     def test_rejects_path_traversal_and_missing_session(self):
         for session_id, code, status in (
             ("../outside", "invalid_session_id", 400),
+            ("course/../outside", "invalid_session_id", 400),
+            ("/absolute", "invalid_session_id", 400),
+            ("course//date", "invalid_session_id", 400),
             ("..\\outside", "invalid_session_id", 400),
             ("missing", "session_not_found", 404),
         ):

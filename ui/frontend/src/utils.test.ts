@@ -42,5 +42,11 @@ describe("frontend state helpers", () => {
   it("extracts session ids from POSIX and Windows paths", () => {
     expect(sessionIdFromPath("/tmp/outputs/course_20260918")).toBe("course_20260918");
     expect(sessionIdFromPath("C:\\notes\\outputs\\course_20260918")).toBe("course_20260918");
+    expect(sessionIdFromPath(
+      "/tmp/outputs/UNIXops/20260921", ["other/20260921", "UNIXops/20260921"],
+    )).toBe("UNIXops/20260921");
+    expect(sessionIdFromPath(
+      "C:\\notes\\outputs\\UNIXops\\20260921", ["UNIXops/20260921"],
+    )).toBe("UNIXops/20260921");
   });
 });

@@ -231,17 +231,8 @@ def create_app(
     async def session_list(request: Request):
         return request.app.state.sessions.list()
 
-    @app.get(
-        "/api/v1/sessions/{session_id}", response_model=SessionDetail,
-        response_model_exclude_none=True,
-        responses={400: {"model": ApiErrorResponse}, 404: {"model": ApiErrorResponse},
-                   413: {"model": ApiErrorResponse}, 500: {"model": ApiErrorResponse}},
-    )
-    async def session_detail(session_id: str, request: Request):
-        return request.app.state.sessions.get(session_id)
-
     @app.post(
-        "/api/v1/sessions/{session_id}/summarize",
+        "/api/v1/sessions/{session_id:path}/summarize",
         response_model=ProcessActionResponse, response_model_exclude_none=True,
         status_code=202,
         responses={400: {"model": ApiErrorResponse}, 404: {"model": ApiErrorResponse},
@@ -256,7 +247,7 @@ def create_app(
         )
 
     @app.get(
-        "/api/v1/sessions/{session_id}/stream", response_class=StreamingResponse,
+        "/api/v1/sessions/{session_id:path}/stream", response_class=StreamingResponse,
         responses={200: {"content": {"text/event-stream": {"schema": {"type": "string"}}}},
                    400: {"model": ApiErrorResponse}, 404: {"model": ApiErrorResponse}},
     )
@@ -271,6 +262,15 @@ def create_app(
             stream, media_type="text/event-stream",
             headers={"Cache-Control": "no-cache", "X-Accel-Buffering": "no"},
         )
+
+    @app.get(
+        "/api/v1/sessions/{session_id:path}", response_model=SessionDetail,
+        response_model_exclude_none=True,
+        responses={400: {"model": ApiErrorResponse}, 404: {"model": ApiErrorResponse},
+                   413: {"model": ApiErrorResponse}, 500: {"model": ApiErrorResponse}},
+    )
+    async def session_detail(session_id: str, request: Request):
+        return request.app.state.sessions.get(session_id)
 
     @app.get(
         "/api/v1/status/stream", response_class=StreamingResponse,

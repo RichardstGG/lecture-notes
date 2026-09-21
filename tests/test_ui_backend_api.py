@@ -6,6 +6,7 @@ import tempfile
 import tomllib
 import unittest
 from pathlib import Path
+from urllib.parse import quote
 
 from tests import _pathfix  # noqa: F401
 
@@ -368,6 +369,27 @@ class BackendApiTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(response.json()["transcript"]["content"], "first\n")
         self.assertEqual(response.json()["notes"]["content"], "note\n")
 
+    async def test_nested_session_ids_work_across_detail_and_summarize_routes(self):
+        session = self.make_session("UNIXops/20260921")
+        session_id = "UNIXops/20260921"
+        encoded = quote(session_id, safe="")
+
+        response = await self.request("GET", "/api/v1/sessions")
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(response.json()[0]["id"], session_id)
+
+        response = await self.request("GET", f"/api/v1/sessions/{encoded}")
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(response.json()["session"]["id"], session_id)
+
+        response = await self.request(
+            "POST", f"/api/v1/sessions/{encoded}/summarize", json={},
+        )
+        self.assertEqual(response.status_code, 202)
+        self.assertEqual(
+            self.launcher.calls[-1], ("summarize", str(session.resolve())),
+        )
+
     async def test_missing_session_uses_stable_error_envelope(self):
         response = await self.request("GET", "/api/v1/sessions/missing")
         self.assertEqual(response.status_code, 404)
@@ -379,10 +401,10 @@ class BackendApiTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(response.status_code, 404)
 
     async def test_session_stream_sends_snapshot_then_append_delta(self):
-        session = self.make_session()
+        session = self.make_session("UNIXops/20260921")
         stream = _session_events(
             DisconnectAfter(allowed_calls=2), self.app.state.sessions,
-            session.name, 0.001,
+            "UNIXops/20260921", 0.001,
         )
         snapshot = await anext(stream)
         self.assertTrue(snapshot.startswith("event: snapshot\n"))
