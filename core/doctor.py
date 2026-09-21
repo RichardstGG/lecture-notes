@@ -35,6 +35,26 @@ def git_head(d):
         return None
 
 
+def summary_mode_detail(summary_on, model):
+    """「總結」一行的說明文字。"""
+    if summary_on:
+        return f"開啟（模型 {model}）"
+    return ("關閉：只轉錄，不會啟動 llama.cpp"
+            "（summary.enabled = false；之後可在別台電腦用 lec summarize 補做總結）")
+
+
+def missing_engine_item(name, key, binary, summary_on):
+    """找不到引擎執行檔時的 (status, name, detail)。
+
+    只轉錄模式（summary.enabled = false）不會啟動 llama-server，
+    所以缺 llama.cpp 只算警告，不算錯誤；whisper.cpp 一律是必要的。
+    """
+    if key == "LLAMA_REF" and not summary_on:
+        return (WARN, name,
+                f"找不到 {binary}（只轉錄模式不需要；要總結時執行 setup_engines.py llama）")
+    return (FAIL, name, f"找不到 {binary}（執行 python3 setup_engines.py）")
+
+
 def run(course=None, sets=(), mic=False):
     items = []
 
@@ -67,13 +87,17 @@ def run(course=None, sets=(), mic=False):
         src += f" + {cfg.course_file.name}"
     add(OK if not cfg.warnings else WARN, "設定", src + ("；" + "；".join(cfg.warnings) if cfg.warnings else ""))
 
+    # ---- 總結模式
+    summary_on = bool(cfg["summary"]["enabled"])
+    add(OK, "總結", summary_mode_detail(summary_on, cfg["summary"]["model"]))
+
     # ---- 引擎與模型
     lock = read_lock(C.APP_ROOT / "engines.lock")
     w, l = WhisperServer(cfg), LlamaServer(cfg)
     for srv, key, d in ((w, "WHISPER_REF", w.whisper_dir), (l, "LLAMA_REF", l.llama_dir)):
         b = Path(srv.binary())
         if not os.access(b, os.X_OK):
-            add(FAIL, srv.name, f"找不到 {b}（執行 python3 setup_engines.py）")
+            add(*missing_engine_item(srv.name, key, b, summary_on))
             continue
         head, want = git_head(d), lock.get(key)
         if want and head and head != want:
@@ -84,8 +108,10 @@ def run(course=None, sets=(), mic=False):
                         (f"LLM 模型（{cfg['summary']['model']}）", Path(cfg.llm_model()["path"]))):
         if path.is_file():
             add(OK, label, f"{path.name}（{path.stat().st_size / 1e9:.1f} GB）")
+        elif label.startswith("whisper") or summary_on:
+            add(FAIL, label, f"找不到 {path}")
         else:
-            add(FAIL if label.startswith("whisper") or cfg["summary"]["enabled"] else WARN, label, f"找不到 {path}")
+            add(WARN, label, f"找不到 {path}（只轉錄模式不需要）")
 
     b = Path(l.binary())
     if os.access(b, os.X_OK):
@@ -98,8 +124,8 @@ def run(course=None, sets=(), mic=False):
         except (OSError, subprocess.TimeoutExpired) as e:
             add(WARN, "GPU", f"無法執行 --list-devices：{e}")
 
-    # ---- port
-    for srv in (w, l):
+    # ---- port（只轉錄時不會啟動 llama-server，不用檢查它的 port）
+    for srv in ((w, l) if summary_on else (w,)):
         st, _ = http_get(srv.url + srv.health_path, timeout=2)
         add(OK if st is None else WARN, f"port {srv.port}",
             "空閒" if st is None else f"已有程式在使用（可能是先前的 {srv.name}；lec 會嘗試沿用）")
