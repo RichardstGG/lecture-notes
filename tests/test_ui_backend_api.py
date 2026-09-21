@@ -13,6 +13,7 @@ if HAS_UI_DEPS:
     import httpx
     from ui.backend.app import _session_events, _sse, _status_events, create_app
     from ui.backend.cli_client import LecCommandError
+    from ui.backend.course_store import CourseStore
     from ui.backend.process_control import LaunchResult
     from ui.backend.settings import BackendSettings
 
@@ -23,6 +24,9 @@ class StubClient:
         self.courses_result = []
         self.error = None
         self.stop_calls = []
+        self.course_root = None
+        self.course_create_calls = []
+        self.course_validate_calls = []
 
     async def status(self):
         if self.error:
@@ -39,6 +43,19 @@ class StubClient:
             raise self.error
         self.stop_calls.append(force)
         return "force stop" if force else "stop"
+
+    async def create_course(self, course_id):
+        self.course_create_calls.append(course_id)
+        path = self.course_root / f"{course_id}.toml"
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text(f'[course]\nname = "{course_id}"\n', encoding="utf-8")
+        return f"created {path}"
+
+    async def validate_course(self, path):
+        self.course_validate_calls.append(Path(path).read_text(encoding="utf-8"))
+        if "invalid-model" in self.course_validate_calls[-1]:
+            raise LecCommandError("cli_failed", "summary.model is not defined", exit_code=1)
+        return "valid"
 
 
 class StubLauncher:
@@ -66,12 +83,15 @@ class BackendApiTests(unittest.IsolatedAsyncioTestCase):
     def setUp(self):
         self.tmp = tempfile.TemporaryDirectory()
         self.output = Path(self.tmp.name) / "outputs"
+        self.course_root = Path(self.tmp.name) / "courses"
+        self.course_root.mkdir()
         self.frontend = Path(self.tmp.name) / "frontend"
         self.frontend.mkdir()
         (self.frontend / "index.html").write_text(
             "<!doctype html><title>Lecture Notes</title>", encoding="utf-8",
         )
         self.client = StubClient()
+        self.client.course_root = self.course_root
         self.launcher = StubLauncher()
         settings = BackendSettings(
             Path.cwd(), output_root=self.output, status_poll_interval=0.001,
@@ -79,6 +99,7 @@ class BackendApiTests(unittest.IsolatedAsyncioTestCase):
         )
         self.app = create_app(
             settings=settings, client=self.client, launcher=self.launcher,
+            course_store=CourseStore(self.course_root),
         )
 
     def tearDown(self):
@@ -131,6 +152,56 @@ class BackendApiTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(response.status_code, 200)
         self.assertEqual(response.json()[0]["model"], "future-14b")
         self.assertEqual(response.json()[1]["error"], "bad TOML")
+
+    async def test_course_create_and_detail_use_versioned_contract(self):
+        response = await self.request("POST", "/api/v1/courses", json={"id": "資料結構"})
+        self.assertEqual(response.status_code, 201)
+        self.assertEqual(response.json()["api_version"], 1)
+        self.assertEqual(response.json()["id"], "資料結構")
+        self.assertEqual(self.client.course_create_calls, ["資料結構"])
+
+        response = await self.request("GET", "/api/v1/courses/資料結構")
+        self.assertEqual(response.status_code, 200)
+        self.assertIn('name = "資料結構"', response.json()["content"])
+
+    async def test_course_create_rejects_unsafe_and_duplicate_ids(self):
+        for course_id in ("../escape", "-option", "CON"):
+            with self.subTest(course_id=course_id):
+                response = await self.request(
+                    "POST", "/api/v1/courses", json={"id": course_id},
+                )
+                self.assertEqual(response.status_code, 400)
+                self.assertEqual(response.json()["error"]["code"], "invalid_course_id")
+
+        (self.course_root / "existing.toml").write_text("[course]\n", encoding="utf-8")
+        response = await self.request("POST", "/api/v1/courses", json={"id": "existing"})
+        self.assertEqual(response.status_code, 409)
+        self.assertEqual(response.json()["error"]["code"], "course_exists")
+
+    async def test_course_update_validates_then_atomically_replaces_content(self):
+        target = self.course_root / "測試課.toml"
+        target.write_text('[course]\nname = "舊名稱"\n', encoding="utf-8")
+        content = '[course]\nname = "新名稱"\n\n[summary]\nmodel = "qwen3-8b"\n'
+        response = await self.request(
+            "PUT", "/api/v1/courses/測試課", json={"content": content},
+        )
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(response.json()["content"], content)
+        self.assertEqual(target.read_text(encoding="utf-8"), content)
+        self.assertEqual(self.client.course_validate_calls, [content])
+
+    async def test_course_update_preserves_existing_file_when_validation_fails(self):
+        target = self.course_root / "測試課.toml"
+        original = '[course]\nname = "原始"\n'
+        target.write_text(original, encoding="utf-8")
+
+        response = await self.request(
+            "PUT", "/api/v1/courses/測試課",
+            json={"content": '[summary]\nmodel = "invalid-model"\n'},
+        )
+        self.assertEqual(response.status_code, 400)
+        self.assertEqual(response.json()["error"]["code"], "invalid_course_config")
+        self.assertEqual(target.read_text(encoding="utf-8"), original)
 
     async def test_cli_failure_uses_stable_error_envelope(self):
         self.client.error = LecCommandError(

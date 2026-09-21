@@ -36,6 +36,25 @@ class CourseSummary(BaseModel):
     error: str | None = None
 
 
+class CourseDetail(BaseModel):
+    api_version: int = API_VERSION
+    id: str
+    file: str
+    content: str
+
+
+class CourseCreateRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid", str_strip_whitespace=True)
+
+    id: str = Field(min_length=1, max_length=100)
+
+
+class CourseUpdateRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    content: str
+
+
 class SessionSummary(BaseModel):
     id: str
     course: str | None = None

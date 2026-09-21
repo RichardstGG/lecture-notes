@@ -99,6 +99,12 @@ class LecClient:
             raise LecCommandError("cli_invalid_response", "lec courses returned an invalid response")
         return result
 
+    async def create_course(self, course_id):
+        return (await self.run_text("new", course_id)).strip()
+
+    async def validate_course(self, path):
+        return await self.run_text("config", str(Path(path).resolve()))
+
     async def stop(self, force=False):
         args = ["stop"]
         if force:
