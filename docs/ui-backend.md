@@ -49,6 +49,9 @@ Optional environment variables:
 | `GET` | `/api/v1/health` | Service/API version |
 | `GET` | `/api/v1/status` | Pass through the versioned `lec status --json` contract |
 | `GET` | `/api/v1/courses` | Pass through `lec courses --json` with response validation |
+| `POST` | `/api/v1/courses` | Create a course from `config/template.toml` |
+| `GET` | `/api/v1/courses/{id}` | Read the editable course TOML source |
+| `PUT` | `/api/v1/courses/{id}` | Validate and atomically replace course TOML |
 | `GET` | `/api/v1/status/stream` | Server-sent status changes and heartbeat comments |
 | `GET` | `/api/v1/sessions` | Session history, newest first |
 | `GET` | `/api/v1/sessions/{id}` | Session metadata, transcript, and notes |
@@ -111,8 +114,23 @@ files such as notes rebuilt by `--redo` send a complete replacement. Unchanged
 polls send SSE heartbeat comments.
 
 The backend can start and stop a lecture process and request session
-summarization through fixed `lec` argument arrays. Course and local
-configuration editing are intentionally deferred to a later isolated change.
+summarization through fixed `lec` argument arrays.
+
+Course creation accepts `{"id": "資料結構"}`. Course ids are portable filename
+stems: path separators, option-like leading hyphens, hidden-file leading dots,
+control characters, Windows-reserved characters, and reserved device names are
+rejected. Existing files are never overwritten during creation.
+
+Course detail responses contain `api_version`, `id`, `file`, and the original
+TOML `content`, preserving comments and intentionally omitted defaults. Updates
+accept `{"content": "..."}`. The service first parses TOML, then asks
+`lec config <temporary-file>` to validate the fully merged configuration. Only
+valid content is atomically moved into place; a failed parse or validation leaves
+the existing course untouched. Symlinked course files are not read or replaced,
+and course content is limited to 1 MiB.
+
+Local machine configuration editing remains deferred to a later isolated
+change.
 
 ## Frontend foundation
 
@@ -121,6 +139,7 @@ The React/TypeScript frontend currently provides:
 - local service connection state and live run status over SSE
 - live transcription, queue, and summary progress
 - live or file-mode launch, normal stop, and forced stop
+- course creation and validated TOML configuration editing
 - session history with streamed transcript and notes content
 - missing-summary action for sessions that have a transcript
 - responsive desktop and mobile layouts

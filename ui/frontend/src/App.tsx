@@ -1,6 +1,7 @@
 import { useEffect, useMemo, useState } from "react";
 import { api } from "./api";
 import { Icon } from "./components/Icon";
+import { CourseEditor } from "./components/CourseEditor";
 import { MarkdownPane } from "./components/MarkdownPane";
 import { RunPanel } from "./components/RunPanel";
 import { useLectureData } from "./hooks/useLectureData";
@@ -73,6 +74,7 @@ export default function App() {
       <nav>
         <a className="active" href="#live"><Icon name="wave" />課堂工作台</a>
         <a href="#history"><Icon name="history" />歷史紀錄</a>
+        <a href="#courses"><Icon name="book" />課程設定</a>
       </nav>
       <div className="privacy-note"><span>LOCAL</span><p>錄音與筆記只保存在這台電腦。</p></div>
     </aside>
@@ -138,6 +140,13 @@ export default function App() {
           {visibleDetail && !visibleDetail.session.has_notes && visibleDetail.session.has_transcript && <button className="button secondary full" disabled={summarizing || data.status.running} onClick={() => void summarize()}>{summarizing ? "啟動中…" : "補做課堂筆記"}</button>}
         </aside>
       </div>
+
+      <CourseEditor
+        courses={data.courses}
+        onChanged={data.refresh}
+        onError={data.setError}
+        onMessage={setActionMessage}
+      />
     </main>
   </div>;
 }

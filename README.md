@@ -76,6 +76,68 @@ lec new 計算機概論 --from example
 
 更新程式：`git pull`，若 `engines.lock` 有變動再執行一次 `setup_engines.py`。
 
+## Web UI
+
+UI 是本機 React 頁面，透過 HTTP / SSE 連到同一台電腦上的 FastAPI service；
+service 再以 subprocess 呼叫 `lec`，不會把錄音、逐字稿或課程設定上傳到外部。
+服務只綁定 `127.0.0.1`。
+
+額外需求：Node.js 22.22+。第一次使用先安裝 UI dependencies 並 build：
+
+```bash
+cd ~/lecture-notes
+python3 -m venv .venv                    # Windows PowerShell：py -3 -m venv .venv
+source .venv/bin/activate                # Windows PowerShell：.venv\Scripts\Activate.ps1
+python -m pip install -r ui/backend/requirements.txt
+
+cd ui/frontend
+npm ci
+npm run build
+cd ../..
+```
+
+啟動 UI：
+
+```bash
+cd ~/lecture-notes
+source .venv/bin/activate                # Windows PowerShell：.venv\Scripts\Activate.ps1
+python -m ui.backend
+```
+
+然後開啟 <http://127.0.0.1:8765>。若要改 port：
+`python -m ui.backend --port 9876`。
+
+### UI 操作
+
+1. **建立／編輯課程**：到「課程設定」，輸入新課程名稱即可從
+   `config/template.toml` 建立 `courses/<課名>.toml`。左側選擇課程後可直接編輯
+   TOML；按「儲存設定」時會先解析 TOML，再用 `lec config` 驗證完整合併設定，
+   驗證失敗不會覆寫舊檔。課程檔受 `.gitignore` 保護。
+2. **開始處理**：在「課堂工作台」選擇課程與模式。「現場錄音」使用本機預設
+   麥克風；「處理音檔」目前輸入本機檔案的絕對路徑。模型欄留空會使用課程預設。
+3. **查看進度**：NOW PROCESSING 區塊顯示目前階段、階段計時、轉錄佇列與筆記
+   進度；逐字稿與筆記會透過 SSE 自動更新。
+4. **歷史紀錄／補做筆記**：右側選擇過去 session 即可查看逐字稿與筆記；只有
+   逐字稿、尚無筆記的 session 可以按「補做課堂筆記」。
+5. **停止工作**：「正常停止」會完成剩餘轉錄與最後一段總結；「立即停止」只在
+   必要時使用。關閉或 Ctrl+C 停止 UI service 本身不等於停止 `lec` 工作；背景工作
+   會繼續，下次啟動 UI 時重新發現。即使瀏覽器 SSE 分頁仍開著，UI service 也能
+   正常由 Ctrl+C 關閉，不必先關分頁。
+
+更新 frontend 程式後要重新執行 `npm run build`。開發模式可分兩個 terminal：
+
+```bash
+# terminal 1（repo root，已啟用 .venv）
+python -m ui.backend
+
+# terminal 2
+cd ui/frontend
+npm run dev
+```
+
+開發頁面在 <http://127.0.0.1:5173>，Vite 會把 `/api` proxy 到 port `8765`。
+完整 backend API 與環境變數見 `docs/ui-backend.md`。
+
 ### Windows 預編譯檔（不想裝編譯環境時）
 
 llama.cpp 官方有 Windows Vulkan / CUDA 版，whisper.cpp 官方只有 CPU 與 cuBLAS 版（且只有部分 release 附執行檔，例如 v1.9.0）。
@@ -89,6 +151,7 @@ llama.cpp 官方有 Windows Vulkan / CUDA 版，whisper.cpp 官方只有 CPU 與
 ```
 ~/lecture-notes/
 ├─ lec, core/, prompts/          程式
+├─ ui/backend/, ui/frontend/     本機 FastAPI service 與 React UI
 ├─ setup_engines.py              取得與編譯引擎
 ├─ samples/                      8 分鐘範例音檔、講稿與參考輸出
 ├─ tools/make_sample.py          重新產生範例音檔（一般使用者用不到）

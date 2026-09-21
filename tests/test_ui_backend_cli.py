@@ -76,3 +76,19 @@ class LecClientTests(unittest.IsolatedAsyncioTestCase):
             print("停止要求已送出")
         """)
         self.assertEqual(await client.stop(force=True), "停止要求已送出")
+
+    async def test_course_mutations_use_fixed_text_commands(self):
+        client = self.write_script("""
+            import sys
+            if sys.argv[1] == "new":
+                assert sys.argv[2:] == ["資料結構"]
+                print("created")
+            else:
+                assert sys.argv[1] == "config"
+                assert sys.argv[2].endswith("course.toml")
+                print("valid")
+        """)
+        self.assertEqual(await client.create_course("資料結構"), "created")
+        self.assertEqual(
+            (await client.validate_course(self.root / "course.toml")).strip(), "valid",
+        )
