@@ -42,6 +42,15 @@ winget install LunarG.VulkanSDK
 python3 setup_engines.py            # Linux/macOS；Windows 用 python setup_engines.py
 ```
 
+如果這台電腦只需要逐字稿、不使用 LLM 總結，可只安裝 whisper.cpp：
+
+```bash
+python3 setup_engines.py whisper    # Linux/macOS；Windows 用 python setup_engines.py whisper
+```
+
+這個選項不會取得或編譯 llama.cpp；後續可略過步驟 3，並使用
+`lec run <課名> --transcribe-only`。
+
 後端預設 Linux/Windows 為 Vulkan、macOS 為 Metal；要用 NVIDIA CUDA 加 `--backend cuda`（需 CUDA Toolkit）。
 
 **3. 下載 LLM 模型（Qwen 官方 GGUF，約 5GB）**
@@ -175,6 +184,7 @@ llama.cpp 官方有 Windows Vulkan / CUDA 版，whisper.cpp 官方只有 CPU 與
 | 指令 | 說明 |
 |---|---|
 | `setup_engines.py` | checkout `engines.lock` 的版本並編譯；同版本已編好就略過 |
+| `setup_engines.py whisper` | 只取得／編譯 whisper.cpp 並下載 Whisper 模型，不處理 llama.cpp |
 | `setup_engines.py --update` | 升級到最新版，編譯成功後寫回 `engines.lock`（測試沒問題再 commit） |
 | `setup_engines.py --rebuild` | 版本或後端不變，強制重新編譯 |
 | `setup_engines.py --lock` | 不編譯，把目前的版本記進 `engines.lock` |
