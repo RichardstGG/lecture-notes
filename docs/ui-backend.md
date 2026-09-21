@@ -49,6 +49,7 @@ Optional environment variables:
 | `GET` | `/api/v1/health` | Service/API version |
 | `GET` | `/api/v1/status` | Pass through the versioned `lec status --json` contract |
 | `GET` | `/api/v1/courses` | Pass through `lec courses --json` with response validation |
+| `GET` | `/api/v1/models` | Discover configured summary and Whisper models |
 | `POST` | `/api/v1/courses` | Create a course from `config/template.toml` |
 | `GET` | `/api/v1/courses/{id}` | Read the editable course TOML source |
 | `PUT` | `/api/v1/courses/{id}` | Validate and atomically replace course TOML |
@@ -106,6 +107,15 @@ CLI failures use a stable envelope:
 Unavailable and timed-out CLI processes return HTTP `503`. Failed commands and
 invalid CLI JSON/contracts return HTTP `502`. The backend preserves unknown
 status and course fields so that additive CLI contract changes remain compatible.
+
+Model discovery invokes the fixed `lec models --json` command. Its versioned
+response contains `summary` and `whisper` groups, each with the configured
+`selected` model id and a `models` array. Every model entry reports its id,
+resolved path, and whether that path is an installed regular file; installed
+files also report `size_bytes`. Summary entries additionally expose
+`disable_thinking`. Unknown fields are preserved for additive compatibility.
+The browser uses the summary inventory for its run override selector and
+disables entries whose local model file is missing.
 
 Session discovery recursively searches the configured output root for session
 marker files. Nested session ids are slash-separated paths relative to that
@@ -169,7 +179,7 @@ The React/TypeScript frontend currently provides:
 - missing-summary action for sessions that have a transcript
 - responsive desktop and mobile layouts
 
-The model override field is populated from model names already returned by the
-course contract and also accepts a future model identifier. A complete installed
-model inventory requires the planned versioned model-discovery contract; model
-names are never hard-coded in the frontend.
+The model override selector is populated from the versioned model-discovery
+contract. It displays installed summary models with their file sizes, disables
+configured models whose files are missing, and keeps the selected course model
+as the default. Model names are never hard-coded in the frontend.

@@ -14,6 +14,7 @@ from .process_control import (ControlError, LecProcessLauncher,
 from .schemas import (ApiErrorResponse, CourseCreateRequest, CourseDetail,
                       CourseSummary, CourseUpdateRequest,
                       CourseVocabularyUpdateRequest, HealthResponse,
+                      ModelInventoryResponse,
                       ProcessActionResponse, RunStartRequest,
                       RuntimeStatusResponse, SessionDetail, SessionSummary,
                       StopRequest, SummarizeRequest)
@@ -157,6 +158,14 @@ def create_app(
     )
     async def courses(request: Request):
         return await request.app.state.lec_client.courses()
+
+    @app.get(
+        "/api/v1/models", response_model=ModelInventoryResponse,
+        response_model_exclude_none=True,
+        responses={502: {"model": ApiErrorResponse}, 503: {"model": ApiErrorResponse}},
+    )
+    async def models(request: Request):
+        return await request.app.state.lec_client.models()
 
     @app.post(
         "/api/v1/courses", response_model=CourseDetail, status_code=201,

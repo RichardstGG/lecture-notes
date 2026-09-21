@@ -36,6 +36,31 @@ class CourseSummary(BaseModel):
     error: str | None = None
 
 
+class ModelInfo(BaseModel):
+    model_config = ConfigDict(extra="allow")
+
+    id: str
+    path: str
+    available: bool
+    size_bytes: int | None = Field(default=None, ge=0)
+    disable_thinking: bool | None = None
+
+
+class ModelGroup(BaseModel):
+    model_config = ConfigDict(extra="allow")
+
+    selected: str
+    models: list[ModelInfo]
+
+
+class ModelInventoryResponse(BaseModel):
+    model_config = ConfigDict(extra="allow")
+
+    schema_version: int = 1
+    summary: ModelGroup
+    whisper: ModelGroup
+
+
 class GlossaryEntry(BaseModel):
     model_config = ConfigDict(extra="forbid")
 

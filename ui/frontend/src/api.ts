@@ -4,6 +4,7 @@ import type {
   Course,
   CourseDetail,
   CourseVocabulary,
+  ModelInventory,
   RunRequest,
   RuntimeStatus,
   SessionDetail,
@@ -54,6 +55,7 @@ async function request<T>(path: string, init?: RequestInit): Promise<T> {
 export const api = {
   status: () => request<RuntimeStatus>("/api/v1/status"),
   courses: () => request<Course[]>("/api/v1/courses"),
+  models: () => request<ModelInventory>("/api/v1/models"),
   course: (id: string) => request<CourseDetail>(
     `/api/v1/courses/${encodeURIComponent(id)}`,
   ),
