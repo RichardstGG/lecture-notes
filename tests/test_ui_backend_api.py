@@ -3,6 +3,7 @@ import asyncio
 import importlib.util
 import json
 import tempfile
+import tomllib
 import unittest
 from pathlib import Path
 
@@ -202,6 +203,42 @@ class BackendApiTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(response.status_code, 400)
         self.assertEqual(response.json()["error"]["code"], "invalid_course_config")
         self.assertEqual(target.read_text(encoding="utf-8"), original)
+
+    async def test_course_vocabulary_update_uses_versioned_detail_contract(self):
+        target = self.course_root / "測試課.toml"
+        target.write_text(
+            '[course]\nname = "測試課"\n\n[whisper]\nterms = ["old"]\n',
+            encoding="utf-8",
+        )
+        response = await self.request(
+            "PUT", "/api/v1/courses/測試課/vocabulary", json={
+                "terms": ["UNIX", "POSIX"],
+                "glossary": [{
+                    "term": "Multics", "means": "分時系統", "aka": ["MUTIX"],
+                }],
+            },
+        )
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(response.json()["vocabulary"], {
+            "terms": ["UNIX", "POSIX"],
+            "glossary": [{
+                "term": "Multics", "means": "分時系統", "aka": ["MUTIX"],
+            }],
+        })
+        self.assertEqual(
+            tomllib.loads(target.read_text(encoding="utf-8"))["whisper"]["terms"],
+            ["UNIX", "POSIX"],
+        )
+
+    async def test_frontend_origin_allows_vocabulary_put(self):
+        response = await self.request(
+            "OPTIONS", "/api/v1/courses/測試課/vocabulary", headers={
+                "Origin": "http://127.0.0.1:5173",
+                "Access-Control-Request-Method": "PUT",
+            },
+        )
+        self.assertEqual(response.status_code, 200)
+        self.assertIn("PUT", response.headers["access-control-allow-methods"])
 
     async def test_cli_failure_uses_stable_error_envelope(self):
         self.client.error = LecCommandError(

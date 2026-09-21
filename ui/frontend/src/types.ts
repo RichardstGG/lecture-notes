@@ -52,6 +52,18 @@ export interface CourseDetail {
   id: string;
   file: string;
   content: string;
+  vocabulary?: CourseVocabulary | null;
+}
+
+export interface GlossaryEntry {
+  term: string;
+  means: string;
+  aka: string[];
+}
+
+export interface CourseVocabulary {
+  terms: string[];
+  glossary: GlossaryEntry[];
 }
 
 export interface SessionSummary {

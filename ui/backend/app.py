@@ -12,7 +12,8 @@ from .course_store import CourseStore, CourseStoreError
 from .process_control import (ControlError, LecProcessLauncher,
                               ProcessController)
 from .schemas import (ApiErrorResponse, CourseCreateRequest, CourseDetail,
-                      CourseSummary, CourseUpdateRequest, HealthResponse,
+                      CourseSummary, CourseUpdateRequest,
+                      CourseVocabularyUpdateRequest, HealthResponse,
                       ProcessActionResponse, RunStartRequest,
                       RuntimeStatusResponse, SessionDetail, SessionSummary,
                       StopRequest, SummarizeRequest)
@@ -116,7 +117,7 @@ def create_app(
         CORSMiddleware,
         allow_origins=["http://127.0.0.1:5173", "http://localhost:5173"],
         allow_credentials=False,
-        allow_methods=["GET", "POST"],
+        allow_methods=["GET", "POST", "PUT"],
         allow_headers=["*"],
     )
 
@@ -186,6 +187,20 @@ def create_app(
     ):
         return await request.app.state.course_store.update(
             request.app.state.lec_client, course_id, payload.content,
+        )
+
+    @app.put(
+        "/api/v1/courses/{course_id}/vocabulary", response_model=CourseDetail,
+        responses={400: {"model": ApiErrorResponse}, 404: {"model": ApiErrorResponse},
+                   413: {"model": ApiErrorResponse}, 502: {"model": ApiErrorResponse},
+                   503: {"model": ApiErrorResponse}},
+    )
+    async def course_vocabulary_update(
+        course_id: str, payload: CourseVocabularyUpdateRequest, request: Request,
+    ):
+        return await request.app.state.course_store.update_vocabulary(
+            request.app.state.lec_client, course_id, payload.terms,
+            [entry.model_dump() for entry in payload.glossary],
         )
 
     @app.post(

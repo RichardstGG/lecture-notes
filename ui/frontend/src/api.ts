@@ -3,6 +3,7 @@ import type {
   ApiErrorEnvelope,
   Course,
   CourseDetail,
+  CourseVocabulary,
   RunRequest,
   RuntimeStatus,
   SessionDetail,
@@ -63,6 +64,10 @@ export const api = {
   updateCourse: (id: string, content: string) => request<CourseDetail>(
     `/api/v1/courses/${encodeURIComponent(id)}`,
     { method: "PUT", body: JSON.stringify({ content }) },
+  ),
+  updateCourseVocabulary: (id: string, vocabulary: CourseVocabulary) => request<CourseDetail>(
+    `/api/v1/courses/${encodeURIComponent(id)}/vocabulary`,
+    { method: "PUT", body: JSON.stringify(vocabulary) },
   ),
   sessions: () => request<SessionSummary[]>("/api/v1/sessions"),
   session: (id: string) => request<SessionDetail>(`/api/v1/sessions/${encodeURIComponent(id)}`),

@@ -16,16 +16,22 @@ export function RunPanel({ courses, status, onChanged, onError }: Props) {
   const [mode, setMode] = useState<"live" | "file">("live");
   const [inputFile, setInputFile] = useState("");
   const [model, setModel] = useState("");
-  const [busy, setBusy] = useState(false);
+  const [starting, setStarting] = useState(false);
+  const [stopMode, setStopMode] = useState<"normal" | "force">();
+  const [stopRequesting, setStopRequesting] = useState(false);
 
   useEffect(() => {
     if (!course && validCourses[0]) setCourse(validCourses[0].id);
   }, [course, validCourses]);
 
+  useEffect(() => {
+    if (!status.running) setStopMode(undefined);
+  }, [status.running]);
+
   async function submit(event: FormEvent) {
     event.preventDefault();
     if (!course || (mode === "file" && !inputFile.trim())) return;
-    setBusy(true);
+    setStarting(true);
     onError(undefined);
     try {
       await api.start({
@@ -37,30 +43,34 @@ export function RunPanel({ courses, status, onChanged, onError }: Props) {
     } catch (reason) {
       onError(reason instanceof Error ? reason.message : "無法開始課程");
     } finally {
-      setBusy(false);
+      setStarting(false);
     }
   }
 
   async function stop(force: boolean) {
-    setBusy(true);
+    setStopMode(force ? "force" : "normal");
+    setStopRequesting(true);
     onError(undefined);
     try {
       await api.stop(force);
       await onChanged();
     } catch (reason) {
+      setStopMode(undefined);
       onError(reason instanceof Error ? reason.message : "無法停止課程");
     } finally {
-      setBusy(false);
+      setStopRequesting(false);
     }
   }
 
   if (status.running) {
     return <div className="run-actions">
-      <button className="button danger" disabled={busy} onClick={() => void stop(false)}>
-        <Icon name="stop" />正常停止
+      <button className="button danger" aria-busy={stopMode === "normal"} disabled={stopRequesting || stopMode !== undefined} onClick={() => void stop(false)}>
+        {stopMode === "normal" ? <span className="button-spinner" aria-hidden="true" /> : <Icon name="stop" />}
+        {stopMode === "normal" ? "正在停止…" : "正常停止"}
       </button>
-      <button className="button ghost-danger" disabled={busy} onClick={() => void stop(true)}>
-        立即停止
+      <button className="button ghost-danger" aria-busy={stopMode === "force"} disabled={stopRequesting || stopMode === "force"} onClick={() => void stop(true)}>
+        {stopMode === "force" && <span className="button-spinner" aria-hidden="true" />}
+        {stopMode === "force" ? "正在中止…" : "立即停止"}
       </button>
       <p>正常停止會完成目前片段後收尾；立即停止只在必要時使用。</p>
     </div>;
@@ -89,6 +99,6 @@ export function RunPanel({ courses, status, onChanged, onError }: Props) {
         {[...new Set(validCourses.map((item) => item.model).filter(Boolean))].map((name) => <option value={name} key={name} />)}
       </datalist>
     </label>
-    <button className="button primary" disabled={busy || !course} type="submit">{busy ? "處理中…" : "開始處理"}</button>
+    <button className="button primary" disabled={starting || !course} type="submit">{starting ? "處理中…" : "開始處理"}</button>
   </form>;
 }

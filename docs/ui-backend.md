@@ -52,6 +52,7 @@ Optional environment variables:
 | `POST` | `/api/v1/courses` | Create a course from `config/template.toml` |
 | `GET` | `/api/v1/courses/{id}` | Read the editable course TOML source |
 | `PUT` | `/api/v1/courses/{id}` | Validate and atomically replace course TOML |
+| `PUT` | `/api/v1/courses/{id}/vocabulary` | Update Whisper terms and the summary glossary |
 | `GET` | `/api/v1/status/stream` | Server-sent status changes and heartbeat comments |
 | `GET` | `/api/v1/sessions` | Session history, newest first |
 | `GET` | `/api/v1/sessions/{id}` | Session metadata, transcript, and notes |
@@ -121,13 +122,31 @@ stems: path separators, option-like leading hyphens, hidden-file leading dots,
 control characters, Windows-reserved characters, and reserved device names are
 rejected. Existing files are never overwritten during creation.
 
-Course detail responses contain `api_version`, `id`, `file`, and the original
-TOML `content`, preserving comments and intentionally omitted defaults. Updates
+Course detail responses contain `api_version`, `id`, `file`, the original TOML
+`content`, and normalized `vocabulary` fields for `whisper.terms` and
+`summary.glossary`. Malformed vocabulary remains available through `content`,
+with `vocabulary` set to `null` so it can be repaired in the raw editor. Raw updates
 accept `{"content": "..."}`. The service first parses TOML, then asks
 `lec config <temporary-file>` to validate the fully merged configuration. Only
 valid content is atomically moved into place; a failed parse or validation leaves
 the existing course untouched. Symlinked course files are not read or replaced,
 and course content is limited to 1 MiB.
+
+Structured vocabulary updates accept `terms` and normalized glossary entries:
+
+```json
+{
+  "terms": ["UNIX", "POSIX"],
+  "glossary": [
+    {"term": "Multics", "means": "分時系統專案", "aka": ["MUTIX", "Multix"]}
+  ]
+}
+```
+
+The update rewrites only the `whisper.terms` assignment and
+`[summary.glossary]` entries in canonical TOML. Other settings and comments are
+preserved except formatting or inline comments attached directly to those managed
+values, and the same full CLI validation and atomic replacement rules apply.
 
 Local machine configuration editing remains deferred to a later isolated
 change.
@@ -138,8 +157,8 @@ The React/TypeScript frontend currently provides:
 
 - local service connection state and live run status over SSE
 - live transcription, queue, and summary progress
-- live or file-mode launch, normal stop, and forced stop
-- course creation and validated TOML configuration editing
+- live or file-mode launch, persistent graceful-stop feedback, and forced stop
+- course creation, structured vocabulary/glossary editing, and validated raw TOML editing
 - session history with streamed transcript and notes content
 - missing-summary action for sessions that have a transcript
 - responsive desktop and mobile layouts
