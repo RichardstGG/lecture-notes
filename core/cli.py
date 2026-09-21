@@ -13,6 +13,8 @@ from .status import RUN_SCHEMA_VERSION, RunLock
 from .util import die, hms, read_json
 
 EPILOG = """範例：
+  lec --start-ui                              啟動本機 Web UI
+  lec --start-ui --port 9876                  以指定 port 啟動 Web UI
   lec run 計算機概論                         上課：即時轉錄＋總結，Ctrl+C 結束
   lec run 計算機概論 --file 錄音.mp3         處理音檔（轉錄完再總結）
   lec run 計算機概論 --transcribe-only       只轉錄，不啟動總結模型
@@ -26,6 +28,8 @@ EPILOG = """範例：
   lec devices [--test 編號] [--save 編號]    列出 / 測試 / 設定麥克風
   lec doctor [課名] [--mic]                  檢查環境（回報問題時請附上輸出）
 """
+
+DEFAULT_UI_PORT = 8765
 
 
 def _add_overrides(p):
@@ -46,6 +50,56 @@ def _load(args, **kw):
                       source=getattr(args, "source", None), **kw)
     except C.ConfigError as e:
         die(str(e))
+
+
+def _ui_port(value):
+    try:
+        port = int(value)
+    except (TypeError, ValueError):
+        raise argparse.ArgumentTypeError("port 必須是整數") from None
+    if not 1 <= port <= 65535:
+        raise argparse.ArgumentTypeError("port 必須介於 1 到 65535")
+    return port
+
+
+def _project_venv_python():
+    relative = Path("Scripts/python.exe") if os.name == "nt" else Path("bin/python")
+    return C.APP_ROOT / ".venv" / relative
+
+
+def cmd_start_ui(args):
+    """Start the local UI in the project venv without changing lec run state."""
+    port = args.port or DEFAULT_UI_PORT
+    backend_args = ["--port", str(port)]
+    venv_python = _project_venv_python()
+    try:
+        current_environment = Path(sys.prefix).resolve()
+        target_environment = venv_python.parent.parent.resolve()
+    except OSError:
+        current_environment = Path(sys.prefix)
+        target_environment = venv_python.parent.parent
+    if venv_python.is_file() and current_environment != target_environment:
+        try:
+            os.execv(
+                str(venv_python),
+                [str(venv_python), str(C.APP_ROOT / "lec"), "--start-ui", *backend_args],
+            )
+        except OSError as exc:
+            die(f"無法使用 {venv_python} 啟動 UI：{exc}")
+        return 0
+
+    url = f"http://127.0.0.1:{port}"
+    print(f"▶ 啟動 Lecture Notes UI：{url}")
+    print("  按 Ctrl+C 只會關閉 UI service，不會中止已啟動的 lec 工作。", flush=True)
+    try:
+        from ui.backend.__main__ import main as ui_main
+        return ui_main(backend_args) or 0
+    except ModuleNotFoundError as exc:
+        die(
+            f"無法啟動 UI（缺少 Python 套件 {exc.name}）。"
+            "請先執行 python3 upgrade.py，或安裝 "
+            "ui/backend/requirements.txt。"
+        )
 
 
 # ---------------------------------------------------------------- 子指令
@@ -297,6 +351,9 @@ def cmd_doctor(args):
 def main(argv=None):
     ap = argparse.ArgumentParser(prog="lec", description="課堂筆記系統",
                                  formatter_class=argparse.RawDescriptionHelpFormatter, epilog=EPILOG)
+    ap.add_argument("--start-ui", action="store_true", help="啟動本機 Web UI service")
+    ap.add_argument("--port", type=_ui_port, metavar="PORT",
+                    help=f"Web UI port（僅搭配 --start-ui，預設 {DEFAULT_UI_PORT}）")
     sub = ap.add_subparsers(dest="cmd", metavar="指令")
 
     p = sub.add_parser("run", help="錄音（或處理音檔）→ 逐字稿 → 即時總結")
@@ -358,6 +415,12 @@ def main(argv=None):
     p.set_defaults(func=cmd_doctor, set=[])
 
     args = ap.parse_args(argv)
+    if args.start_ui:
+        if args.cmd:
+            ap.error("--start-ui 不能與子指令同時使用")
+        return cmd_start_ui(args)
+    if args.port is not None:
+        ap.error("--port 需要搭配 --start-ui")
     if not getattr(args, "func", None):
         ap.print_help()
         return 0
