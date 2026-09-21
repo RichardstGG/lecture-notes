@@ -85,6 +85,11 @@ The API only constructs fixed `lec` argument arrays; it never invokes a shell.
 Background children use a separate process group/session and do not depend on the
 browser connection remaining open.
 
+To run without an LLM, send the existing override in the start request:
+`{"overrides": {"summary.enabled": false}}`. The browser's **只轉錄** switch
+uses this form; the CLI provides the equivalent `lec run --transcribe-only`
+convenience flag.
+
 CLI failures use a stable envelope:
 
 ```json

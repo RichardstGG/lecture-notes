@@ -16,6 +16,7 @@ export function RunPanel({ courses, status, onChanged, onError }: Props) {
   const [mode, setMode] = useState<"live" | "file">("live");
   const [inputFile, setInputFile] = useState("");
   const [model, setModel] = useState("");
+  const [transcribeOnly, setTranscribeOnly] = useState(false);
   const [starting, setStarting] = useState(false);
   const [stopMode, setStopMode] = useState<"normal" | "force">();
   const [stopRequesting, setStopRequesting] = useState(false);
@@ -38,6 +39,7 @@ export function RunPanel({ courses, status, onChanged, onError }: Props) {
         course,
         input_file: mode === "file" ? inputFile.trim() : undefined,
         model: model || undefined,
+        overrides: transcribeOnly ? { "summary.enabled": false } : undefined,
       });
       await onChanged();
     } catch (reason) {
@@ -98,6 +100,10 @@ export function RunPanel({ courses, status, onChanged, onError }: Props) {
       <datalist id="known-models">
         {[...new Set(validCourses.map((item) => item.model).filter(Boolean))].map((name) => <option value={name} key={name} />)}
       </datalist>
+    </label>
+    <label className="check-field">
+      <input type="checkbox" checked={transcribeOnly} onChange={(event) => setTranscribeOnly(event.target.checked)} />
+      <span>只轉錄（不啟動總結模型）</span>
     </label>
     <button className="button primary" disabled={starting || !course} type="submit">{starting ? "處理中…" : "開始處理"}</button>
   </form>;

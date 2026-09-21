@@ -55,4 +55,28 @@ describe("RunPanel", () => {
     />);
     expect(screen.getByRole("button", { name: "開始處理" })).toBeTruthy();
   });
+
+  it("starts a transcribe-only run through the existing override contract", async () => {
+    vi.mocked(api.start).mockResolvedValue({
+      accepted: true, operation: "run", message: "started",
+    });
+    const onChanged = vi.fn().mockResolvedValue(undefined);
+    render(<RunPanel
+      courses={[{ id: "測試課", file: "/courses/測試課.toml", name: "測試課" }]}
+      status={{ schema_version: 1, running: false }}
+      onChanged={onChanged}
+      onError={vi.fn()}
+    />);
+
+    fireEvent.click(screen.getByRole("checkbox", { name: "只轉錄（不啟動總結模型）" }));
+    fireEvent.click(screen.getByRole("button", { name: "開始處理" }));
+
+    await waitFor(() => expect(api.start).toHaveBeenCalledWith({
+      course: "測試課",
+      input_file: undefined,
+      model: undefined,
+      overrides: { "summary.enabled": false },
+    }));
+    expect(onChanged).toHaveBeenCalledOnce();
+  });
 });
