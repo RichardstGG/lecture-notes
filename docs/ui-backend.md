@@ -41,6 +41,9 @@ Optional environment variables:
 - `LECTURE_NOTES_UI_POLL_INTERVAL`: status SSE polling interval, default `2`
 - `LECTURE_NOTES_OUTPUT_ROOT`: override the session output directory
 - `LECTURE_NOTES_UI_MAX_CONTENT_MB`: maximum transcript or notes size, default `16`
+- `LECTURE_NOTES_UI_MAX_UPLOAD_GB`: maximum browser-selected media size, default `8`
+- `LECTURE_NOTES_UI_UPLOAD_ROOT`: staging directory for browser-selected media;
+  defaults to `lecture-notes-ui/uploads` inside the operating system temp directory
 - `LECTURE_NOTES_UI_PROCESS_LOG`: background launcher log path; defaults to the
   operating system temporary directory
 - `LECTURE_NOTES_UI_FRONTEND_DIST`: optional path to a built frontend directory
@@ -61,6 +64,7 @@ Optional environment variables:
 | `GET` | `/api/v1/courses/{id}` | Read the editable course TOML source |
 | `PUT` | `/api/v1/courses/{id}` | Validate and atomically replace course TOML |
 | `PUT` | `/api/v1/courses/{id}/vocabulary` | Update Whisper terms and the summary glossary |
+| `POST` | `/api/v1/audio-uploads` | Stream a browser-selected media file into local staging |
 | `GET` | `/api/v1/status/stream` | Server-sent status changes and heartbeat comments |
 | `GET` | `/api/v1/sessions` | Session history, newest first |
 | `GET` | `/api/v1/sessions/{id}` | Session metadata, transcript, and notes |
@@ -86,6 +90,18 @@ nothing to do, the response includes `"completed": true` and `"exit_code": 0`.
   }
 }
 ```
+
+Browser-selected files use `POST /api/v1/audio-uploads?filename=<name>` with the
+raw file bytes as the request body. The backend writes each request incrementally
+to a random local filename, atomically publishes it only after the complete body
+arrives, and returns `api_version`, the original `name`, the absolute staged
+`path`, and `size_bytes`. The browser then sends that path through the unchanged
+`input_file` run field. Common audio and media extensions are accepted; empty,
+unsupported, unsafe, and over-limit uploads use the standard error envelope.
+The default limit is 8 GiB. Staged copies remain in the operating system temp
+directory so a detached `lec` process can keep reading them after the UI service
+closes; the original manual-path mode remains available when copying is
+undesirable.
 
 Normal and forced stop bodies are `{"force": false}` and `{"force": true}`.
 Summarize accepts optional `redo` (`all` or `hh:mm:ss`), `model`, and `course`.
@@ -194,7 +210,8 @@ The React/TypeScript frontend currently provides:
 
 - local service connection state and live run status over SSE
 - live transcription, queue, and summary progress
-- live or file-mode launch, persistent graceful-stop feedback, and forced stop
+- live launch plus file-mode drag-and-drop/file selection with a manual path fallback
+- persistent graceful-stop feedback and forced stop
 - course creation, structured vocabulary/glossary editing, and validated raw TOML editing
 - session history with streamed transcript and notes content
 - missing-summary action for sessions that have a transcript

@@ -1,5 +1,6 @@
 import type {
   ActionResponse,
+  AudioUpload,
   ApiErrorEnvelope,
   Course,
   CourseDetail,
@@ -55,6 +56,33 @@ async function request<T>(path: string, init?: RequestInit): Promise<T> {
   return (await response.json()) as T;
 }
 
+async function uploadAudio(file: File): Promise<AudioUpload> {
+  let response: Response;
+  try {
+    response = await fetch(
+      `/api/v1/audio-uploads?filename=${encodeURIComponent(file.name)}`,
+      { method: "POST", body: file },
+    );
+  } catch {
+    throw new ApiError("無法連線到本機服務", "network_error");
+  }
+
+  if (!response.ok) {
+    let body: ApiErrorEnvelope = {};
+    try {
+      body = (await response.json()) as ApiErrorEnvelope;
+    } catch {
+      // Preserve the stable fallback below for non-JSON proxy errors.
+    }
+    throw new ApiError(
+      body.error?.message ?? `檔案準備失敗（HTTP ${response.status}）`,
+      body.error?.code ?? "upload_failed",
+      response.status,
+    );
+  }
+  return (await response.json()) as AudioUpload;
+}
+
 export const api = {
   status: () => request<RuntimeStatus>("/api/v1/status"),
   courses: () => request<Course[]>("/api/v1/courses"),
@@ -76,6 +104,7 @@ export const api = {
     const suffix = encoded ? `?${encoded}` : "";
     return request<DoctorResult>(`/api/v1/doctor${suffix}`);
   },
+  uploadAudio,
   course: (id: string) => request<CourseDetail>(
     `/api/v1/courses/${encodeURIComponent(id)}`,
   ),

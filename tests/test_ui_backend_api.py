@@ -146,6 +146,7 @@ class BackendApiTests(unittest.IsolatedAsyncioTestCase):
         settings = BackendSettings(
             Path.cwd(), output_root=self.output, status_poll_interval=0.001,
             frontend_dist=self.frontend,
+            upload_root=Path(self.tmp.name) / "uploads", max_upload_bytes=8,
         )
         self.app = create_app(
             settings=settings, client=self.client, launcher=self.launcher,
@@ -341,6 +342,33 @@ class BackendApiTests(unittest.IsolatedAsyncioTestCase):
         )
         self.assertEqual(response.status_code, 200)
         self.assertIn("PUT", response.headers["access-control-allow-methods"])
+
+    async def test_audio_upload_streams_to_managed_local_file(self):
+        response = await self.request(
+            "POST", "/api/v1/audio-uploads?filename=%E8%AA%B2%E5%A0%82.ogg",
+            content=b"audio",
+        )
+        self.assertEqual(response.status_code, 201)
+        body = response.json()
+        self.assertEqual(body["api_version"], 1)
+        self.assertEqual(body["name"], "課堂.ogg")
+        self.assertEqual(body["size_bytes"], 5)
+        target = Path(body["path"])
+        self.assertEqual(target.parent, (Path(self.tmp.name) / "uploads").resolve())
+        self.assertEqual(target.read_bytes(), b"audio")
+
+    async def test_audio_upload_rejects_unsupported_or_oversized_files(self):
+        unsupported = await self.request(
+            "POST", "/api/v1/audio-uploads?filename=notes.txt", content=b"text",
+        )
+        self.assertEqual(unsupported.status_code, 415)
+        self.assertEqual(unsupported.json()["error"]["code"], "unsupported_media_type")
+
+        oversized = await self.request(
+            "POST", "/api/v1/audio-uploads?filename=large.wav", content=b"123456789",
+        )
+        self.assertEqual(oversized.status_code, 413)
+        self.assertEqual(oversized.json()["error"]["code"], "upload_too_large")
 
     async def test_cli_failure_uses_stable_error_envelope(self):
         self.client.error = LecCommandError(

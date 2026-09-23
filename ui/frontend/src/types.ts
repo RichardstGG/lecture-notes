@@ -110,6 +110,13 @@ export interface DoctorResult {
   items: DoctorItem[];
 }
 
+export interface AudioUpload {
+  api_version: number;
+  name: string;
+  path: string;
+  size_bytes: number;
+}
+
 export interface CourseDetail {
   api_version: number;
   id: string;

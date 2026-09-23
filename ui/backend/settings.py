@@ -12,6 +12,10 @@ class BackendSettings:
     status_poll_interval: float = 2.0
     output_root: Path | None = None
     max_content_bytes: int = 16 * 1024 * 1024
+    max_upload_bytes: int = 8 * 1024 * 1024 * 1024
+    upload_root: Path = field(
+        default_factory=lambda: Path(tempfile.gettempdir()) / "lecture-notes-ui" / "uploads",
+    )
     frontend_dist: Path | None = None
     process_log: Path = field(
         default_factory=lambda: Path(tempfile.gettempdir()) / "lecture-notes-ui-process.log",
@@ -28,6 +32,12 @@ class BackendSettings:
         timeout = float(os.environ.get("LECTURE_NOTES_UI_CLI_TIMEOUT", "30"))
         poll = float(os.environ.get("LECTURE_NOTES_UI_POLL_INTERVAL", "2"))
         max_mb = float(os.environ.get("LECTURE_NOTES_UI_MAX_CONTENT_MB", "16"))
+        max_upload_gb = float(os.environ.get("LECTURE_NOTES_UI_MAX_UPLOAD_GB", "8"))
+        upload_root_raw = os.environ.get("LECTURE_NOTES_UI_UPLOAD_ROOT")
+        upload_root = (Path(upload_root_raw).expanduser() if upload_root_raw else
+                       Path(tempfile.gettempdir()) / "lecture-notes-ui" / "uploads")
+        if not upload_root.is_absolute():
+            upload_root = root / upload_root
         process_log_raw = os.environ.get("LECTURE_NOTES_UI_PROCESS_LOG")
         process_log = (Path(process_log_raw).expanduser() if process_log_raw else
                        Path(tempfile.gettempdir()) / "lecture-notes-ui-process.log")
@@ -39,6 +49,8 @@ class BackendSettings:
             raise ValueError("LECTURE_NOTES_UI_POLL_INTERVAL must be greater than zero")
         if max_mb <= 0:
             raise ValueError("LECTURE_NOTES_UI_MAX_CONTENT_MB must be greater than zero")
+        if max_upload_gb <= 0:
+            raise ValueError("LECTURE_NOTES_UI_MAX_UPLOAD_GB must be greater than zero")
         frontend_raw = os.environ.get("LECTURE_NOTES_UI_FRONTEND_DIST")
         frontend_dist = (Path(frontend_raw).expanduser() if frontend_raw else
                          root / "ui" / "frontend" / "dist")
@@ -47,5 +59,7 @@ class BackendSettings:
         return cls(repo_root=root, output_root=output_root.resolve() if output_root else None,
                    cli_timeout=timeout, status_poll_interval=poll,
                    max_content_bytes=int(max_mb * 1024 * 1024),
+                   max_upload_bytes=int(max_upload_gb * 1024 * 1024 * 1024),
+                   upload_root=upload_root.resolve(),
                    process_log=process_log.resolve(),
                    frontend_dist=frontend_dist.resolve())

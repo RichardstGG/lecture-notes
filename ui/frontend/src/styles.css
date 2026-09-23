@@ -70,9 +70,22 @@ h1 { margin-bottom: 0; font-size: clamp(28px, 3vw, 38px); letter-spacing: -.035e
 .run-form { display: grid; grid-template-columns: minmax(170px, 1fr) auto minmax(180px, 1fr) auto; gap: 14px; align-items: end; margin-top: 26px; }
 .run-form label { display: grid; gap: 7px; }
 .run-form label > span { color: var(--muted); font-size: 11px; font-weight: 600; }
+.run-form .wide-field { grid-column: 1 / -1; }
 .run-form .check-field { display: flex; align-items: center; gap: 8px; align-self: center; }
 .run-form .check-field input[type="checkbox"] { width: 16px; height: 16px; padding: 0; accent-color: var(--green); }
 .run-form .check-field > span { color: var(--ink); font-size: 12px; font-weight: 500; }
+.file-field { display: grid; gap: 7px; }
+.file-field-heading { display: flex; align-items: center; justify-content: space-between; gap: 12px; }
+.file-field-heading > span { color: var(--muted); font-size: 11px; font-weight: 600; }
+.file-field-heading button { padding: 0; border: 0; background: none; color: var(--green); font-size: 10px; }
+.file-field-heading button:disabled { opacity: .5; cursor: not-allowed; }
+.file-picker { min-height: 68px; padding: 11px 12px; border: 1px dashed #bdc5bd; border-radius: 10px; background: #f8faf7; display: grid; grid-template-columns: 30px minmax(0, 1fr) auto; gap: 10px; align-items: center; transition: border-color .15s, background .15s; }
+.file-picker.dragging { border-color: var(--green); background: var(--green-soft); }
+.file-picker.ready { border-style: solid; border-color: #b8cbbb; }
+.file-picker > svg { width: 22px; color: var(--green); }
+.file-picker strong, .file-picker small { display: block; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.file-picker strong { margin-bottom: 4px; font-size: 12px; }
+.file-picker small { color: var(--muted); font-size: 10px; }
 input, select, textarea { min-width: 0; border: 1px solid #d6d7d0; background: #fff; color: var(--ink); border-radius: 9px; outline: none; }
 input, select { height: 42px; padding: 0 12px; }
 textarea { padding: 12px; }
@@ -258,6 +271,8 @@ input:focus, select:focus, textarea:focus { border-color: #5a806b; box-shadow: 0
   .stats-row { gap: 8px; }
   .run-form { grid-template-columns: 1fr; }
   .wide-field { grid-column: auto; }
+  .file-picker { grid-template-columns: 24px minmax(0, 1fr); }
+  .file-picker > .button { grid-column: 1 / -1; width: 100%; }
   .run-actions { align-items: stretch; flex-direction: column; }
   .run-actions p { margin: 2px 0 0; }
   .workspace-grid { grid-template-columns: 1fr; }

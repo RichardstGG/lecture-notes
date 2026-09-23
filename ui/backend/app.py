@@ -2,7 +2,7 @@
 import asyncio
 import json
 
-from fastapi import FastAPI, Query, Request
+from fastapi import FastAPI, Header, Query, Request
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import HTMLResponse, JSONResponse, StreamingResponse
 from fastapi.staticfiles import StaticFiles
@@ -11,7 +11,8 @@ from .cli_client import LecClient, LecCommandError
 from .course_store import CourseStore, CourseStoreError
 from .process_control import (ControlError, LecProcessLauncher,
                               ProcessController)
-from .schemas import (ApiErrorResponse, CourseCreateRequest, CourseDetail,
+from .schemas import (ApiErrorResponse, AudioUploadResponse, CourseCreateRequest,
+                      CourseDetail,
                       CourseSummary, CourseUpdateRequest,
                       CourseVocabularyUpdateRequest, DeviceInventoryResponse,
                       DeviceSelectionRequest, DeviceTestResponse,
@@ -21,6 +22,7 @@ from .schemas import (ApiErrorResponse, CourseCreateRequest, CourseDetail,
                       StopRequest, SummarizeRequest)
 from .session_store import SessionStore, SessionStoreError
 from .settings import BackendSettings
+from .upload_store import AudioUploadStore, UploadStoreError
 
 
 def _sse(event, data):
@@ -96,11 +98,15 @@ async def _session_events(
 
 def create_app(
     settings=None, client=None, sessions=None, launcher=None, course_store=None,
+    upload_store=None,
 ):
     settings = settings or BackendSettings.from_env()
     client = client or LecClient.for_repo(settings.repo_root, settings.cli_timeout)
     sessions = sessions or SessionStore.from_settings(settings)
     course_store = course_store or CourseStore.from_settings(settings)
+    upload_store = upload_store or AudioUploadStore(
+        settings.upload_root, settings.max_upload_bytes,
+    )
     launcher = launcher or LecProcessLauncher.for_client(client, settings.process_log)
     controller = ProcessController(client, launcher, sessions, settings.repo_root)
     app = FastAPI(
@@ -113,6 +119,7 @@ def create_app(
     app.state.lec_client = client
     app.state.sessions = sessions
     app.state.course_store = course_store
+    app.state.upload_store = upload_store
     app.state.controller = controller
     app.state.shutdown_event = asyncio.Event()
     app.add_middleware(
@@ -143,6 +150,10 @@ def create_app(
 
     @app.exception_handler(CourseStoreError)
     async def course_store_error_handler(_request, exc):
+        return JSONResponse(status_code=exc.status_code, content={"error": exc.as_detail()})
+
+    @app.exception_handler(UploadStoreError)
+    async def upload_store_error_handler(_request, exc):
         return JSONResponse(status_code=exc.status_code, content={"error": exc.as_detail()})
 
     @app.get("/api/v1/health", response_model=HealthResponse)
@@ -266,6 +277,20 @@ def create_app(
         return await request.app.state.course_store.update_vocabulary(
             request.app.state.lec_client, course_id, payload.terms,
             [entry.model_dump() for entry in payload.glossary],
+        )
+
+    @app.post(
+        "/api/v1/audio-uploads", response_model=AudioUploadResponse, status_code=201,
+        responses={400: {"model": ApiErrorResponse}, 413: {"model": ApiErrorResponse},
+                   415: {"model": ApiErrorResponse}, 500: {"model": ApiErrorResponse}},
+    )
+    async def audio_upload(
+        request: Request,
+        filename: str = Query(min_length=1, max_length=255),
+        content_length: str | None = Header(default=None),
+    ):
+        return await request.app.state.upload_store.save(
+            filename, request.stream(), content_length=content_length,
         )
 
     @app.post(

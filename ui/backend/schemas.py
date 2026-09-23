@@ -112,6 +112,13 @@ class DoctorResponse(BaseModel):
     items: list[DoctorItem]
 
 
+class AudioUploadResponse(BaseModel):
+    api_version: int = API_VERSION
+    name: str
+    path: str
+    size_bytes: int = Field(ge=1)
+
+
 class GlossaryEntry(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
