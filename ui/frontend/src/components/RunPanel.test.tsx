@@ -8,6 +8,7 @@ vi.mock("../api", () => ({
   api: {
     start: vi.fn(),
     stop: vi.fn(),
+    uploadAudio: vi.fn(),
   },
 }));
 
@@ -157,6 +158,67 @@ describe("RunPanel", () => {
       input_file: undefined,
       model: undefined,
       source: "mic-2",
+      overrides: undefined,
+    }));
+  });
+
+  it("prepares a browser-selected audio file before starting file mode", async () => {
+    const file = new File(["audio-data"], "課堂錄音.ogg", { type: "audio/ogg" });
+    vi.mocked(api.uploadAudio).mockResolvedValue({
+      api_version: 1,
+      name: file.name,
+      path: "/tmp/lecture-notes-ui/uploads/selected.ogg",
+      size_bytes: file.size,
+    });
+    vi.mocked(api.start).mockResolvedValue({
+      accepted: true, operation: "run", message: "started",
+    });
+    render(<RunPanel
+      courses={[{ id: "測試課", file: "/courses/測試課.toml", name: "測試課" }]}
+      status={{ schema_version: 1, running: false }}
+      onChanged={vi.fn().mockResolvedValue(undefined)}
+      onError={vi.fn()}
+    />);
+
+    fireEvent.click(screen.getByRole("button", { name: "處理音檔" }));
+    fireEvent.change(screen.getByLabelText("選擇音檔"), {
+      target: { files: [file] },
+    });
+
+    await waitFor(() => expect(screen.getByText("課堂錄音.ogg")).toBeTruthy());
+    expect(api.uploadAudio).toHaveBeenCalledWith(file);
+    fireEvent.click(screen.getByRole("button", { name: "開始處理" }));
+
+    await waitFor(() => expect(api.start).toHaveBeenCalledWith({
+      course: "測試課",
+      input_file: "/tmp/lecture-notes-ui/uploads/selected.ogg",
+      model: undefined,
+      overrides: undefined,
+    }));
+  });
+
+  it("keeps manual local paths as a file-mode fallback", async () => {
+    vi.mocked(api.start).mockResolvedValue({
+      accepted: true, operation: "run", message: "started",
+    });
+    render(<RunPanel
+      courses={[{ id: "測試課", file: "/courses/測試課.toml", name: "測試課" }]}
+      status={{ schema_version: 1, running: false }}
+      onChanged={vi.fn().mockResolvedValue(undefined)}
+      onError={vi.fn()}
+    />);
+
+    fireEvent.click(screen.getByRole("button", { name: "處理音檔" }));
+    fireEvent.click(screen.getByRole("button", { name: "手動輸入路徑" }));
+    fireEvent.change(screen.getByLabelText("本機音檔路徑"), {
+      target: { value: "/recordings/existing.flac" },
+    });
+    fireEvent.click(screen.getByRole("button", { name: "開始處理" }));
+
+    await waitFor(() => expect(api.start).toHaveBeenCalledWith({
+      course: "測試課",
+      input_file: "/recordings/existing.flac",
+      model: undefined,
       overrides: undefined,
     }));
   });
