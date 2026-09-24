@@ -1,6 +1,7 @@
 # Project Agent Instructions
 
 These instructions apply to every agent working anywhere in this repository.
+Claude Code follows `CLAUDE.md`, Codex follows `CODEX.md`, and the Antigravity independent reviewer follows `.agents/agents/code-reviewer/agent.md` for role-specific guidance.
 
 ## Source of truth and scope
 
@@ -11,7 +12,7 @@ These instructions apply to every agent working anywhere in this repository.
 
 ## Autonomous Pull Request workflow
 
-Use an autonomous Pull Request workflow. During development, continuously evaluate whether the current work has reached a coherent and independently reviewable milestone.
+Developers use an autonomous Pull Request workflow. During development, continuously evaluate whether the current work has reached a coherent and independently reviewable milestone.
 
 Use this principle:
 
@@ -19,15 +20,17 @@ Use this principle:
 
 Do not create Pull Requests for trivial, incomplete, or temporary intermediate checkpoints.
 
-When a meaningful milestone is complete, automatically:
+When a developer reaches a meaningful milestone, automatically:
 
 1. Review the complete diff and confirm it contains only the intended change.
 2. Run all applicable automated tests, lint checks, type checks, builds, and targeted manual validation.
-3. Create or use an appropriately named `codex/<task-name>` branch based on the current default branch. Do not build an unnecessary dependency on an unmerged branch.
+3. Create or use an appropriately named branch with the developer's agent-specific prefix, based on the current default branch. Do not build an unnecessary dependency on an unmerged branch.
 4. Create focused commits containing only the relevant files and changes.
 5. Push the working branch to the remote.
 6. Create a GitHub Pull Request targeting the repository's default branch.
 7. Report the Pull Request URL, commits, behavior changes, verification results, compatibility impact, and known limitations to the user.
+
+The review lifecycle is: developer Pull Request → Antigravity independent review → developer fixes findings if needed → human maintainer gives final approval or requests changes → human maintainer merges. Antigravity normally reviews without creating an implementation branch.
 
 The following restrictions are mandatory:
 
@@ -35,7 +38,7 @@ The following restrictions are mandatory:
 - Never approve or merge your own Pull Request.
 - Never bypass branch protection or required checks.
 - Never commit secrets, credentials, private local configuration, personal recordings, generated outputs, models, caches, logs, or unrelated machine-specific data.
-- Final Pull Request review, approval, and merge are always performed by the user.
+- Final Pull Request approval and merge are always performed by the human maintainer.
 
 If subsequent work depends on the Pull Request being merged, stop after reporting the Pull Request and wait for the user. If the next work is genuinely independent, it may continue on a separate branch based on the default branch; do not create unnecessary stacked Pull Request dependencies.
 
