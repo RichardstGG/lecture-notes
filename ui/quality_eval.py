@@ -148,6 +148,7 @@ def evaluate(session, sample=SAMPLE):
         "vad": config["vad"],
     }
     return {
+        "schema_version": 1,
         "sample_audio_sha256": sha256(sample / "test8min.ogg"),
         "script_sha256": sha256(script_path),
         "config_sha256": sha256(config_path),

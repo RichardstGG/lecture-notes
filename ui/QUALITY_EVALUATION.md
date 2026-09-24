@@ -26,6 +26,7 @@ model response time; and the same measurements for `samples/expected/`. Record
 the three Git revisions and the `/usr/bin/time` result with the report. Engine
 binaries may be built from different revisions than their current checkouts, so
 verify their build provenance separately if an exact engine comparison matters.
+The report format starts at `schema_version: 1`.
 
 ## Read the report in four passes
 

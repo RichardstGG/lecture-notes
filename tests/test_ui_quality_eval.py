@@ -5,7 +5,7 @@ import unittest
 from pathlib import Path
 
 from tests import _pathfix  # noqa: F401
-from ui.quality_eval import SAMPLE, measure, normalized, read_entries
+from ui.quality_eval import ROOT, SAMPLE, evaluate, measure, normalized, read_entries
 
 
 class QualityEvalTests(unittest.TestCase):
@@ -55,6 +55,21 @@ class QualityEvalTests(unittest.TestCase):
         self.assertEqual(result["summary_status"]["ok"], 2)
         self.assertGreater(result["srt_cues"], 0)
         self.assertIn("MUTIX", result["verified_note_terms_absent_from_script"])
+
+    def test_report_schema_and_config_provenance(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            session = Path(tmp)
+            (session / "config.used.toml").write_bytes(
+                (ROOT / "config" / "default.toml").read_bytes()
+            )
+            (session / "transcript.md").write_text("## 00:00:00\nUNIX。\n", encoding="utf-8")
+            report = evaluate(session)
+
+        self.assertEqual(report["schema_version"], 1)
+        self.assertEqual(report["settings"]["whisper_model"], "large-v3-turbo")
+        self.assertEqual(len(report["config_sha256"]), 64)
+        self.assertEqual(report["current"]["sections"], ["00:00:00"])
+        self.assertEqual(report["current"]["summary_status"]["ok"], 0)
 
 
 if __name__ == "__main__":
