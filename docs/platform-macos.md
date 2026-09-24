@@ -1,8 +1,9 @@
 # macOS 平台備忘（實驗中，尚未實機驗證）
 
-狀態：**程式已支援，尚未在真正的 Mac 上跑過**。以下內容大多是靜態驗證
-（讀 ffmpeg / AVFoundation 官方行為推導）與 mock test，不是「已測過沒問題」。
-第一次在真機上跑之前請先看完「還需要哪些實機測試」一節。
+狀態：**程式已支援，尚未在真正的 Mac 上跑過**（只有 README 的安裝步驟是實機回報）。
+以下內容大多是靜態驗證（讀 ffmpeg / AVFoundation 官方行為推導）與 mock test，
+不是「已測過沒問題」。第一次在真機上跑之前請先看完「還需要哪些實機測試」一節；
+要實際驗的時候照「實機驗證流程」那一節的步驟跑。
 
 ## 安裝時的 macOS 差異（實機回報，2026-09）
 
@@ -94,6 +95,164 @@ macOS 10.14+ 對麥克風有系統層級的權限管制：
 - 跟 Linux 走同一條 POSIX 路徑（`signal.SIGINT`／`os.killpg`），理論上行為
   應該一致，因為 macOS 也是 POSIX 系統。
 
+## 實機驗證流程（第一次在 Mac 上跑時照這個順序）
+
+下面這份是「還需要哪些實機測試」那一節的可執行版本：照順序跑，把**輸出原文**帶回來，
+就能把上面那些「靜態驗證／mock」的項目一項一項換成實機結論。分兩輪：
+
+- **第一輪（步驟 1–7）**只需要 whisper.cpp 與 1.6GB 的 whisper 模型，不用下載 5GB 的
+  Qwen3-8B，也不需要能上課。平台層（裝置、權限、編譯、防休眠、停止）都在這一輪驗完。
+- **第二輪（步驟 8）**才需要 LLM 模型，驗總結與效能。
+
+> zsh 提醒：本節的指令區塊刻意不含 `#` 註解——zsh 預設沒開 `interactivecomments`，
+> 貼上帶 `#` 的行會被當成指令而報錯（見上面「安裝時的 macOS 差異」）。
+
+### 1. 安裝與編譯（對應風險項目 3）
+
+依 README 的「安裝」章節裝好 Homebrew 套件與 `lec` 之後：
+
+```bash
+python3 setup_engines.py whisper
+ls -l whisper.cpp/build/bin
+```
+
+要看的東西：
+
+- `檢查編譯工具` 那一步有沒有誤報缺東西（只裝 Command Line Tools、沒裝完整 Xcode 的
+  Mac 也應該通過；判斷在 `core/platform.py::missing_build_tools()`）。
+- cmake 有沒有真的用 Metal 編（`-DGGML_METAL=ON`）、build 產物是不是落在 `build/bin/`
+  （`find_engine_bin()` 的假設，風險項目 5）。
+- 之後要驗總結才需要 `python3 setup_engines.py llama`，第一輪可以先跳過。
+
+### 2. 環境檢查
+
+```bash
+./lec doctor
+python3 -m unittest
+```
+
+`lec doctor` 要注意：
+
+- 「作業系統」應該是 `⚠ … 實驗中`（在這輪驗完之前刻意保持這個措辭）。
+- 「錄音後端」應該是 `avfoundation`。
+- 「編譯工具」應該是 `metal 後端（…）：齊全`；顯示「已編譯的後端」表示讀到了
+  `whisper.cpp/build/.lec-build`。
+- 「GPU」那一行要等 llama.cpp 也編好才會出現，應該列出 Metal 裝置（風險項目 3）。
+- `python3 -m unittest` 在 Mac 上也應該全綠——它會走到 `default_state_dir()` 的
+  `~/Library/Application Support` 分支等 macOS 專屬路徑。
+
+### 3. 裝置列表與 parser（對應風險項目 1）
+
+```bash
+ffmpeg -hide_banner -f avfoundation -list_devices true -i ""
+./lec devices
+./lec devices --json
+```
+
+**第一個指令的輸出原文是這一輪最重要的素材**：`_avfoundation_sources()` 目前假設的格式
+（`AVFoundation audio devices:` 區段標題 + `[編號] 名稱`）完全是從文件推導的。Windows 的
+dshow 就是因為沒有實機原文而解析錯一整版（見 `docs/platform-windows.md` 的「更正」），
+拿到原文之後才能把它寫成 `AvfoundationSourcesTests` 的迴歸素材。
+
+失敗徵兆：`lec devices` 一個裝置都列不出來、名稱被截斷、中文變亂碼、或藍牙耳機
+／iPhone 麥克風（Continuity）沒被列進來。有內建麥克風以外的裝置（USB 麥、藍牙耳機）
+的話，插上去再跑一次，兩份輸出都帶回來。
+
+### 4. 麥克風權限（對應風險項目 2）
+
+```bash
+./lec devices --test default
+```
+
+第一次執行會跳出系統的麥克風權限對話框（TCC）。兩種情況都要記錄：
+
+1. **允許**之後應該印出 `平均 … dB、峰值 … dB`。如果是逾時而不是拿到 dB 值，把訊息
+   原文帶回來。
+2. 然後刻意到「系統設定 > 隱私權與安全性 > 麥克風」把權限關掉，再跑一次同一個指令，
+   **把錯誤訊息原文帶回來**。`core/devices.py::_PERMISSION_HINTS` 猜的關鍵字
+   （`not authoriz`、`Operation not permitted`、`Input/output error`）就是要靠這段原文
+   校正——dshow 那邊就是因為關鍵字猜太寬，把「裝置不存在」誤報成權限問題。
+
+測完記得把權限開回來。
+
+### 5. 轉錄一輪（不需要 LLM）
+
+```bash
+./lec run mac測試 --file samples/test8min.ogg --transcribe-only
+```
+
+跑完比對 `outputs/mac測試_*/transcript.md` 與 `samples/expected/transcript.md`：不會逐字
+相同（whisper 本身有隨機性），要看的是時間小標題的段數差不多、沒有整段空白或亂碼。
+順便記下處理 8 分鐘音檔花多久（Linux 開發機的 whisper large-v3-turbo 約 6–7x 即時）。
+
+### 6. 防休眠（對應風險項目 4）
+
+開著 `./lec run mac測試2`（麥克風即時錄音）的時候，另一個終端機執行：
+
+```bash
+pmset -g assertions | grep -i -e PreventUserIdleSystemSleep -e PreventSystemSleep
+./lec status
+```
+
+應該看到 `caffeinate` 持有的 assertion。接著蓋上螢幕等一兩分鐘再打開，用 `./lec status`
+確認錄音沒有中斷（`Inhibitor` 用的是 `caffeinate -i -m -s -w <pid>`）。
+
+### 7. 停止機制與行程收尾（三平台一致的 public contract）
+
+錄音進行中，在另一個終端機：
+
+```bash
+./lec stop
+./lec status
+pgrep -fl "whisper-server|llama-server|ffmpeg"
+```
+
+`lec stop` 是在輸出資料夾寫 `stop` 檔（不是送 signal），phase 應該走
+`recording → finishing → done`，而且 `pgrep` 最後不該再留下 whisper-server ／ ffmpeg。
+再測一次 `./lec stop --force`（寫 `stop_force`，應該立刻結束）。
+
+### 8. 總結與效能（第二輪，需要 Qwen3-8B）
+
+依 README 下載 `models/Qwen3-8B-Q4_K_M.gguf` 並 `python3 setup_engines.py llama` 之後：
+
+```bash
+./lec run mac測試3 --file samples/test8min.ogg
+```
+
+要看的是 `lec doctor` 的 GPU 那行有沒有列出 Metal、summarizing phase 有沒有正常推進、
+`notes.md` 的內容跟 `samples/expected/notes.md` 是否同一個量級，以及**每段總結耗時**
+（Linux + Arc 140V 是 77–95 秒／段，Apple Silicon 的數字會寫進 README 的效能表）。
+
+### 一次收集所有輸出
+
+第一輪跑完之後，用這段把環境資訊與各指令輸出收進一個檔案，回報時附上它：
+
+```bash
+R=~/lec-macos-report.txt
+{
+  echo "== sw_vers =="; sw_vers
+  echo "== uname -m =="; uname -m
+  echo "== python3 =="; python3 -V
+  echo "== ffmpeg =="; ffmpeg -version | head -2
+  echo "== cmake =="; cmake --version | head -1
+  echo "== avfoundation 原文 =="; ffmpeg -hide_banner -f avfoundation -list_devices true -i ""
+  echo "== lec devices --json =="; ./lec devices --json
+  echo "== lec doctor =="; ./lec doctor
+  echo "== build/bin =="; ls -l whisper.cpp/build/bin llama.cpp/build/bin
+  echo "== build stamp =="; cat whisper.cpp/build/.lec-build
+  echo "== otool -L =="; otool -L whisper.cpp/build/bin/whisper-server
+  echo "== unittest =="; python3 -m unittest 2>&1 | tail -5
+} > "$R" 2>&1
+echo "寫到 $R"
+```
+
+另外單獨帶回來的（上面那個檔案收不到的）：
+
+- 步驟 4 第 2 種情況（關掉麥克風權限後）`./lec devices --test default` 的錯誤訊息原文
+- 步驟 5 的 `transcript.md` 前 30 行左右，以及處理花了多久
+- 步驟 6 的 `pmset -g assertions` 輸出、蓋螢幕前後 `./lec status` 的差異
+- 步驟 7 `lec stop` 之後 `pgrep` 還有沒有殘留的行程
+
 ## 還需要哪些實機測試
 
 以下项目目前**只有靜態驗證或 mock test**，沒有在真正的 Mac 上跑過，是這次
@@ -110,6 +269,9 @@ macOS 10.14+ 對麥克風有系統層級的權限管制：
 4. `caffeinate` 阻止休眠期間，蓋上螢幕（筆電）是否真的不會中斷背景編譯／錄音。
 5. `find_engine_bin()` / `library_dirs()` 假設的 build 產物佈局（`build/bin/`）
    是否跟 whisper.cpp / llama.cpp 目前版本在 macOS 上的實際輸出一致。
+
+要驗這些項目的話，照上面「實機驗證流程」那一節跑，不用自己想順序；
+每一步都標了對應的風險項目編號。
 
 在沒有實機驗證之前，README 與 `lec doctor` 都刻意維持「實驗中」而不是
 「已支援」的措辭，請不要在這些項目確認之前把 macOS 改標成正式支援。
