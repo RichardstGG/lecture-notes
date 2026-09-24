@@ -6,6 +6,7 @@ import tempfile
 import tomllib
 import unittest
 from pathlib import Path
+from unittest.mock import patch
 from urllib.parse import quote
 
 from tests import _pathfix  # noqa: F401
@@ -569,6 +570,29 @@ class BackendApiTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(data["target"], "notes")
         self.assertEqual(data["operation"], "replace")
         self.assertEqual(data["content"], "rebuilt\n")
+
+    async def test_session_stream_emits_error_and_recovers_after_os_error(self):
+        session = self.make_session()
+        sessions = self.app.state.sessions
+        initial = sessions.get(session.name)
+        (session / "transcript.md").write_text("first\nsecond\n", encoding="utf-8")
+        current = sessions.get(session.name)
+        stream = _session_events(
+            DisconnectAfter(allowed_calls=3), sessions, session.name, 0.001,
+            initial=initial,
+        )
+        with patch.object(sessions, "get", side_effect=[OSError("transient"), current]):
+            snapshot = await anext(stream)
+            error = await anext(stream)
+            content = await anext(stream)
+        await stream.aclose()
+
+        self.assertTrue(snapshot.startswith("event: snapshot\n"))
+        self.assertEqual(json.loads(error.split("data: ", 1)[1])["code"],
+                         "session_unavailable")
+        self.assertTrue(content.startswith("event: content\n"))
+        self.assertEqual(json.loads(content.split("data: ", 1)[1])["content"],
+                         "second\n")
 
 
 if __name__ == "__main__":
