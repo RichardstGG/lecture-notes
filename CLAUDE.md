@@ -24,15 +24,15 @@ python3 setup_engines.py whisper         # 只編譯 whisper.cpp
 
 UI 的測試需要 `ui/backend/requirements.txt` 的 fastapi；沒安裝時 `tests/test_ui_backend_*.py` 會失敗，這不是程式壞掉。
 
-## 檔案所有權（兩個 agent 分工）
+## 檔案所有權（開發者分工）
 
-這個 repo 由兩個 AI agent 共同開發，各自獨立分支、透過 PR 整合。**Claude Code 在這裡扮演 Claude 這一邊。**
+這個 repo 的開發工作由 Claude Code 與 Codex 分工，各自獨立分支、透過 PR 整合。開發者建立 PR 後，由 Antigravity（設定見 `.agents/agents/code-reviewer/agent.md`）進行獨立程式碼審查，最後由 human maintainer 進行最終審查與合併。**Claude Code 在這裡扮演 Claude 這一邊。**
 
 | | Claude（你） | Codex |
 |---|---|---|
 | 擁有 | `core/platform.py`、`core/devices.py`、`core/doctor.py`、`setup_engines.py`、`docs/platform-*.md`、平台相關測試與修復 | `core/cli.py`、`core/config.py`、`core/session.py`、`core/status.py`、`ui/`、UI API/schema、UI contract tests |
-| 分支 | `claude/<task-name>` | `codex/<task-name>` |
 
+- Claude 的實作分支使用 `claude/<task-name>`。
 - 只改自己擁有的範圍。需要動到對方的檔案時，**停下來**，用 CROSS_AGENT_REQUEST 格式回報給使用者，不要自己改、也不要混進自己的 commit。
 - CROSS_AGENT_REQUEST 內容：Requester／Target agent／類型（blocking or non-blocking）／目的／現有行為／問題／建議行為／涉及檔案／是否改變 public contract／相容性影響／建議測試／Requester 目前能否繼續其他工作。
 - `README.md` 是共用檔案，容易衝突：要改就獨立成一個 commit。新的平台文件放 `docs/platform-*.md`。
