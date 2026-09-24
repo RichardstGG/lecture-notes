@@ -120,6 +120,23 @@ class CheckToolsTests(unittest.TestCase):
                 self.assertRaises(SystemExit):
             SE.check_tools("cuda")
 
+    def test_compiler_and_sdk_checks_come_from_platform_module(self):
+        """編譯器與後端 SDK 只有 core/platform.py 一份判斷，lec doctor 用的是同一個函式；
+        這裡確認 setup_engines.py 沒有自己再抄一份（不然兩邊會慢慢分歧）。"""
+        with mock.patch.object(P, "missing_build_tools", return_value=["假的工具"]) as m, \
+                mock.patch.object(SE.shutil, "which", side_effect=self._which({"git", "cmake"})), \
+                self.assertRaises(SystemExit):
+            SE.check_tools("vulkan")
+        m.assert_called_once_with("vulkan", msvc="probe")
+
+    def test_already_probed_msvc_is_passed_through(self):
+        # main() 只查一次 vswhere，check_tools 與 pick_generator 共用結果
+        with mock.patch.object(P, "missing_build_tools", return_value=[]) as m, \
+                mock.patch.object(SE.shutil, "which", side_effect=self._which({"git", "cmake"})), \
+                mock.patch.object(SE.os, "cpu_count", return_value=4):
+            self.assertEqual(SE.check_tools("cuda", msvc=None), 4)
+        m.assert_called_once_with("cuda", msvc=None)
+
 
 class BuildGeneratorPassthroughTests(unittest.TestCase):
     """--generator 應該原封不動傳進 cmake -G，沒指定時完全不加這個參數
@@ -173,32 +190,9 @@ class BuildGeneratorPassthroughTests(unittest.TestCase):
 
 
 
-class FindMsvcTests(unittest.TestCase):
-    """find_msvc()：用 vswhere 判斷「有沒有裝 C++ 工具」，而不是只看資料夾存不存在
-    （迴歸：只裝 VS Installer 時資料夾存在，舊版 check_tools 誤判工具齊全，
-    cmake 退回 NMake Makefiles 後失敗）。"""
-
-    def test_no_vswhere_returns_none(self):
-        with mock.patch.object(SE.Path, "exists", return_value=False):
-            self.assertIsNone(SE.find_msvc())
-
-    def test_vswhere_without_vc_tools_returns_none(self):
-        with mock.patch.object(SE.Path, "exists", return_value=True), \
-                mock.patch.object(SE, "out", return_value="[]"):
-            self.assertIsNone(SE.find_msvc())
-
-    def test_vswhere_with_vc_tools(self):
-        raw = '[{"installationVersion": "17.11.35222.181", "installationPath": "C:\\\\VS\\\\2022"}]'
-        with mock.patch.object(SE.Path, "exists", return_value=True), \
-                mock.patch.object(SE, "out", return_value=raw) as out:
-            got = SE.find_msvc()
-        self.assertEqual(got["version"], "17.11.35222.181")
-        self.assertIn(SE.VC_TOOLS, [str(a) for a in out.call_args[0][0]])
-
-    def test_garbage_output_returns_none(self):
-        with mock.patch.object(SE.Path, "exists", return_value=True), \
-                mock.patch.object(SE, "out", return_value="not json"):
-            self.assertIsNone(SE.find_msvc())
+# find_msvc() 與「缺哪些編譯工具」的判斷已搬到 core/platform.py（lec doctor 也用同一份），
+# 測試在 tests/test_platform_build_tools.py。這裡只測 setup_engines.py 自己的部分：
+# git / cmake 檢查、cmake generator 選擇，以及 check_tools() 缺工具就中止的行為。
 
 
 class PickGeneratorTests(unittest.TestCase):

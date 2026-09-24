@@ -116,7 +116,7 @@ def build_stamp(directory, backend, args, generator=None):
 
 
 # ---------------------------------------------------------------- Windows：Visual Studio
-VC_TOOLS = "Microsoft.VisualStudio.Component.VC.Tools.x86.x64"
+# MSVC 偵測（find_msvc）與「缺哪些編譯工具」的判斷都在 core/platform.py，lec doctor 共用同一份。
 VS_GENERATORS = {16: "Visual Studio 16 2019", 17: "Visual Studio 17 2022",
                  18: "Visual Studio 18 2026"}
 WIN_CONFIGURE_HINT = (
@@ -127,27 +127,6 @@ WIN_CONFIGURE_HINT = (
     "     或改在「x64 Native Tools Command Prompt for VS」裡執行，並加上 --generator Ninja\n")
 
 _UNSET = object()
-
-
-def find_msvc():
-    """用 vswhere 找「有裝 C++ 工具」的 Visual Studio；回傳 {version, path} 或 None。
-    只看 Program Files 下有沒有 Microsoft Visual Studio 資料夾不夠：
-    只裝 VS Installer、沒勾 C++ 工作負載時資料夾也存在，cmake 會退回 NMake 然後失敗。"""
-    import json
-    base = os.environ.get("ProgramFiles(x86)") or "C:/Program Files (x86)"
-    vswhere = Path(base) / "Microsoft Visual Studio" / "Installer" / "vswhere.exe"
-    if not vswhere.exists():
-        return None
-    raw = out([vswhere, "-latest", "-products", "*", "-requires", VC_TOOLS,
-               "-format", "json", "-utf8"])
-    try:
-        items = json.loads(raw or "[]")
-    except ValueError:
-        return None
-    if not items:
-        return None
-    return {"version": items[0].get("installationVersion", ""),
-            "path": items[0].get("installationPath", "")}
 
 
 def pick_generator(requested, msvc):
@@ -181,25 +160,7 @@ def check_tools(backend, msvc=_UNSET):
     missing = ["git"] if not shutil.which("git") else []
     if not shutil.which("cmake"):
         missing.append("cmake")
-    if P.NAME == "windows":
-        if msvc is _UNSET:
-            msvc = find_msvc()
-        if not (shutil.which("cl") or msvc):
-            missing.append("Visual Studio 的「使用 C++ 的桌面開發」工作負載（MSVC 編譯器）")
-        if backend == "vulkan" and not (os.environ.get("VULKAN_SDK") or shutil.which("glslc")):
-            missing.append("Vulkan SDK")
-    else:
-        if not shutil.which("c++") and not shutil.which("clang++") and not shutil.which("g++"):
-            missing.append("C++ 編譯器")
-        if backend == "vulkan":
-            if not shutil.which("glslc"):
-                missing.append("glslc")
-            has_vulkan = bool(shutil.which("pkg-config")) and subprocess.run(
-                ["pkg-config", "--exists", "vulkan"], capture_output=True).returncode == 0
-            if not has_vulkan and not os.environ.get("VULKAN_SDK"):
-                missing.append("libvulkan-dev")
-    if backend == "cuda" and not shutil.which("nvcc"):
-        missing.append("CUDA Toolkit（nvcc）")
+    missing += P.missing_build_tools(backend, msvc="probe" if msvc is _UNSET else msvc)
     if missing:
         print("缺少：" + "、".join(missing))
         print({"linux": "  " + APT_HINT, "macos": "  " + BREW_HINT}.get(P.NAME, WIN_HINT))
@@ -236,7 +197,7 @@ def build(directory, backend, args, targets, jobs, rebuild, generator=None, cmak
     沒給就用 generator。自動選的不記進 stamp，所以 --lock 與實際編譯的 stamp 一致。"""
     directory = Path(directory)
     cmake_generator = cmake_generator or generator
-    stamp_file = directory / "build" / ".lec-build"
+    stamp_file = P.build_stamp_path(directory)
     want = build_stamp(directory, backend, args, generator)
     have = all(P.find_engine_bin(directory, t).is_file() for t in targets)
     if have and not rebuild and stamp_file.exists() and \
@@ -333,7 +294,7 @@ def main():
         return 0
 
     step("檢查編譯工具")
-    msvc = find_msvc() if P.NAME == "windows" else None
+    msvc = P.find_msvc() if P.NAME == "windows" else None
     jobs = check_tools(backend, msvc)
     cmake_generator = pick_generator(args.generator, msvc)
 

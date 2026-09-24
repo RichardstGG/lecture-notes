@@ -60,10 +60,14 @@ macOS 10.14+ 對麥克風有系統層級的權限管制：
 ## GPU 後端（Metal）
 
 - 預設 Metal（`DEFAULT_BACKEND["macos"] = "metal"`）。
-- 編譯需要 Xcode Command Line Tools（`xcode-select --install`），
-  `setup_engines.py` 目前用「有沒有 c++/clang++/g++」判斷編譯器存在，沒有另外
-  檢查 Metal 編譯器（`xcrun metal`）是否可用——**這點只在真機上才能確認**，
-  如果日後發現 Metal 編譯失敗但 `check_tools()` 沒攔下來，可以在這裡加檢查。
+- 編譯需要 Xcode Command Line Tools（`xcode-select --install`）。編譯工具的判斷在
+  `core/platform.py::missing_build_tools()`（`setup_engines.py` 與 `lec doctor` 共用）：
+  Metal 後端只要求「有 c++／clang++／g++ 其中之一」，沒有另外檢查 Metal 編譯器
+  （`xcrun metal`）是否可用——**這點只在真機上才能確認**，如果日後發現 Metal 編譯失敗
+  但事前檢查沒攔下來，就在這個函式裡加檢查。
+- `lec doctor` 會多一行「編譯工具」顯示目前後端與缺少的工具；缺工具只算警告
+  （已經編好引擎或用預編譯檔的人不需要編譯環境）。macOS 上這一行目前只有
+  mock 測試（`tests/test_doctor_platform.py`），沒有實機輸出可以核對。
 - Apple Silicon 與 Intel Mac 應該都能用同一套流程編譯（CMake 會自動判斷
   架構），差別主要在 Homebrew 安裝路徑不同（Apple Silicon 預設
   `/opt/homebrew`、Intel 預設 `/usr/local`）：如果 `brew install` 完後
@@ -101,7 +105,8 @@ macOS 10.14+ 對麥克風有系統層級的權限管制：
    字樣是否對得上真實 ffmpeg 版本印出的文字。
 3. `setup_engines.py` 在 Apple Silicon 與 Intel Mac 上實際編譯
    whisper.cpp / llama.cpp（Metal 後端）是否成功、`--list-devices` 是否正確
-   回報 Metal 裝置。
+   回報 Metal 裝置；以及 `lec doctor` 的「編譯工具」那一行在只裝了 Command Line
+   Tools（沒裝完整 Xcode）的 Mac 上是否判斷正確。
 4. `caffeinate` 阻止休眠期間，蓋上螢幕（筆電）是否真的不會中斷背景編譯／錄音。
 5. `find_engine_bin()` / `library_dirs()` 假設的 build 產物佈局（`build/bin/`）
    是否跟 whisper.cpp / llama.cpp 目前版本在 macOS 上的實際輸出一致。
