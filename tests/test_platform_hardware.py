@@ -4,6 +4,7 @@ setup.py 的互動問題全部依賴這些函式，所以三個平台的分支�
 不需要 NVIDIA 顯卡、Mac 或 Windows。偵測失敗時一律回傳 None／空 list，
 不能丟例外——setup.py 一開始就會呼叫它們。
 """
+import types
 import unittest
 from unittest import mock
 
@@ -111,6 +112,41 @@ class MemoryAndDiskTests(unittest.TestCase):
     def test_free_disk_on_missing_path_returns_none(self):
         with mock.patch.object(P.shutil, "disk_usage", side_effect=OSError):
             self.assertIsNone(P.free_disk_gb("/no/such/path"))
+
+
+class WindowsMemoryTests(unittest.TestCase):
+    """Windows 走 ctypes 的 GlobalMemoryStatusEx；ctypes.windll 在 Linux 上不存在，
+    比照 tests/test_platform_process.py 用 SimpleNamespace 假造（真實行為仍待實機確認）。"""
+
+    def _fake_ctypes(self, kernel32):
+        return types.SimpleNamespace(
+            Structure=P.ctypes.Structure, c_ulong=P.ctypes.c_ulong,
+            c_ulonglong=P.ctypes.c_ulonglong, sizeof=P.ctypes.sizeof,
+            byref=P.ctypes.byref, windll=types.SimpleNamespace(kernel32=kernel32))
+
+    def _run(self, kernel32):
+        with mock.patch.object(P, "IS_WINDOWS", True), \
+                mock.patch.object(P, "ctypes", self._fake_ctypes(kernel32)):
+            return P.total_memory_gb()
+
+    def test_reads_total_physical_memory(self):
+        def fill(ref):
+            ref._obj.ullTotalPhys = 16_000_000_000
+            return 1
+
+        kernel32 = mock.Mock()
+        kernel32.GlobalMemoryStatusEx.side_effect = fill
+        self.assertAlmostEqual(self._run(kernel32), 16.0)
+
+    def test_failed_call_returns_none(self):
+        kernel32 = mock.Mock()
+        kernel32.GlobalMemoryStatusEx.return_value = 0
+        self.assertIsNone(self._run(kernel32))
+
+    def test_oserror_returns_none(self):
+        kernel32 = mock.Mock()
+        kernel32.GlobalMemoryStatusEx.side_effect = OSError
+        self.assertIsNone(self._run(kernel32))
 
 
 class PackageManagerTests(unittest.TestCase):
