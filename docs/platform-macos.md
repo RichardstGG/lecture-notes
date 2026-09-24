@@ -139,7 +139,8 @@ python3 -m unittest
   `whisper.cpp/build/.lec-build`。
 - 「GPU」那一行要等 llama.cpp 也編好才會出現，應該列出 Metal 裝置（風險項目 3）。
 - `python3 -m unittest` 在 Mac 上也應該全綠——它會走到 `default_state_dir()` 的
-  `~/Library/Application Support` 分支等 macOS 專屬路徑。
+  `~/Library/Application Support` 分支等 macOS 專屬路徑。只有
+  `tests/test_ui_backend_*.py` 失敗的話是沒裝 fastapi（見 CLAUDE.md），不是程式壞掉。
 
 ### 3. 裝置列表與 parser（對應風險項目 1）
 
