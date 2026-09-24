@@ -1,6 +1,10 @@
 #!/usr/bin/env python3
 """Update an existing lecture-notes checkout and rebuild its local runtime.
 
+First-time installation goes through setup.py instead (it detects the machine,
+asks which backend to build and lists any missing system packages). This script
+assumes everything is already installed and only brings it up to date.
+
 The script is intentionally dependency-free so an older checkout can update
 itself before the project virtual environment exists.
 """

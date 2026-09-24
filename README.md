@@ -82,6 +82,20 @@ macOS 內建的 `python3` 通常是 3.9，低於需求的 3.11；上面的 `brew
 
 **2. 編譯引擎並取得 whisper 模型**
 
+不確定該選哪個 GPU 後端的話，用互動式安裝：它會偵測這台機器（GPU、CUDA Toolkit、
+記憶體、磁碟、套件管理器）、問幾個問題，再呼叫 `setup_engines.py`。
+**它不會安裝任何系統套件**，只會告訴你缺哪些、以及這台機器對應的安裝指令。
+
+```bash
+python3 setup.py                    # Linux/macOS；Windows 用 python setup.py
+```
+
+Linux 可以跑 `./linux_setup.sh`，macOS 在 Finder 雙擊 `mac_setup.command`，
+Windows 雙擊 `windows_setup.bat`——三個都只是同一支 `setup.py` 的入口。
+先看它會做什麼而不編譯：`python3 setup.py --dry-run`。
+
+自己清楚要什麼的話也可以直接跑：
+
 ```bash
 python3 setup_engines.py            # Linux/macOS；Windows 用 python setup_engines.py
 ```
@@ -293,7 +307,10 @@ llama.cpp 官方有 Windows Vulkan / CUDA 版，whisper.cpp 官方只有 CPU 與
 ~/lecture-notes/
 ├─ lec, core/, prompts/          程式
 ├─ ui/backend/, ui/frontend/     本機 FastAPI service 與 React UI
+├─ setup.py                      互動式安裝（偵測環境、告知缺少的套件）
+├─ linux_setup.sh / mac_setup.command / windows_setup.bat   setup.py 的平台入口
 ├─ setup_engines.py              取得與編譯引擎
+├─ upgrade.py                    更新既有安裝並重新編譯
 ├─ samples/                      8 分鐘範例音檔、講稿與參考輸出
 ├─ tools/make_sample.py          重新產生範例音檔（一般使用者用不到）
 ├─ config/default.toml           全域預設（進 git）

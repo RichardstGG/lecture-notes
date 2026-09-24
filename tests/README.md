@@ -25,6 +25,8 @@ python3 -m unittest tests.test_platform_parsers -v
 | `test_platform_process.py` | 行程存活判斷、spawn 參數、中斷／強制關閉、防休眠（Windows 分支用 mock 假造 `ctypes.windll`） |
 | `test_platform_engine.py` | 引擎執行檔搜尋（Visual Studio Release/Debug 佈局等）、動態函式庫搜尋路徑 |
 | `test_platform_build_tools.py` | 編譯工具鏈偵測：`find_msvc()`（vswhere）、`cxx_compiler()`、`missing_build_tools()` 在三個平台與各後端的判斷 |
+| `test_platform_hardware.py` | 環境偵測：NVIDIA／CUDA、GPU 名稱、記憶體、磁碟空間、套件管理器 |
+| `test_setup_interactive.py` | `setup.py` 的後端決策表（含 CUDA 詢問）、缺套件回報「只印不裝」、`--yes`／`--dry-run` 非互動路徑 |
 | `test_setup_engines.py` | `setup_engines.py` 的後端／generator 選擇、`engines.lock` 讀寫、git／cmake 檢查與「編譯工具判斷委派給 `core/platform.py`」、`--generator` 參數傳遞 |
 | `test_upgrade.py` | `upgrade.py` 的 fast-forward 更新保護、引擎參數、virtualenv 與 frontend build orchestration |
 | `test_session_paths.py` | 輸出資料夾命名、分層、同名後綴與 traversal 防護 |
