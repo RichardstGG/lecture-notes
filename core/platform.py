@@ -486,7 +486,11 @@ def default_source(backend=None):
 
 
 def resolve_source(choice, backend=None):
-    """設定值（default / 編號 / 名稱 / id）→ 實際要傳給 ffmpeg 的來源識別。"""
+    """設定值（default / 編號 / 名稱 / id）→ 實際要傳給 ffmpeg 的來源識別。
+
+    找不到就照原樣交給 ffmpeg（見函式尾端）；要「找不到就報錯」的互動查詢請用
+    `devices.resolve()`，兩者的差別在那邊的 docstring 有說明。
+    """
     backend = audio_backend(backend)
     rows = list_sources(backend) or []
     if choice in ("", "default", None):

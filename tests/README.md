@@ -29,6 +29,7 @@ python3 -m unittest tests.test_platform_parsers -v
 | `test_upgrade.py` | `upgrade.py` 的 fast-forward 更新保護、引擎參數、virtualenv 與 frontend build orchestration |
 | `test_session_paths.py` | 輸出資料夾命名、分層、同名後綴與 traversal 防護 |
 | `test_devices_permission_hint.py` | 麥克風權限錯誤訊息（啟發式，非窮舉） |
+| `test_devices_sources.py` | 來源解析（`devices.resolve()` 與執行期 `resolve_source()` 的差別）、音量判斷門檻、列不出裝置時的提示 |
 | `test_doctor_helpers.py` | `core/doctor.py` 的小工具函式，以及只轉錄模式（`summary.enabled = false`）下的檢查結果 |
 | `test_doctor_platform.py` | `lec doctor` 的平台分支（實測／實驗中措辭、平台專屬指令、錄音後端）與「編譯工具」項目 |
 | `test_cli_transcribe_only.py` | `lec run --transcribe-only` 的設定覆寫與 help contract |

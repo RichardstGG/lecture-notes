@@ -15,7 +15,13 @@ def default_source(backend=None):
 
 
 def resolve(choice, sources=None, backend=None):
-    """編號 / 名稱 / id → 要存進設定的 id；找不到回傳 None。"""
+    """編號 / 名稱 / id → 要存進設定的 id；找不到回傳 None。
+
+    跟執行期用的 `platform.resolve_source()` 刻意不同：這個是互動查詢用的
+    （`lec devices --test/--save`），找不到就回 None 讓呼叫端當場報錯；
+    `resolve_source()` 找不到會把原字串直接交給 ffmpeg，因為設定檔裡可能寫著
+    現在還沒插上的裝置，該不該失敗交給 ffmpeg 決定。
+    """
     rows = sources if sources is not None else (P.list_sources(backend) or [])
     for i, s in enumerate(rows):
         if choice in (s["id"], s["name"]) or str(choice) == str(s.get("index", i)):
