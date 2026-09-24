@@ -46,6 +46,35 @@ class PlatformRunEncodingTests(unittest.TestCase):
         self.assertEqual(run.call_args.kwargs.get("encoding"), "utf-8")
 
 
+class ForceUtf8Tests(unittest.TestCase):
+    """force_utf8()：`lec` 一啟動就把 stdout / stderr 轉成 UTF-8，
+    否則 Windows 主控台（cp950）印 ✔／✖／⚠ 與部分中文會變亂碼或直接丟例外。"""
+
+    def _fake_sys(self, stdout, stderr):
+        return mock.Mock(stdout=stdout, stderr=stderr)
+
+    def test_both_streams_are_reconfigured_with_replace(self):
+        out, err = mock.Mock(), mock.Mock()
+        with mock.patch.object(P, "sys", self._fake_sys(out, err)):
+            P.force_utf8()
+        for stream in (out, err):
+            stream.reconfigure.assert_called_once_with(encoding="utf-8", errors="replace")
+
+    def test_stream_without_reconfigure_is_skipped(self):
+        # 被重導向成不支援 reconfigure 的物件時（例如某些測試 harness 的假 stdout）不能爆掉
+        out = mock.Mock(spec=[])                       # 沒有 reconfigure 屬性
+        err = mock.Mock()
+        with mock.patch.object(P, "sys", self._fake_sys(out, err)):
+            P.force_utf8()
+        err.reconfigure.assert_called_once()           # 前一個失敗不影響後一個
+
+    def test_unsupported_encoding_change_is_ignored(self):
+        out = mock.Mock()
+        out.reconfigure.side_effect = ValueError("cannot reconfigure")
+        with mock.patch.object(P, "sys", self._fake_sys(out, mock.Mock())):
+            P.force_utf8()                              # 不該往外丟例外
+
+
 class NoLocaleDependentTextModeTests(unittest.TestCase):
     """靜態檢查：這些檔案裡的 subprocess 呼叫只要用 text=True，就必須同時指定 encoding。"""
 
