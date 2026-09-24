@@ -13,7 +13,9 @@ git -C llama.cpp rev-parse HEAD
   --file samples/test8min.ogg \
   --set paths.output_root=/tmp/lecture-notes-quality-baseline \
   --set system.inhibit_sleep=false
-python -m ui.quality_eval /tmp/lecture-notes-quality-baseline/<session-name> \
+session_dir="$(find /tmp/lecture-notes-quality-baseline -mindepth 1 -maxdepth 1 \
+  -type d -name '測試課_*' | sort | tail -n 1)"
+python3 -m ui.quality_eval "$session_dir" \
   > /tmp/lecture-notes-quality-baseline/report.json
 ```
 
@@ -26,7 +28,34 @@ model response time; and the same measurements for `samples/expected/`. Record
 the three Git revisions and the `/usr/bin/time` result with the report. Engine
 binaries may be built from different revisions than their current checkouts, so
 verify their build provenance separately if an exact engine comparison matters.
-The report format starts at `schema_version: 1`.
+The report format is `schema_version: 2`. Compared with version 1, curated term
+results add occurrence counts, and `--baseline` adds optional comparison fields.
+The script count is a reading guide because the recording may depart from its
+written script.
+
+`audio_matches_sample` checks the session's `status.json` input against the
+public audio. It is `null` when that source file or status is unavailable.
+
+For two runs of the same sample, pass the earlier session with `--baseline`:
+
+```bash
+control_session="$(find /tmp/control -mindepth 1 -maxdepth 1 \
+  -type d -name '測試課_*' | sort | tail -n 1)"
+candidate_session="$(find /tmp/candidate -mindepth 1 -maxdepth 1 \
+  -type d -name '測試課_*' | sort | tail -n 1)"
+python3 -m ui.quality_eval "$candidate_session" \
+  --baseline "$control_session" > /tmp/sample-comparison.json
+```
+
+The optional `baseline` measurements use the same fields as `current`.
+`settings_delta` lists changed quality settings, while `term_changes` lists only
+curated terms whose transcript or note-term occurrence count changed. The
+baseline config hash and `baseline_audio_matches_sample` are also included.
+Output and state directory differences are excluded from `settings_delta`; check
+both `config.used.toml` files and model provenance before claiming a controlled
+experiment. The prompt hash reflects the file at report time; a prior run does
+not store a prompt snapshot. The curated list now includes `父行程` and `子行程`
+so the sample's process terminology can be compared directly.
 
 ## Read the report in four passes
 
