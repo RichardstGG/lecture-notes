@@ -257,11 +257,23 @@ def _has_vulkan_lib():
         return False
 
 
-def missing_build_tools(backend=None, msvc="probe"):
-    """編譯引擎需要、但這台電腦缺少的東西（中文名稱 list；空 list = 齊全）。
+# 編譯引擎會用到的工具；key 是程式用的識別，label 是印給人看的名稱。
+# setup.py 用 key 對照這個平台的套件名稱，doctor / setup_engines.py 只印 label。
+BUILD_TOOLS = {
+    "msvc": "Visual Studio 的「使用 C++ 的桌面開發」工作負載（MSVC 編譯器）",
+    "vulkan_sdk": "Vulkan SDK",
+    "cxx": "C++ 編譯器",
+    "glslc": "glslc",
+    "libvulkan": "libvulkan-dev",
+    "nvcc": "CUDA Toolkit（nvcc）",
+}
+
+
+def missing_build_tool_keys(backend=None, msvc="probe"):
+    """編譯引擎需要、但這台電腦缺少的工具（BUILD_TOOLS 的 key；空 list = 齊全）。
 
     只看編譯器與後端 SDK，git / cmake 由呼叫端各自回報（setup_engines.py 直接中止，
-    lec doctor 列成獨立項目）。兩邊共用這裡，判斷才不會不一致。
+    lec doctor 列成獨立項目）。所有呼叫端共用這裡，判斷才不會不一致。
     msvc："probe"（預設）= Windows 上自己呼叫 find_msvc()；已經查過的話傳進來可省一次 vswhere。
     """
     backend = engine_backend(backend)
@@ -270,20 +282,113 @@ def missing_build_tools(backend=None, msvc="probe"):
         if msvc == "probe":
             msvc = find_msvc()
         if not (shutil.which("cl") or msvc):
-            missing.append("Visual Studio 的「使用 C++ 的桌面開發」工作負載（MSVC 編譯器）")
+            missing.append("msvc")
         if backend == "vulkan" and not (os.environ.get("VULKAN_SDK") or shutil.which("glslc")):
-            missing.append("Vulkan SDK")
+            missing.append("vulkan_sdk")
     else:
         if not cxx_compiler():
-            missing.append("C++ 編譯器")
+            missing.append("cxx")
         if backend == "vulkan":
             if not shutil.which("glslc"):
                 missing.append("glslc")
             if not _has_vulkan_lib():
-                missing.append("libvulkan-dev")
+                missing.append("libvulkan")
     if backend == "cuda" and not shutil.which("nvcc"):
-        missing.append("CUDA Toolkit（nvcc）")
+        missing.append("nvcc")
     return missing
+
+
+def missing_build_tools(backend=None, msvc="probe"):
+    """同 missing_build_tool_keys()，但回傳印給人看的名稱。"""
+    return [BUILD_TOOLS[k] for k in missing_build_tool_keys(backend, msvc)]
+
+
+# ------------------------------------------------- 環境偵測（setup.py 的互動問題靠這些）
+def nvidia_gpu():
+    """有 NVIDIA 驅動就回傳第一張卡的名稱，否則 None。
+
+    用 nvidia-smi 而不是 lspci：驅動裝好就一定有這支程式（Windows 在 System32），
+    而 lspci 在精簡安裝的 Linux 上可能不存在。有卡不代表能編 CUDA——那要另外看 nvcc。
+    """
+    if not shutil.which("nvidia-smi"):
+        return None
+    out = _stdout(["nvidia-smi", "--query-gpu=name", "--format=csv,noheader"], timeout=20)
+    name = out.splitlines()[0].strip() if out else ""
+    return name or "NVIDIA GPU（nvidia-smi 沒回報型號）"
+
+
+def cuda_toolkit():
+    """CUDA Toolkit 的版本字串（例如 "12.4"）；沒裝回傳 None。"""
+    if not shutil.which("nvcc"):
+        return None
+    for line in _stdout(["nvcc", "--version"], timeout=20).splitlines():
+        if "release" in line:
+            part = line.split("release", 1)[1].strip()
+            return part.split(",")[0].strip() or None
+    return "（版本不明）"
+
+
+def gpu_names():
+    """盡量列出這台機器的 GPU 名稱（可能是空 list）。只用來顯示，不用來做決定。"""
+    nvidia = nvidia_gpu()
+    names = [nvidia] if nvidia else []
+    if NAME == "macos":
+        return names or ["Apple GPU（Metal）"]
+    if shutil.which("vulkaninfo"):
+        for line in _stdout(["vulkaninfo", "--summary"], timeout=30).splitlines():
+            if "deviceName" in line and "=" in line:
+                name = line.split("=", 1)[1].strip()
+                if name and "llvmpipe" not in name and name not in names:
+                    names.append(name)
+    return names
+
+
+def total_memory_gb():
+    """實體記憶體（GB，十進位）；問不到回傳 None。"""
+    if IS_WINDOWS:
+        class _MemoryStatus(ctypes.Structure):
+            _fields_ = [("dwLength", ctypes.c_ulong), ("dwMemoryLoad", ctypes.c_ulong),
+                        ("ullTotalPhys", ctypes.c_ulonglong), ("ullAvailPhys", ctypes.c_ulonglong),
+                        ("ullTotalPageFile", ctypes.c_ulonglong),
+                        ("ullAvailPageFile", ctypes.c_ulonglong),
+                        ("ullTotalVirtual", ctypes.c_ulonglong),
+                        ("ullAvailVirtual", ctypes.c_ulonglong),
+                        ("ullAvailExtendedVirtual", ctypes.c_ulonglong)]
+        status = _MemoryStatus()
+        status.dwLength = ctypes.sizeof(_MemoryStatus)
+        try:
+            if ctypes.windll.kernel32.GlobalMemoryStatusEx(ctypes.byref(status)):
+                return status.ullTotalPhys / 1e9
+        except OSError:
+            return None
+        return None
+    try:                                   # Linux 與 macOS 都支援這兩個 sysconf
+        return os.sysconf("SC_PHYS_PAGES") * os.sysconf("SC_PAGE_SIZE") / 1e9
+    except (OSError, ValueError):
+        return None
+
+
+def free_disk_gb(path="."):
+    """指定路徑所在磁碟的可用空間（GB，十進位）；問不到回傳 None。"""
+    try:
+        return shutil.disk_usage(str(path)).free / 1e9
+    except OSError:
+        return None
+
+
+PACKAGE_MANAGERS = {"linux": ("apt", "dnf", "pacman", "zypper"), "macos": ("brew",),
+                    "windows": ("winget",)}
+
+
+def package_manager():
+    """這台機器上找得到的套件管理器名稱；找不到回傳 None。
+
+    只用來決定「要印哪一種安裝指令」。lec 自己不裝任何系統套件。
+    """
+    for name in PACKAGE_MANAGERS.get(NAME, ()):
+        if shutil.which(name):
+            return name
+    return None
 
 
 # ---------------------------------------------------------------- 防休眠

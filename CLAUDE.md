@@ -20,6 +20,7 @@ python3 -m unittest tests.test_platform_parsers -v
 ./lec run 課名 --file samples/test8min.ogg   # 用內建 8 分鐘樣本跑完整流程
 ./lec run 課名 --transcribe-only         # 只轉錄，不載入 LLM
 python3 setup_engines.py whisper         # 只編譯 whisper.cpp
+python3 setup.py --dry-run --yes         # 互動式安裝：只印會做什麼，不編譯
 ```
 
 UI 的測試需要 `ui/backend/requirements.txt` 的 fastapi；沒安裝時 `tests/test_ui_backend_*.py` 會失敗，這不是程式壞掉。
@@ -30,7 +31,7 @@ UI 的測試需要 `ui/backend/requirements.txt` 的 fastapi；沒安裝時 `tes
 
 | | Claude（你） | Codex |
 |---|---|---|
-| 擁有 | `core/platform.py`、`core/devices.py`、`core/doctor.py`、`setup_engines.py`、`docs/platform-*.md`、平台相關測試與修復 | `core/cli.py`、`core/config.py`、`core/session.py`、`core/status.py`、`ui/`、UI API/schema、UI contract tests |
+| 擁有 | `core/platform.py`、`core/devices.py`、`core/doctor.py`、`setup.py`、`setup_engines.py`、`upgrade.py`、`linux_setup.sh`／`mac_setup.command`／`windows_setup.bat`、`docs/platform-*.md`、平台相關測試與修復 | `core/cli.py`、`core/config.py`、`core/session.py`、`core/status.py`、`ui/`、UI API/schema、UI contract tests |
 
 - Claude 的實作分支使用 `claude/<task-name>`。
 - 只改自己擁有的範圍。需要動到對方的檔案時，**停下來**，用 CROSS_AGENT_REQUEST 格式回報給使用者，不要自己改、也不要混進自己的 commit。
