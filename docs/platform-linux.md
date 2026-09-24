@@ -17,9 +17,14 @@
 ## GPU 後端
 
 - 預設 Vulkan（`DEFAULT_BACKEND["linux"] = "vulkan"`）。
-- `setup_engines.py` 會檢查 `glslc`、`libvulkan-dev`（用 `pkg-config --exists vulkan`
-  或 `VULKAN_SDK` 環境變數判斷）。
-- CUDA 需要 `nvcc`（`--backend cuda`）。
+- 編譯工具的判斷在 `core/platform.py::missing_build_tools()`：Vulkan 需要 `glslc` 與
+  `libvulkan-dev`（用 `pkg-config --exists vulkan` 或 `VULKAN_SDK` 環境變數判斷），
+  CUDA 需要 `nvcc`（`--backend cuda`），其他平台同一份邏輯。
+- `setup_engines.py`（編譯前）與 `lec doctor`（「編譯工具」那一行）共用這個函式，
+  兩邊不會給出不同答案。doctor 要檢查哪個後端，優先讀 `<引擎>/build/.lec-build`
+  （`setup_engines.py` 寫的編譯紀錄）裡的 `BACKEND=`，沒有紀錄才用平台預設。
+  doctor 缺工具只算**警告**：已經編好引擎、或改用官方預編譯檔的
+  人不需要編譯環境，不該因此讓 `lec doctor` 回傳 exit code 1。
 
 ## 防止休眠
 
@@ -54,6 +59,9 @@
 - `audio_backend()` / `engine_backend()` 在 `NAME == "linux"` 時的預設值
 - `spawn_kwargs()`、`kill_tree()` / `kill_now()` 的 POSIX 分支
 - `find_engine_bin()` 在一般（非 Visual Studio）build 佈局下的搜尋順序
+- `missing_build_tools()` 在 Linux 上對編譯器、`glslc`、`libvulkan-dev`、`nvcc` 的判斷
+  （`tests/test_platform_build_tools.py`）
+- `lec doctor` 的平台分支與「編譯工具」項目（`tests/test_doctor_platform.py`）
 
 ## 已知限制
 

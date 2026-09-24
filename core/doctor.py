@@ -104,6 +104,23 @@ def run(course=None, sets=(), mic=False):
             add(WARN, srv.name, f"版本 {head[:9]} 與 engines.lock 的 {want[:9]} 不同（setup_engines.py 會切回）")
         else:
             add(OK, srv.name, f"{b}" + (f"（{head[:9]}）" if head else ""))
+
+    # ---- 編譯工具鏈（判斷與 setup_engines.py 共用 P.missing_build_tools，兩邊不會不一致）
+    #      後端優先看 build stamp 記的「當初實際編譯用的後端」，沒有紀錄才用平台預設，
+    #      免得用 --backend cuda 編過的機器被提醒缺 Vulkan 的 glslc。
+    #      已經編好引擎或改用官方預編譯檔的人不需要編譯環境，所以缺工具只算警告。
+    built = P.built_backend(w.whisper_dir) or P.built_backend(l.llama_dir)
+    eng_backend = built or P.engine_backend()
+    msvc = P.find_msvc() if P.NAME == "windows" else None
+    where = f"{eng_backend} 後端（{'已編譯的後端' if built else '本平台預設'}）"
+    if msvc:
+        where += f"｜Visual Studio {msvc['version']}"
+    missing = P.missing_build_tools(eng_backend, msvc=msvc)
+    add(OK if not missing else WARN, "編譯工具",
+        f"{where}：齊全" if not missing else
+        f"{where}：缺少 {'、'.join(missing)}；已編好引擎或用預編譯檔可忽略，"
+        "要自己編譯請見 README 的安裝步驟")
+
     for label, path in (("whisper 模型", Path(cfg.whisper_model_path())),
                         (f"LLM 模型（{cfg['summary']['model']}）", Path(cfg.llm_model()["path"]))):
         if path.is_file():

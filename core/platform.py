@@ -1,6 +1,6 @@
 """平台差異集中在這裡：Linux（PulseAudio）、macOS（avfoundation）、Windows（dshow）。
 
-其他模組一律透過本檔取得錄音參數、裝置清單、防休眠、狀態資料夾與行程操作，
+其他模組一律透過本檔取得錄音參數、裝置清單、防休眠、狀態資料夾、行程操作與編譯工具鏈偵測，
 不要自己判斷作業系統。
 """
 import ctypes
@@ -174,6 +174,116 @@ def env_with_libs(binary, env=None):
     old = env.get(key)
     env[key] = os.pathsep.join(dirs + ([old] if old else []))
     return env
+
+
+# --------------------------------------------- 編譯工具鏈（setup_engines.py 與 lec doctor 共用）
+VC_TOOLS = "Microsoft.VisualStudio.Component.VC.Tools.x86.x64"
+BUILD_STAMP = ".lec-build"      # setup_engines.py 寫在 <引擎資料夾>/build/ 下的編譯紀錄
+
+
+def build_stamp_path(engine_dir):
+    return Path(engine_dir) / "build" / BUILD_STAMP
+
+
+def built_backend(engine_dir):
+    """從 build stamp 讀出這個引擎當初「實際用哪個後端編的」；讀不到就回傳 None。
+
+    lec doctor 用這個判斷該檢查哪些編譯工具：用 --backend cuda 編過的機器不該被提醒
+    缺 Vulkan 的 glslc。
+    """
+    try:
+        text = build_stamp_path(engine_dir).read_text(encoding="utf-8")
+    except OSError:
+        return None
+    for token in text.split():
+        if token.startswith("BACKEND="):
+            return token.split("=", 1)[1] or None
+    return None
+
+
+def _stdout(cmd, timeout=60):
+    """只取 stdout（vswhere 的 JSON 不能混進 stderr）；失敗回傳空字串。"""
+    try:
+        kw = {"creationflags": subprocess.CREATE_NO_WINDOW} if IS_WINDOWS else {}
+        r = subprocess.run([str(c) for c in cmd], capture_output=True, text=True,
+                           encoding="utf-8", errors="replace", timeout=timeout, **kw)
+        return (r.stdout or "").strip()
+    except (OSError, subprocess.TimeoutExpired):
+        return ""
+
+
+def find_msvc():
+    """用 vswhere 找「有裝 C++ 工具」的 Visual Studio；回傳 {version, path} 或 None。
+
+    只看 Program Files 下有沒有 Microsoft Visual Studio 資料夾不夠：只裝 VS Installer、
+    沒勾「使用 C++ 的桌面開發」時資料夾也存在，cmake 會退回 NMake 然後失敗。
+    """
+    import json
+    base = os.environ.get("ProgramFiles(x86)") or "C:/Program Files (x86)"
+    vswhere = Path(base) / "Microsoft Visual Studio" / "Installer" / "vswhere.exe"
+    if not vswhere.exists():
+        return None
+    raw = _stdout([vswhere, "-latest", "-products", "*", "-requires", VC_TOOLS,
+                   "-format", "json", "-utf8"])
+    try:
+        items = json.loads(raw or "[]")
+    except ValueError:
+        return None
+    if not items:
+        return None
+    return {"version": items[0].get("installationVersion", ""),
+            "path": items[0].get("installationPath", "")}
+
+
+def cxx_compiler():
+    """POSIX 上第一個找得到的 C++ 編譯器路徑；找不到回傳 None。"""
+    for name in ("c++", "clang++", "g++"):
+        found = shutil.which(name)
+        if found:
+            return found
+    return None
+
+
+def _has_vulkan_lib():
+    """libvulkan 的開發檔案在不在（VULKAN_SDK 或 pkg-config）。"""
+    if os.environ.get("VULKAN_SDK"):
+        return True
+    if not shutil.which("pkg-config"):
+        return False
+    try:
+        return subprocess.run(["pkg-config", "--exists", "vulkan"],
+                              capture_output=True).returncode == 0
+    except OSError:
+        return False
+
+
+def missing_build_tools(backend=None, msvc="probe"):
+    """編譯引擎需要、但這台電腦缺少的東西（中文名稱 list；空 list = 齊全）。
+
+    只看編譯器與後端 SDK，git / cmake 由呼叫端各自回報（setup_engines.py 直接中止，
+    lec doctor 列成獨立項目）。兩邊共用這裡，判斷才不會不一致。
+    msvc："probe"（預設）= Windows 上自己呼叫 find_msvc()；已經查過的話傳進來可省一次 vswhere。
+    """
+    backend = engine_backend(backend)
+    missing = []
+    if NAME == "windows":
+        if msvc == "probe":
+            msvc = find_msvc()
+        if not (shutil.which("cl") or msvc):
+            missing.append("Visual Studio 的「使用 C++ 的桌面開發」工作負載（MSVC 編譯器）")
+        if backend == "vulkan" and not (os.environ.get("VULKAN_SDK") or shutil.which("glslc")):
+            missing.append("Vulkan SDK")
+    else:
+        if not cxx_compiler():
+            missing.append("C++ 編譯器")
+        if backend == "vulkan":
+            if not shutil.which("glslc"):
+                missing.append("glslc")
+            if not _has_vulkan_lib():
+                missing.append("libvulkan-dev")
+    if backend == "cuda" and not shutil.which("nvcc"):
+        missing.append("CUDA Toolkit（nvcc）")
+    return missing
 
 
 # ---------------------------------------------------------------- 防休眠

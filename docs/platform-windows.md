@@ -132,6 +132,15 @@ Visual Studio 就退回 NMake，而一般 PowerShell 裡沒有 `nmake`／`cl`。
 
 ## doctor 訊息
 
+- `lec doctor` 會顯示一行「編譯工具」：後端、vswhere 找到的 Visual Studio 版本，
+  以及缺少的工具。後端優先讀 `<引擎>/build/.lec-build`（`setup_engines.py` 寫的編譯紀錄）
+  裡的 `BACKEND=`，沒有紀錄才用平台預設（Windows = Vulkan）——所以用
+  `--backend cuda` 編過的機器會檢查 `nvcc`，不會被提醒缺 Vulkan 的 `glslc`。判斷用的是
+  `core/platform.py::missing_build_tools()` / `find_msvc()`，跟 `setup_engines.py`
+  編譯前的前置檢查同一份，所以「doctor 說齊全但 setup_engines 說缺」這種不一致
+  不會發生。缺工具只算**警告**：已經編好引擎、或改用官方預編譯檔的人不需要編譯環境。
+  這一行目前只有 mock 測試（`tests/test_doctor_platform.py`），**還沒有在 Windows
+  實機上核對過 vswhere 的版本字串長相**。
 - `lec doctor` 對 Windows 的錄音來源錯誤，會透過 `devices.hint()` 提示
   「請確認已安裝 ffmpeg 並在 PATH 中」；`core/devices.py` 新增的
   `_permission_hint()` 對 dshow 也準備了「Access is denied」等常見拒絕字樣的
@@ -150,7 +159,9 @@ Visual Studio 就退回 NMake，而一般 PowerShell 裡沒有 `nmake`／`cl`。
    或只裝 Ninja + Developer Command Prompt）分別編譯 whisper.cpp / llama.cpp
    是否成功，`find_engine_bin()` 找到的路徑是否正確。
 5. Vulkan SDK / CUDA Toolkit 偵測邏輯（`VULKAN_SDK` 環境變數、`nvcc`）是否
-   跟實際安裝後的環境變數狀態一致。
+   跟實際安裝後的環境變數狀態一致，以及 `lec doctor` 的「編譯工具」那一行在
+   一般 PowerShell 與 Developer Command Prompt 下是否都顯示正確
+   （只有 CUDA 版實機跑過 `setup_engines.py`，doctor 這一行還沒）。
 6. 官方預編譯檔（README「Windows 預編譯檔」）搭配 `library_dirs()` /
    `env_with_libs()` 的 DLL 搜尋路徑是否真的能讓 `lec doctor` 找到並成功執行。
 
