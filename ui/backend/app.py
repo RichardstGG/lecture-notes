@@ -92,6 +92,10 @@ async def _session_events(
             previous = current
         except SessionStoreError as exc:
             yield _sse("error", exc.as_detail())
+        except OSError as exc:
+            yield _sse("error", SessionStoreError(
+                "session_unavailable", f"Unable to read session: {exc}",
+            ).as_detail())
         if await _wait_or_shutdown(interval, shutdown_event):
             break
 

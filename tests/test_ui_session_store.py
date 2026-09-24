@@ -1,13 +1,17 @@
 """Filesystem contract tests for UI session history and content."""
 import json
+import os
 import tempfile
+import threading
 import unittest
 from pathlib import Path
 from types import SimpleNamespace
+from unittest.mock import patch
 
 from tests import _pathfix  # noqa: F401
+from core.util import atomic_write
 from ui.backend.session_store import (SessionStore, SessionStoreError,
-                                      _configured_output_root)
+                                      _configured_output_root, _iso)
 
 
 class OutputRootTests(unittest.TestCase):
@@ -93,6 +97,72 @@ class SessionStoreTests(unittest.TestCase):
         self.assertEqual(detail["transcript"]["content"], "# Transcript\n")
         self.assertEqual(detail["notes"]["content"], "# Notes\n")
         self.assertEqual(detail["session"]["elapsed"], 123.4)
+
+    def test_get_survives_atomic_write_churn(self):
+        session = self.make_session()
+        finished = threading.Event()
+        failures = []
+
+        def write_status():
+            try:
+                for index in range(300):
+                    atomic_write(session / "status.json", json.dumps({
+                        "phase": "recording", "elapsed": index,
+                    }))
+            except OSError as exc:
+                failures.append(exc)
+            finally:
+                finished.set()
+
+        writer = threading.Thread(target=write_status)
+        writer.start()
+        try:
+            while not finished.is_set():
+                self.assertEqual(self.store.get(session.name)["session"]["id"], session.name)
+        finally:
+            writer.join()
+        self.assertEqual(failures, [])
+
+    def test_summary_skips_file_removed_between_listing_and_stat(self):
+        session = self.make_session()
+        disappearing = session / "stop"
+        disappearing.write_text("stop", encoding="utf-8")
+        real_stat = Path.stat
+        calls = 0
+
+        def stat(path, *args, **kwargs):
+            nonlocal calls
+            if path == disappearing:
+                calls += 1
+                if calls == 2:
+                    raise FileNotFoundError(disappearing)
+            return real_stat(path, *args, **kwargs)
+
+        with patch.object(Path, "stat", stat):
+            summary = self.store._summary(session)
+        self.assertEqual(summary["id"], session.name)
+        self.assertGreaterEqual(calls, 2)
+
+    def test_get_wraps_unexpected_filesystem_error(self):
+        session = self.make_session()
+        with patch.object(self.store, "_summary", side_effect=OSError("transient")):
+            with self.assertRaises(SessionStoreError) as ctx:
+                self.store.get(session.name)
+        self.assertEqual(ctx.exception.code, "session_unavailable")
+
+    def test_hidden_temporary_file_does_not_change_legacy_timestamps(self):
+        session = self.output / "legacy"
+        session.mkdir()
+        marker = session / "config.used.toml"
+        marker.write_text('[course]\nname = "legacy"\n', encoding="utf-8")
+        temporary = session / ".status.json.tmp"
+        temporary.write_text("{}", encoding="utf-8")
+        os.utime(marker, (1_700_000_000, 1_700_000_000))
+        os.utime(temporary, (1_800_000_000, 1_800_000_000))
+
+        summary = self.store.get(session.name)["session"]
+        self.assertEqual(summary["started_at"], _iso(1_700_000_000))
+        self.assertEqual(summary["updated_at"], _iso(1_700_000_000))
 
     def test_nested_sessions_use_unique_relative_path_ids(self):
         first = self.make_session("UNIXops/20260921")

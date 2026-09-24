@@ -130,10 +130,21 @@ class SessionStore:
 
     def _summary(self, path):
         status = _read_json(path / "status.json")
-        files = [item for item in path.iterdir() if item.is_file() and not item.is_symlink()]
-        timestamps = [item.stat().st_mtime for item in files]
-        newest = max(timestamps, default=path.stat().st_mtime)
-        oldest = min(timestamps, default=newest)
+        timestamps = []
+        for item in path.iterdir():
+            if item.name.startswith("."):
+                continue
+            try:
+                if item.is_file() and not item.is_symlink():
+                    timestamps.append(item.stat().st_mtime)
+            except FileNotFoundError:
+                # Atomic writes and deleted session files can disappear during a scan.
+                continue
+        if timestamps:
+            newest = max(timestamps)
+            oldest = min(timestamps)
+        else:
+            newest = oldest = path.stat().st_mtime
         recordings = list(path.glob("recording_*.ogg"))
         return {
             "id": path.relative_to(self.output_root).as_posix(),
@@ -203,13 +214,18 @@ class SessionStore:
         }
 
     def get(self, session_id):
-        path = self._session_dir(session_id)
-        return {
-            "api_version": 1,
-            "session": self._summary(path),
-            "transcript": self._content_file(path / "transcript.md"),
-            "notes": self._content_file(path / "notes.md"),
-        }
+        try:
+            path = self._session_dir(session_id)
+            return {
+                "api_version": 1,
+                "session": self._summary(path),
+                "transcript": self._content_file(path / "transcript.md"),
+                "notes": self._content_file(path / "notes.md"),
+            }
+        except OSError as exc:
+            raise SessionStoreError(
+                "session_unavailable", f"Unable to read session: {exc}",
+            ) from exc
 
     def path_for(self, session_id):
         """Resolve an existing safe session for fixed CLI operations."""
