@@ -401,6 +401,11 @@ extra_instructions = "本課程著重網路概念，重點請保留協定名稱�
 | `session.log`、`*-server.log` | 執行紀錄 |
 | `status.json`、`events.jsonl` | 給 UI 讀的狀態 |
 
+轉錄某一段連續失敗到重試用盡時，`transcript.md` 會留下
+`> ⚠ 轉錄失敗，hh:mm:ss–hh:mm:ss…` 標出哪一段沒有逐字稿（原因同時寫進 `session.log`，
+並計入 `status.json` 的 `errors`）。看到這個標記就表示那段音訊沒有進筆記，
+可以用 `recording_*.ogg` 自行回聽。
+
 ## 防止加入逐字稿以外的內容
 
 1. prompt 規定只能使用本段逐字稿；術語沒解釋就留空。
