@@ -3,6 +3,10 @@
 ffmpeg 持續把音訊以 raw PCM 送進來 → 以能量 VAD 在「停頓處」切段（12–30 秒）
 → 立即送 whisper-server → 以自然段落追加到 transcript.md，並產出 transcript.srt。
 只用 Python 標準函式庫。
+
+轉錄失敗的段落不會被默默丟掉：耗盡重試後丟出 TranscribeError，由 _worker 記成
+一個「缺口」——寫進 session.log、透過 status.error() 進 events.jsonl，並在
+transcript.md 留下看得見的標記。run() 的回傳值也會帶上缺口與 ffmpeg 結束代碼。
 """
 import array
 import math
@@ -32,7 +36,14 @@ FRAME_BYTES = FRAME_SAMPLES * 2
 HALLUCINATIONS = re.compile(
     r"(字幕|訂閱|點贊|點讚|按讚|感謝觀看|謝謝觀看|明鏡|Amara|請不吝|小鈴鐺|優優獨播)")
 END_PUNCT = "。！？!?.…"
+# transcript.md 裡標記「這段沒有逐字稿」的開頭；刻意不用 ## 與 `hh:mm:ss`，
+# 才不會被 summarize.py 的 HEADER_RE／STAMP_RE 當成小標題或時間錨點。
+GAP_MARK = "> ⚠ 轉錄失敗"
 ANY_PUNCT = END_PUNCT + "，、；：,;:「」『』（）()"
+
+
+class TranscribeError(Exception):
+    """一段音訊轉錄失敗，且已耗盡重試。"""
 
 
 def srt_ts(t):
@@ -185,6 +196,7 @@ class TranscriptWriter:
         self.para_len = 0
         self.next_section = 0.0
         self.sections = 0
+        self.gaps = 0
         self.recent = deque(maxlen=3)
         if self.md.tell() == 0:
             today = datetime.now().strftime("%Y-%m-%d")
@@ -256,6 +268,25 @@ class TranscriptWriter:
         self.srt.flush()
         return tail
 
+    def _end_paragraph(self):
+        """收掉目前段落，讓下一次寫入從新段落開始。"""
+        if self.para_len:
+            if self.prev_char not in END_PUNCT:
+                self.md.write("。")
+            self.md.write("\n")
+        self.para_len = 0
+        self.prev_char = "。"
+
+    def add_gap(self, start, end, reason):
+        """在逐字稿裡留下看得見的缺口。srt 不寫（沒有內容可當字幕）。
+
+        標記自成一段，後面空一行，免得下一段被 Markdown 併進這個引用區塊。"""
+        self._end_paragraph()
+        self.md.write(f"\n{GAP_MARK}，{hms(start)}–{hms(end)}"
+                      f"（{max(end - start, 0):.1f} 秒）沒有逐字稿：{reason}\n")
+        self.md.flush()
+        self.gaps += 1
+
     def close(self):
         if self.para_len and self.prev_char not in END_PUNCT:
             self.md.write("。")
@@ -316,7 +347,10 @@ def _multipart(fields, file_field, file_path):
 
 def transcribe_request(server, wav_path, prompt):
     """送到 whisper-server /inference。以位元組讀取回應：
-    whisper 輸出可能含被拆開的 UTF-8 字元，交給 decode_srt 修復。"""
+    whisper 輸出可能含被拆開的 UTF-8 字元，交給 decode_srt 修復。
+
+    重試用盡仍失敗就丟 TranscribeError。以前這裡回傳空字串，呼叫端分不出
+    「這段真的沒人說話」與「這段轉錄失敗」，整段音訊會無聲消失。"""
     body, ctype = _multipart({"response_format": "srt", "temperature": "0.0",
                               "prompt": prompt}, "file", wav_path)
     req = urllib.request.Request(f"{server}/inference", data=body,
@@ -332,7 +366,7 @@ def transcribe_request(server, wav_path, prompt):
             err = str(e)
         log(f"  ⚠ 轉錄請求失敗（第 {attempt + 1} 次）: {err[:200]}")
         time.sleep(2)
-    return ""
+    raise TranscribeError(err[:200])
 
 
 class Transcriber:
@@ -362,7 +396,9 @@ class Transcriber:
         self.proc = None
         self.abort = False
         self.stopping = False
-        self.stats = {"audio": 0.0, "work": 0.0}
+        self.stats = {"audio": 0.0, "work": 0.0, "lost": 0.0}
+        self.gaps = []              # 未轉錄的段落；也會寫進 transcript.md
+        self.ffmpeg_returncode = None
         self.tmp_dir = self.session / ".tmp"
         self.tmp_dir.mkdir(exist_ok=True)
 
@@ -412,12 +448,28 @@ class Transcriber:
             if voiced < self.min_voiced:
                 log(f"{hms(start)} 略過 {dur:4.1f}s（幾乎無人聲）")
                 continue
+            t0 = time.time()
             try:
                 tail = self._process(start, pcm, dur, cut_wall, tail)
             except Exception as e:                      # 單段失敗不影響後續
-                log(f"  ⚠ {hms(start)} 這段處理失敗：{e}")
-                if self.status:
-                    self.status.error(f"轉錄 {hms(start)} 失敗：{e}")
+                self.stats["work"] += time.time() - t0
+                self._record_gap(start, dur, e)
+
+    def _record_gap(self, start, dur, err):
+        """這段音訊沒有進逐字稿：log、status.error、transcript.md 三邊都留紀錄。"""
+        reason = str(err).strip() or err.__class__.__name__
+        reason = " ".join(reason.split())[:200]
+        self.gaps.append({"start": round(start, 1), "seconds": round(dur, 1),
+                          "reason": reason})
+        self.stats["lost"] += dur
+        log(f"  ✖ {hms(start)} 這段未轉錄（{dur:.1f}s）：{reason}")
+        try:
+            self.writer.add_gap(start, start + dur, reason)
+        except OSError as e:
+            log(f"  ⚠ 缺口標記寫入失敗：{e}")
+        if self.status:
+            self.status.error(
+                f"轉錄 {hms(start)} 失敗，{dur:.0f} 秒音訊未轉錄：{reason}")
 
     def _process(self, start, pcm, dur, cut_wall, tail):
         wav_path = self.tmp_dir / "chunk.wav"
@@ -488,7 +540,9 @@ class Transcriber:
                 last_update = now
                 self._update(elapsed=round(self.chunker.total_seconds, 1), queue=self.q.qsize())
         rc = self.proc.wait()
-        if rc not in (0, 255, -2, -15) and not self.stopping:
+        self.ffmpeg_returncode = rc
+        ffmpeg_failed = rc not in (0, 255, -2, -15) and not self.stopping
+        if ffmpeg_failed:
             log(f"⚠ ffmpeg 結束代碼 {rc}（音源或音檔可能有問題）")
             if self.status:
                 self.status.error(f"ffmpeg 結束代碼 {rc}")
@@ -502,6 +556,19 @@ class Transcriber:
         wav.unlink(missing_ok=True)
         total = self.chunker.pos * FRAME_MS / 1000
         speed = self.stats["audio"] / self.stats["work"] if self.stats["work"] else 0
-        log(f"✔ 轉錄完成：總長 {hms(total)}，轉錄 {speed:.1f}x 速")
+        lost = round(self.stats["lost"], 1)
+        if self.gaps:
+            log(f"⚠ 轉錄結束：總長 {hms(total)}，轉錄 {speed:.1f}x 速；"
+                f"有 {len(self.gaps)} 段共 {lost:.0f} 秒沒有轉錄成功，"
+                f"逐字稿中已標出缺口")
+        elif ffmpeg_failed and total == 0:
+            log(f"✖ 沒有讀到任何音訊（ffmpeg 結束代碼 {rc}），逐字稿是空的")
+        elif ffmpeg_failed:
+            log(f"⚠ 轉錄結束：總長 {hms(total)}，轉錄 {speed:.1f}x 速；"
+                f"但 ffmpeg 結束代碼 {rc}，錄音或音檔可能不完整")
+        else:
+            log(f"✔ 轉錄完成：總長 {hms(total)}，轉錄 {speed:.1f}x 速")
         self._update(elapsed=round(total, 1), queue=0, sections_total=self.writer.sections)
-        return {"duration": total, "speed": speed, "aborted": self.abort}
+        return {"duration": total, "speed": speed, "aborted": self.abort,
+                "gaps": list(self.gaps), "lost_seconds": lost,
+                "ffmpeg_returncode": rc, "ffmpeg_failed": ffmpeg_failed}
