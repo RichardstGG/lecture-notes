@@ -7,10 +7,28 @@ from contextlib import redirect_stdout
 from pathlib import Path
 
 from tests import _pathfix  # noqa: F401
-from ui.quality_eval import ROOT, SAMPLE, evaluate, main, measure, normalized, read_entries
+from ui.quality_eval import (ROOT, SAMPLE, evaluate, main, measure,
+                             model_sha256, normalized, read_entries, sha256)
 
 
 class QualityEvalTests(unittest.TestCase):
+    def test_model_hashes_use_configured_files_and_report_missing_files(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            whisper = root / "whisper.bin"
+            summary = root / "summary.gguf"
+            whisper.write_bytes(b"whisper model")
+            summary.write_bytes(b"summary model")
+            config = {
+                "whisper": {"model": "test", "models": {"test": {"path": str(whisper)}}},
+                "summary": {"model": "test"},
+                "models": {"test": {"path": str(summary)}},
+            }
+            self.assertEqual(model_sha256(config, "whisper"), sha256(whisper))
+            self.assertEqual(model_sha256(config, "summary"), sha256(summary))
+            summary.unlink()
+            self.assertIsNone(model_sha256(config, "summary"))
+
     def test_normalized_handles_case_spacing_and_width_without_rewriting_words(self):
         self.assertEqual(normalized("ＦＯＲＫ、檔案 描述子"), "fork檔案描述子")
         self.assertNotEqual(normalized("MUTIX"), normalized("Multics"))
@@ -69,9 +87,11 @@ class QualityEvalTests(unittest.TestCase):
             (session / "transcript.md").write_text("## 00:00:00\nUNIX。\n", encoding="utf-8")
             report = evaluate(session)
 
-        self.assertEqual(report["schema_version"], 2)
+        self.assertEqual(report["schema_version"], 3)
         self.assertEqual(report["settings"]["whisper_model"], "large-v3-turbo")
         self.assertEqual(len(report["config_sha256"]), 64)
+        self.assertIn("whisper_model_sha256", report)
+        self.assertIn("summary_model_sha256", report)
         self.assertEqual(report["current"]["sections"], ["00:00:00"])
         self.assertEqual(report["current"]["summary_status"]["ok"], 0)
         self.assertIsNone(report["audio_matches_sample"])
@@ -116,6 +136,10 @@ class QualityEvalTests(unittest.TestCase):
         self.assertEqual(report["term_changes"]["PID"]["current_transcript_count"], 2)
         self.assertEqual(report["term_changes"]["父行程"]["current_transcript"], True)
         self.assertEqual(len(report["baseline_config_sha256"]), 64)
+        self.assertEqual(report["baseline_whisper_model_sha256"],
+                         report["whisper_model_sha256"])
+        self.assertEqual(report["baseline_summary_model_sha256"],
+                         report["summary_model_sha256"])
         self.assertTrue(report["baseline_audio_matches_sample"])
         self.assertFalse(report["audio_matches_sample"])
 

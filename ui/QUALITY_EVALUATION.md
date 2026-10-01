@@ -9,7 +9,7 @@ git rev-parse HEAD
 git -C whisper.cpp rev-parse HEAD
 git -C llama.cpp rev-parse HEAD
 ./lec models
-/usr/bin/time -p ./lec run courses/examples/example.toml \
+time ./lec run courses/examples/example.toml \
   --file samples/test8min.ogg \
   --set paths.output_root=/tmp/lecture-notes-quality-baseline \
   --set system.inhibit_sleep=false
@@ -22,14 +22,19 @@ python3 -m ui.quality_eval "$session_dir" \
 The run prints `<session-name>`. On systems where `/tmp` is unsuitable, choose
 another local output directory. The session retains `config.used.toml`,
 `transcript.md`, `transcript.srt`, `notes.jsonl`, `notes.md`, status and logs. The
-JSON report includes hashes of the audio, script, effective config, prompt and
-transcript; Whisper and summary settings; section labels; summary statuses and
+JSON report includes hashes of the audio, script, effective config, prompt,
+configured model files (when present), and transcript; Whisper and summary
+settings; section labels; summary statuses and
 model response time; and the same measurements for `samples/expected/`. Record
-the three Git revisions and the `/usr/bin/time` result with the report. Engine
+the three Git revisions and the `time` result with the report. Engine
 binaries may be built from different revisions than their current checkouts, so
 verify their build provenance separately if an exact engine comparison matters.
-The report format is `schema_version: 2`. Compared with version 1, curated term
-results add occurrence counts, and `--baseline` adds optional comparison fields.
+The report format is `schema_version: 3`. Compared with version 2, it includes
+`whisper_model_sha256` and `summary_model_sha256`; with `--baseline`, the
+corresponding `baseline_*_model_sha256` fields are also present. A missing model
+file yields `null`, so inspect both hashes before attributing a difference to a
+configuration change. Version 2 added curated term occurrence counts and
+`--baseline` comparison fields.
 The script count is a reading guide because the recording may depart from its
 written script.
 
@@ -56,6 +61,40 @@ both `config.used.toml` files and model provenance before claiming a controlled
 experiment. The prompt hash reflects the file at report time; a prior run does
 not store a prompt snapshot. The curated list now includes `父行程` and `子行程`
 so the sample's process terminology can be compared directly.
+
+## Controlled glossary comparison
+
+The public example already supplies Whisper terms and a Multics glossary entry.
+To isolate one additional summary glossary mapping, create two temporary course
+files. Leave the Whisper terms unchanged; a glossary-only change should not
+alter the transcript. Use the same engine binaries and model files for both runs.
+
+```bash
+mkdir -p /tmp/lecture-notes-ab/{control,candidate}
+cp courses/examples/example.toml /tmp/lecture-notes-ab/control.toml
+cp /tmp/lecture-notes-ab/control.toml /tmp/lecture-notes-ab/candidate.toml
+cat >> /tmp/lecture-notes-ab/candidate.toml <<'TOML'
+"檔案描述子" = { means = "開啟檔案的整數識別碼", aka = ["檔案描述值", "檔案描述數值"] }
+TOML
+time ./lec run /tmp/lecture-notes-ab/control.toml --file samples/test8min.ogg \
+  --set paths.output_root=/tmp/lecture-notes-ab/control \
+  --set system.inhibit_sleep=false
+time ./lec run /tmp/lecture-notes-ab/candidate.toml --file samples/test8min.ogg \
+  --set paths.output_root=/tmp/lecture-notes-ab/candidate \
+  --set system.inhibit_sleep=false
+```
+
+Locate each session as in the example above, then use `--baseline`. Confirm
+`audio_matches_sample` and `baseline_audio_matches_sample` are true, both model
+hash pairs match, and `settings_delta` contains only `summary_glossary`. Check
+the full `config.used.toml` files as well, since local settings can affect the
+run. Keep the report and a timestamped manual review outside Git. For each
+changed note point or term, record the section time, exact A/B wording, the
+supporting transcript span, whether the audio supports it, and classify the
+change as transcription, terminology correction, segmentation/summary,
+omission, unsupported claim, emphasis, or factual reversal. Use the script as
+a topic guide, not a verbatim transcript. Repeat summary runs before drawing
+conclusions from a small difference at nonzero temperature.
 
 ## Read the report in four passes
 
