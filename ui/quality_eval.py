@@ -38,6 +38,20 @@ def sha256(path):
     return digest.hexdigest()
 
 
+def model_sha256(config, kind):
+    """Hash the configured model file when it is available on this machine."""
+    if kind == "whisper":
+        model = config["whisper"]["model"]
+        value = config["whisper"]["models"][model]["path"]
+    else:
+        model = config["summary"]["model"]
+        value = config["models"][model]["path"]
+    path = Path(value).expanduser()
+    if not path.is_absolute():
+        path = ROOT / path
+    return sha256(path) if path.is_file() else None
+
+
 def audio_matches_sample(session, sample_audio, sample_hash):
     """Return None when a session's input audio can no longer be checked."""
     status_path = session / "status.json"
@@ -186,12 +200,14 @@ def evaluate(session, sample=SAMPLE, baseline=None):
         prompt_path = ROOT / prompt_path
     settings = quality_settings(config)
     report = {
-        "schema_version": 2,
+        "schema_version": 3,
         "sample_audio_sha256": sample_hash,
         "audio_matches_sample": audio_matches_sample(session, sample_audio, sample_hash),
         "script_sha256": sha256(script_path),
         "config_sha256": sha256(config_path),
         "summary_prompt_sha256": sha256(prompt_path) if prompt_path.is_file() else None,
+        "whisper_model_sha256": model_sha256(config, "whisper"),
+        "summary_model_sha256": model_sha256(config, "summary"),
         "settings": settings,
         "current": measure(session, script),
         "expected_reference": measure(sample / "expected", script),
@@ -206,6 +222,8 @@ def evaluate(session, sample=SAMPLE, baseline=None):
         baseline_terms = baseline_result["terms"]
         report["baseline"] = baseline_result
         report["baseline_config_sha256"] = sha256(baseline_config_path)
+        report["baseline_whisper_model_sha256"] = model_sha256(baseline_config, "whisper")
+        report["baseline_summary_model_sha256"] = model_sha256(baseline_config, "summary")
         report["baseline_audio_matches_sample"] = audio_matches_sample(
             baseline, sample_audio, sample_hash,
         )
