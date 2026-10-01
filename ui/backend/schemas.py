@@ -130,6 +130,7 @@ class GlossaryEntry(BaseModel):
 class CourseVocabulary(BaseModel):
     terms: list[str] = Field(default_factory=list)
     glossary: list[GlossaryEntry] = Field(default_factory=list)
+    ignored_terms: list[str] = Field(default_factory=list)
 
 
 class CourseDetail(BaseModel):
@@ -157,6 +158,36 @@ class CourseVocabularyUpdateRequest(BaseModel):
 
     terms: list[str] = Field(default_factory=list)
     glossary: list[GlossaryEntry] = Field(default_factory=list)
+    ignored_terms: list[str] | None = None
+
+
+class TermVariant(BaseModel):
+    term: str
+    count: int = Field(ge=1)
+    sections: list[str]
+    similarity: float = Field(ge=0, le=1)
+
+
+class TermCandidate(BaseModel):
+    term: str
+    count: int = Field(ge=1)
+    sections: list[str]
+    explain: str
+    asr_original: str
+    verified: bool
+    flags: list[str]
+    variants: list[TermVariant]
+
+
+class TermCandidatesResponse(BaseModel):
+    schema_version: int = 1
+    session: str
+    course: str | None = None
+    course_id: str | None = None
+    course_file: str | None = None
+    whisper_prompt_base: str = ""
+    defined: dict[str, int]
+    candidates: list[TermCandidate]
 
 
 class SessionSummary(BaseModel):

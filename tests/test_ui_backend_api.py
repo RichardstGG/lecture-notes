@@ -49,6 +49,8 @@ class StubClient:
         self.device_save_calls = []
         self.device_test_calls = []
         self.doctor_calls = []
+        self.term_calls = []
+        self.term_result = None
 
     async def status(self):
         if self.error:
@@ -88,6 +90,17 @@ class StubClient:
             raise self.error
         self.doctor_calls.append((course, mic))
         return self.doctor_result
+
+    async def term_candidates(self, session_path, course=None):
+        if self.error:
+            raise self.error
+        self.term_calls.append((Path(session_path), course))
+        return self.term_result or {
+            "schema_version": 1, "session": str(session_path), "course": "測試課",
+            "course_id": "測試課", "course_file": None,
+            "whisper_prompt_base": "", "defined": {"terms": 0, "glossary": 0},
+            "candidates": [],
+        }
 
     async def stop(self, force=False):
         if self.error:
@@ -325,6 +338,7 @@ class BackendApiTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(response.status_code, 200)
         self.assertEqual(response.json()["vocabulary"], {
             "terms": ["UNIX", "POSIX"],
+            "ignored_terms": [],
             "glossary": [{
                 "term": "Multics", "means": "分時系統", "aka": ["MUTIX"],
             }],
@@ -333,6 +347,17 @@ class BackendApiTests(unittest.IsolatedAsyncioTestCase):
             tomllib.loads(target.read_text(encoding="utf-8"))["whisper"]["terms"],
             ["UNIX", "POSIX"],
         )
+        response = await self.request(
+            "PUT", "/api/v1/courses/測試課/vocabulary", json={
+                "terms": ["UNIX", "POSIX"],
+                "glossary": [{"term": "Multics", "means": "分時系統", "aka": ["MUTIX"]}],
+                "ignored_terms": ["小考", "自主學習"],
+            },
+        )
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(response.json()["vocabulary"]["ignored_terms"], ["小考", "自主學習"])
+        self.assertEqual(tomllib.loads(target.read_text(encoding="utf-8"))["summary"]["ignored_terms"],
+                         ["小考", "自主學習"])
 
     async def test_frontend_origin_allows_vocabulary_put(self):
         response = await self.request(
@@ -493,6 +518,19 @@ class BackendApiTests(unittest.IsolatedAsyncioTestCase):
         shutdown.set()
         with self.assertRaises(StopAsyncIteration):
             await asyncio.wait_for(anext(stream), timeout=0.1)
+
+    async def test_term_candidates_safe_path_and_cli_errors(self):
+        session = self.make_session()
+        route = f"/api/v1/sessions/{session.name}/term-candidates"
+        response = await self.request("GET", route)
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(response.json()["candidates"], [])
+        self.assertEqual(self.client.term_calls, [(session.resolve(), None)])
+        response = await self.request("GET", "/api/v1/sessions/missing/term-candidates")
+        self.assertEqual(response.status_code, 404)
+        self.client.error = LecCommandError("cli_failed", "failed", exit_code=1)
+        response = await self.request("GET", route)
+        self.assertEqual(response.status_code, 502)
 
     async def test_sessions_list_and_detail(self):
         session = self.make_session()

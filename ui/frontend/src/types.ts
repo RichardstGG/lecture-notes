@@ -134,6 +134,29 @@ export interface GlossaryEntry {
 export interface CourseVocabulary {
   terms: string[];
   glossary: GlossaryEntry[];
+  ignored_terms?: string[];
+}
+
+export interface TermCandidate {
+  term: string;
+  count: number;
+  sections: string[];
+  explain: string;
+  asr_original: string;
+  verified: boolean;
+  flags: string[];
+  variants: { term: string; count: number; sections: string[]; similarity: number }[];
+}
+
+export interface TermCandidatesResponse {
+  schema_version: number;
+  session: string;
+  course: string | null;
+  course_id: string | null;
+  course_file: string | null;
+  whisper_prompt_base: string;
+  defined: { terms: number; glossary: number };
+  candidates: TermCandidate[];
 }
 
 export interface SessionSummary {

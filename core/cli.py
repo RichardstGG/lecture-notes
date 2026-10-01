@@ -23,6 +23,7 @@ EPILOG = """範例：
   lec summarize outputs/測試課_20260918                 補做尚未完成的總結
   lec summarize outputs/測試課_20260918 --redo 00:05:13
   lec summarize outputs/測試課_20260918 --redo all --model qwen3-4b
+  lec terms outputs/測試課_20260918 --json      列出尚未定義的術語候選
   lec config 計算機概論                      印出合併後的設定
   lec courses / lec models / lec new 課名 / lec status / lec stop
   lec devices [--test 編號] [--save 編號]    列出 / 測試 / 設定麥克風
@@ -145,6 +146,49 @@ def cmd_summarize(args):
     if args.redo and args.redo != "all" and not re.fullmatch(r"\d{2}:\d{2}:\d{2}", args.redo):
         die("--redo 需要 hh:mm:ss（逐字稿小標題時間）或 all")
     return OfflineSummary(cfg, d, args.redo).run()
+
+
+def cmd_terms(args):
+    from .terms import collect, exclude, cluster, rank
+    if not 0 <= args.similarity <= 1:
+        die("--similarity 必須介於 0 和 1")
+    d = Path(args.session).expanduser().resolve()
+    if not d.is_dir():
+        die(f"找不到資料夾：{d}")
+    if args.course:
+        course = args.course
+    else:
+        used = d / "config.used.toml"
+        course = C.load_toml(used).get("course", {}).get("name") if used.is_file() else None
+        if not course:
+            try:
+                m = re.search(r"^course:\s*(.+)$", (d / "transcript.md").read_text(encoding="utf-8"), re.M)
+                course = m.group(1).strip() if m else None
+            except OSError:
+                pass
+    if course and C.course_path(course)[0].is_file():
+        cfg, _ = _load(args, course_arg=course)
+    elif (d / "config.used.toml").is_file():
+        cfg, _ = _load(args, course_file=d / "config.used.toml")
+    else:
+        cfg, _ = _load(args)
+    ignored = cfg["summary"].get("ignored_terms", [])
+    candidates = rank(cluster(exclude(collect(d / "notes.jsonl"), cfg, ignored), args.similarity))
+    result = {"schema_version": 1, "session": str(d), "course": cfg.course_name,
+              "course_id": cfg.course_file.stem if cfg.course_file and cfg.course_file.parent == C.COURSES_DIR else None,
+              "whisper_prompt_base": cfg["whisper"]["prompt"],
+              "course_file": str(cfg.course_file) if cfg.course_file else None,
+              "defined": {"terms": len(cfg["whisper"].get("terms", [])),
+                          "glossary": len(cfg.glossary())}, "candidates": candidates}
+    if args.json:
+        print(json.dumps(result, ensure_ascii=False, indent=2))
+    else:
+        for item in candidates:
+            variants = "、".join(v["term"] for v in item["variants"])
+            print(f"{item['term']} ×{item['count']}" + (f"（近似：{variants}）" if variants else ""))
+        if not candidates:
+            print("沒有尚未定義的術語候選")
+    return 0
 
 
 def cmd_config(args):
@@ -371,6 +415,14 @@ def main(argv=None):
     p.add_argument("--redo", metavar="hh:mm:ss|all", help="重做某一段（小標題時間）或全部")
     _add_overrides(p)
     p.set_defaults(func=cmd_summarize)
+
+    p = sub.add_parser("terms", help="列出課堂筆記中尚未定義的術語候選")
+    p.add_argument("session", help="輸出資料夾（含 notes.jsonl）")
+    p.add_argument("--course", help="指定用於排除已定義術語的課程")
+    p.add_argument("--similarity", type=float, default=0.5,
+                   help="近似術語分組門檻（0 到 1，預設 0.5）")
+    p.add_argument("--json", action="store_true")
+    p.set_defaults(func=cmd_terms)
 
     p = sub.add_parser("config", help="印出合併後生效的設定")
     p.add_argument("course", nargs="?")

@@ -61,6 +61,27 @@ class LecClientTests(unittest.IsolatedAsyncioTestCase):
             await client.models()
         self.assertEqual(ctx.exception.code, "cli_invalid_response")
 
+    async def test_term_candidates_uses_fixed_cli_command(self):
+        client = self.write_script("""
+            import json, sys
+            assert sys.argv[1:] == ["terms", sys.argv[2], "--json"]
+            print(json.dumps({"schema_version": 1, "session": sys.argv[2],
+                "course": "測試課", "course_id": None, "course_file": None,
+                "defined": {"terms": 0, "glossary": 0}, "candidates": []}))
+        """)
+        result = await client.term_candidates(self.root)
+        self.assertEqual(result["candidates"], [])
+
+    async def test_term_candidates_rejects_incomplete_candidate(self):
+        client = self.write_script("""
+            import json
+            print(json.dumps({"schema_version": 1, "session": "x", "defined":
+                {"terms": 0, "glossary": 0}, "candidates": [{"term": "missing count"}]}))
+        """)
+        with self.assertRaises(LecCommandError) as ctx:
+            await client.term_candidates(self.root)
+        self.assertEqual(ctx.exception.code, "cli_invalid_response")
+
     async def test_devices_uses_json_contract(self):
         client = self.write_script("""
             import json, sys

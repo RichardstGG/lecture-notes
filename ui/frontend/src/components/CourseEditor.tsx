@@ -161,6 +161,7 @@ export function CourseEditor({ courses, onChanged, onError, onMessage }: Props) 
     if (!detail || !vocabularyDirty || invalidGlossary) return;
     const vocabulary: CourseVocabulary = {
       terms: uniqueLines(termsText),
+      ...(detail.vocabulary?.ignored_terms ? { ignored_terms: detail.vocabulary.ignored_terms } : {}),
       glossary: glossary.map<GlossaryEntry>((entry) => ({
         term: entry.term.trim(),
         means: entry.means.trim(),

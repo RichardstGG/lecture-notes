@@ -7,6 +7,10 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
+from pydantic import ValidationError
+
+from .schemas import TermCandidatesResponse
+
 
 @dataclass
 class LecCommandError(Exception):
@@ -112,6 +116,19 @@ class LecClient:
                     "cli_invalid_response", "lec models returned an invalid response",
                 )
         return result
+
+    async def term_candidates(self, session_path, course=None):
+        args = ["terms", str(Path(session_path).resolve()), "--json"]
+        if course:
+            args.extend(("--course", course))
+        result = await self.run_json(*args)
+        try:
+            validated = TermCandidatesResponse.model_validate(result)
+        except ValidationError as exc:
+            raise LecCommandError("cli_invalid_response", "lec terms returned an invalid response") from exc
+        if validated.schema_version != 1 or not {"terms", "glossary"} <= validated.defined.keys():
+            raise LecCommandError("cli_invalid_response", "lec terms returned an invalid response")
+        return validated.model_dump()
 
     async def devices(self):
         result = await self.run_json("devices", "--json")

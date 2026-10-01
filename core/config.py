@@ -262,6 +262,9 @@ class Config:
         if self.data["whisper"]["model"] not in self.data["whisper"].get("models", {}):
             errs.append(f"whisper.model = {self.data['whisper']['model']!r} 未在 [whisper.models.*] 定義")
         glossary = self.data.get("summary", {}).get("glossary", {})
+        ignored = self.data.get("summary", {}).get("ignored_terms", [])
+        if not isinstance(ignored, list) or not all(isinstance(term, str) and term.strip() for term in ignored):
+            errs.append("summary.ignored_terms 應為非空字串陣列")
         if not isinstance(glossary, dict):
             errs.append("summary.glossary 應為 TOML 表格")
         else:
