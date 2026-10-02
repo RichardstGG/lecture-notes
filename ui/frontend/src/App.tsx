@@ -5,9 +5,10 @@ import { CourseEditor } from "./components/CourseEditor";
 import { MarkdownPane } from "./components/MarkdownPane";
 import { LocalSettings } from "./components/LocalSettings";
 import { RunPanel } from "./components/RunPanel";
+import { TermCandidates } from "./components/TermCandidates";
 import { useLectureData } from "./hooks/useLectureData";
 import { zhTW as t } from "./i18n/zh-TW";
-import type { SessionDetail } from "./types";
+import type { SessionDetail, TermCandidatesResponse } from "./types";
 import { formatClock, formatDate, formatDuration, progressFor, sessionIdFromPath } from "./utils";
 
 const phaseLabels: Record<string, string> = {
@@ -18,7 +19,8 @@ const phaseLabels: Record<string, string> = {
 
 export default function App() {
   const data = useLectureData();
-  const [tab, setTab] = useState<"transcript" | "notes">("transcript");
+  const [tab, setTab] = useState<"transcript" | "notes" | "terms">("transcript");
+  const [termData, setTermData] = useState<TermCandidatesResponse>();
   const [actionMessage, setActionMessage] = useState<string>();
   const [summarizing, setSummarizing] = useState(false);
   const [phaseStartedAt, setPhaseStartedAt] = useState(() => Date.now());
@@ -27,6 +29,18 @@ export default function App() {
     data.status.session, data.sessions.map((session) => session.id),
   );
   const visibleDetail: SessionDetail | undefined = data.detail;
+
+  useEffect(() => {
+    setTermData(undefined);
+    if (!data.selectedId) return;
+    let active = true;
+    void api.termCandidates(data.selectedId).then((result) => {
+      if (active) setTermData(result);
+    }).catch((reason) => {
+      if (active) data.setError(reason instanceof Error ? reason.message : "無法讀取術語候選");
+    });
+    return () => { active = false; };
+  }, [data.selectedId, data.setError]);
   const phase = data.status.status?.phase;
   const progress = progressFor(data.status.status);
   const phaseKey = data.status.running ? (phase || data.status.mode || "running") : "idle";
@@ -122,11 +136,15 @@ export default function App() {
             <div className="tabs">
               <button className={tab === "transcript" ? "active" : ""} onClick={() => setTab("transcript")}>{t.transcript}</button>
               <button className={tab === "notes" ? "active" : ""} onClick={() => setTab("notes")}>{t.notes}</button>
+              <button className={tab === "terms" ? "active" : ""} onClick={() => setTab("terms")}>術語候選 <small>{termData?.candidates.length ?? "…"}</small></button>
             </div>
-            {visibleDetail && <span className="updated">更新於 {formatDate(visibleDetail[tab].updated_at)}</span>}
+            {visibleDetail && tab !== "terms" && <span className="updated">更新於 {formatDate(visibleDetail[tab].updated_at)}</span>}
           </div>
           <div className="document-pane">
-            <MarkdownPane content={visibleDetail?.[tab].content} empty={tab === "transcript" ? t.emptyTranscript : t.emptyNotes} />
+            {tab === "terms" ? (termData ? <TermCandidates data={termData} onError={data.setError} onMessage={setActionMessage} onApplied={() => {
+              if (data.selectedId) void api.termCandidates(data.selectedId).then(setTermData).catch(() => undefined);
+            }} /> : <p>正在載入術語候選…</p>) :
+              <MarkdownPane content={visibleDetail?.[tab].content} empty={tab === "transcript" ? t.emptyTranscript : t.emptyNotes} />}
           </div>
         </section>
 

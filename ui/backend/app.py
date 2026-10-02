@@ -19,7 +19,7 @@ from .schemas import (ApiErrorResponse, AudioUploadResponse, CourseCreateRequest
                       DoctorResponse, HealthResponse, ModelInventoryResponse,
                       ProcessActionResponse, RunStartRequest,
                       RuntimeStatusResponse, SessionDetail, SessionSummary,
-                      StopRequest, SummarizeRequest)
+                      StopRequest, SummarizeRequest, TermCandidatesResponse)
 from .session_store import SessionStore, SessionStoreError
 from .settings import BackendSettings
 from .upload_store import AudioUploadStore, UploadStoreError
@@ -280,7 +280,7 @@ def create_app(
     ):
         return await request.app.state.course_store.update_vocabulary(
             request.app.state.lec_client, course_id, payload.terms,
-            [entry.model_dump() for entry in payload.glossary],
+            [entry.model_dump() for entry in payload.glossary], payload.ignored_terms,
         )
 
     @app.post(
@@ -324,6 +324,16 @@ def create_app(
     )
     async def session_list(request: Request):
         return request.app.state.sessions.list()
+
+    @app.get(
+        "/api/v1/sessions/{session_id:path}/term-candidates",
+        response_model=TermCandidatesResponse,
+        responses={400: {"model": ApiErrorResponse}, 404: {"model": ApiErrorResponse},
+                   502: {"model": ApiErrorResponse}, 503: {"model": ApiErrorResponse}},
+    )
+    async def session_term_candidates(session_id: str, request: Request):
+        path = request.app.state.sessions.path_for(session_id)
+        return await request.app.state.lec_client.term_candidates(path)
 
     @app.post(
         "/api/v1/sessions/{session_id:path}/summarize",

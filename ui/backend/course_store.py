@@ -55,8 +55,10 @@ def _normalize_vocabulary(data):
         return None
 
     terms = whisper.get("terms", [])
+    ignored = summary.get("ignored_terms", [])
     glossary = summary.get("glossary", {})
     if (not isinstance(terms, list) or not all(isinstance(term, str) for term in terms)
+            or not isinstance(ignored, list) or not all(isinstance(term, str) for term in ignored)
             or not isinstance(glossary, dict)):
         return None
 
@@ -75,7 +77,10 @@ def _normalize_vocabulary(data):
         else:
             return None
         entries.append({"term": term, "means": means, "aka": aliases})
-    return {"terms": terms, "glossary": entries}
+    result = {"terms": terms, "glossary": entries}
+    if "ignored_terms" in summary:
+        result["ignored_terms"] = ignored
+    return result
 
 
 def _table_name(line):
@@ -166,6 +171,24 @@ def _replace_glossary(content, glossary):
     if comments and not comments.endswith(("\n", "\r")):
         comments += newline
     return content[:body_start] + comments + rendered + content[section_end:]
+
+
+def _replace_ignored(content, ignored):
+    newline = "\r\n" if "\r\n" in content else "\n"
+    assignment = "ignored_terms = " + json.dumps(ignored, ensure_ascii=False) + newline
+    span = _table_span(content, "summary")
+    if span is None:
+        separator = "" if not content or content.endswith(("\n", "\r")) else newline
+        return content + separator + newline + "[summary]" + newline + assignment
+    _start, body_start, section_end = span
+    match = re.search(r"(?m)^[ \t]*ignored_terms[ \t]*=", content[body_start:section_end])
+    if match:
+        start = body_start + match.start()
+        end = _assignment_end(content, start, section_end, "summary", "ignored_terms")
+        return content[:start] + assignment + content[end:]
+    before = content[:section_end]
+    separator = "" if before.endswith(("\n", "\r")) else newline
+    return before + separator + assignment + content[section_end:]
 
 
 def _clean_vocabulary(terms, glossary):
@@ -317,7 +340,7 @@ class CourseStore:
             await self._replace_locked(client, path, content, info)
         return self.get(course_id)
 
-    async def update_vocabulary(self, client, course_id, terms, glossary):
+    async def update_vocabulary(self, client, course_id, terms, glossary, ignored_terms=None):
         path = self.path_for(course_id)
         clean_terms, clean_glossary = _clean_vocabulary(terms, glossary)
         self._regular_file(path)
@@ -337,6 +360,11 @@ class CourseStore:
             updated = _replace_glossary(
                 _replace_terms(content, clean_terms), clean_glossary,
             )
+            if ignored_terms is not None:
+                if (not isinstance(ignored_terms, list)
+                        or not all(isinstance(term, str) and term.strip() for term in ignored_terms)):
+                    raise CourseStoreError("invalid_course_vocabulary", "Ignored terms must be non-empty strings", 400)
+                updated = _replace_ignored(updated, list(dict.fromkeys(term.strip() for term in ignored_terms)))
             self._validate_content(updated)
             await self._replace_locked(client, path, updated, info)
         return self.get(course_id)

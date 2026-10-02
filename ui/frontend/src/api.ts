@@ -13,6 +13,7 @@ import type {
   RuntimeStatus,
   SessionDetail,
   SessionSummary,
+  TermCandidatesResponse,
 } from "./types";
 
 export class ApiError extends Error {
@@ -122,6 +123,9 @@ export const api = {
   ),
   sessions: () => request<SessionSummary[]>("/api/v1/sessions"),
   session: (id: string) => request<SessionDetail>(`/api/v1/sessions/${encodeURIComponent(id)}`),
+  termCandidates: (id: string) => request<TermCandidatesResponse>(
+    `/api/v1/sessions/${encodeURIComponent(id)}/term-candidates`,
+  ),
   start: (payload: RunRequest) => request<ActionResponse>("/api/v1/runs", {
     method: "POST",
     body: JSON.stringify(payload),
