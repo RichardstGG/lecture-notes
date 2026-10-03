@@ -1,10 +1,13 @@
 import { useEffect, useRef, useState } from "react";
+import { QRCodeSVG } from "qrcode.react";
 import { api } from "../api";
 import type { SharingStatus } from "../types";
 
 export function SharePanel({ selectedId }: { selectedId?: string }) {
   const [status, setStatus] = useState<SharingStatus>();
   const [host, setHost] = useState("");
+  const [allInterfaces, setAllInterfaces] = useState(true);
+  const [networkHint, setNetworkHint] = useState("正在偵測預設路由介面…");
   const [port, setPort] = useState("8766");
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string>();
@@ -12,6 +15,20 @@ export function SharePanel({ selectedId }: { selectedId?: string }) {
   const revision = useRef(0);
   const acting = useRef(false);
   const pollError = useRef(false);
+
+  useEffect(() => {
+    let disposed = false;
+    void api.sharingNetwork().then((value) => {
+      if (disposed) return;
+      setHost((current) => current || value.advertise_host || "");
+      setNetworkHint(value.advertise_host
+        ? `預設路由介面：${value.interface} · ${value.advertise_host}`
+        : value.error || "請手動輸入本機可連線的 IPv4。");
+    }).catch(() => {
+      if (!disposed) setNetworkHint("無法偵測預設路由，請手動輸入本機可連線的 IPv4。");
+    });
+    return () => { disposed = true; };
+  }, []);
 
   useEffect(() => {
     let disposed = false;
@@ -49,7 +66,8 @@ export function SharePanel({ selectedId }: { selectedId?: string }) {
     setCopied(false);
     try {
       const value = open
-        ? await api.openSharing(selectedId!, host.trim(), Number(port))
+        ? await api.openSharing(selectedId!, allInterfaces ? "0.0.0.0" : host.trim(), Number(port),
+          allInterfaces ? host.trim() : undefined)
         : await api.closeSharing();
       setStatus(value);
     } catch (reason) {
@@ -77,6 +95,11 @@ export function SharePanel({ selectedId }: { selectedId?: string }) {
     {error && <p className="inline-error" role="alert">{error}</p>}
     {status?.active ? <>
       <p><strong>分享場次：</strong>{status.session_id}（不隨目前檢視場次切換）</p>
+      <p>監聽位址：{status.bind_host || status.advertise_host || "指定內網 IP"}</p>
+      {status.url && <figure className="share-qr">
+        <QRCodeSVG value={status.url} size={224} marginSize={4} level="M" role="img" aria-label="參與者連結 QR code" />
+        <figcaption>掃描加入這場分享（需與主機網路互通）</figcaption>
+      </figure>}
       <label>參與者連結<input readOnly value={status.url || ""} onFocus={(event) => event.target.select()} /></label>
       <button className="button secondary" onClick={() => void copyLink()}>{copied ? "已複製" : "複製連結"}</button>
       <p>在線 {status.participants.filter((person) => person.online).length} / 20 · 約 30 秒未收到更新即顯示離線</p>
@@ -85,10 +108,12 @@ export function SharePanel({ selectedId }: { selectedId?: string }) {
       </li>)}</ul>
     </> : <form className="share-form" onSubmit={(event) => { event.preventDefault(); void change(true); }}>
       <p>將分享目前選定場次：{selectedId || "請先選擇場次"}</p>
-      <label>本機內網 IPv4<input placeholder="例如 192.168.1.10" value={host} onChange={(event) => setHost(event.target.value)} required /></label>
+      <label className="share-listen-option"><input type="checkbox" checked={allInterfaces} onChange={(event) => setAllInterfaces(event.target.checked)} />監聽所有 IPv4 介面（0.0.0.0）</label>
+      <small>{networkHint}</small>
+      <label>連結使用的本機 IPv4<input placeholder="例如 192.168.1.10" value={host} onChange={(event) => setHost(event.target.value)} required /></label>
       <label>分享埠<input type="number" min="1024" max="65535" value={port} onChange={(event) => setPort(event.target.value)} required /></label>
       <button className="button primary" disabled={busy || !selectedId || !status}>{busy ? "啟動中…" : "開啟分享"}</button>
-      <small>使用與參與者同一內網的本機 IP；主控服務仍只開放於 127.0.0.1。</small>
+      <small>連結與 QR code 使用上方 IP。選取所有介面時，分享埠會開放於所有 IPv4 網路介面；主控仍只在 127.0.0.1。</small>
     </form>}
   </section>;
 }

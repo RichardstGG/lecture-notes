@@ -222,12 +222,21 @@ export interface ApiErrorEnvelope {
 }
 
 
+export interface SharingNetwork {
+  api_version: number;
+  interface?: string | null;
+  advertise_host?: string | null;
+  error?: string | null;
+}
+
 export interface SharingStatus {
   api_version: number;
   active: boolean;
   session_id?: string;
   url?: string;
   max_online?: number;
+  bind_host?: string;
+  advertise_host?: string;
   error?: string;
   participants: { id: string; nickname: string; online: boolean }[];
 }

@@ -268,6 +268,7 @@ class ShareOpenRequest(BaseModel):
 
     session_id: str = Field(min_length=1, max_length=1024)
     host: str = Field(min_length=1, max_length=15)
+    advertise_host: str | None = Field(default=None, min_length=1, max_length=15)
     port: int = Field(default=8766, ge=1024, le=65535, strict=True)
 
 
@@ -284,4 +285,13 @@ class ShareStatus(BaseModel):
     session_id: str | None = None
     url: str | None = None
     max_online: int | None = None
+    bind_host: str | None = None
+    advertise_host: str | None = None
+    error: str | None = None
+
+
+class SharingNetwork(BaseModel):
+    api_version: int = API_VERSION
+    interface: str | None = None
+    advertise_host: str | None = None
     error: str | None = None

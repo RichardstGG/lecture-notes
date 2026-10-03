@@ -14,6 +14,7 @@ import type {
   SessionDetail,
   SessionSummary,
   SharingStatus,
+  SharingNetwork,
   TermCandidatesResponse,
 } from "./types";
 
@@ -86,9 +87,10 @@ async function uploadAudio(file: File): Promise<AudioUpload> {
 }
 
 export const api = {
+  sharingNetwork: () => request<SharingNetwork>("/api/v1/sharing/network"),
   sharing: () => request<SharingStatus>("/api/v1/sharing"),
-  openSharing: (session_id: string, host: string, port: number) => request<SharingStatus>(
-    "/api/v1/sharing/open", { method: "POST", body: JSON.stringify({ session_id, host, port }) },
+  openSharing: (session_id: string, host: string, port: number, advertise_host?: string) => request<SharingStatus>(
+    "/api/v1/sharing/open", { method: "POST", body: JSON.stringify({ session_id, host, port, advertise_host }) },
   ),
   closeSharing: () => request<SharingStatus>(
     "/api/v1/sharing/close", { method: "POST", body: "{}" },
