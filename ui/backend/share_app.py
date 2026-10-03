@@ -19,7 +19,7 @@ class JoinRequest(BaseModel):
     nickname: str = Field(min_length=1, max_length=40)
 
 
-def create_share_app(room, authority):
+def create_share_app(room, authority, *, all_interfaces=False):
     app = FastAPI(docs_url=None, redoc_url=None, openapi_url=None)
 
     @app.exception_handler(ShareError)
@@ -30,7 +30,13 @@ def create_share_app(room, authority):
     @app.middleware('http')
     async def boundary(request, call_next):
         origin = request.headers.get('origin')
-        if request.headers.get('host') != authority or (origin and origin != f'http://{authority}'):
+        host = request.headers.get('host')
+        authorities = {authority}
+        if all_interfaces and request.scope.get('server'):
+            # Uvicorn supplies the accepted socket's local address, not a client header.
+            local_host, local_port = request.scope['server']
+            authorities.add(f'{local_host}:{local_port}')
+        if host not in authorities or (origin and origin != f'http://{host}'):
             return JSONResponse({'error': {'code': 'invalid_origin', 'message': '不允許此來源。'}}, status_code=403)
         if not room.active:
             return JSONResponse({'error': {'code': 'share_closed', 'message': '分享已關閉。'}}, status_code=410)

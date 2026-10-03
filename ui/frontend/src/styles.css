@@ -318,3 +318,11 @@ input:focus, select:focus, textarea:focus { border-color: #5a806b; box-shadow: 0
 .share-form { display: grid; gap: 8px; max-width: 620px; }
 .share-roster { list-style: none; padding: 0; max-height: 240px; overflow-y: auto; }
 .share-roster li { display: flex; justify-content: space-between; gap: 16px; padding: 8px 0; border-bottom: 1px solid #e2eae7; }
+
+.share-card .share-listen-option { display: flex; align-items: center; gap: 10px; }
+.share-card .share-listen-option input { width: auto; }
+.share-qr { margin: 16px 0; }
+.share-qr svg { width: 224px; max-width: 100%; height: auto; background: white; }
+.share-qr figcaption { margin-top: 8px; color: #486459; }
+
+.share-card .card-title .button { width: auto; min-width: 96px; height: auto; white-space: nowrap; }

@@ -19,10 +19,12 @@ from .schemas import (ApiErrorResponse, AudioUploadResponse, CourseCreateRequest
                       DeviceSelectionRequest, DeviceTestResponse,
                       DoctorResponse, HealthResponse, ModelInventoryResponse,
                       ProcessActionResponse, RunStartRequest,
-                      RuntimeStatusResponse, SessionDetail, SessionSummary, ShareOpenRequest, ShareStatus,
+                      RuntimeStatusResponse, SessionDetail, SessionSummary,
+                      ShareOpenRequest, ShareStatus, SharingNetwork,
                       StopRequest, SummarizeRequest, TermCandidatesResponse)
 from .session_store import SessionStore, SessionStoreError
 from .share_runtime import ShareRuntime
+from .share_network import sharing_network
 from .sharing import ShareError
 from .settings import BackendSettings
 from .upload_store import AudioUploadStore, UploadStoreError
@@ -197,11 +199,17 @@ def create_app(
         response.headers["Cache-Control"] = "no-store"
         return sharing.status()
 
+    @app.get("/api/v1/sharing/network", response_model=SharingNetwork)
+    async def sharing_network_hint(request: Request, response: Response):
+        check_share_control(request)
+        response.headers["Cache-Control"] = "no-store"
+        return await sharing_network()
+
     @app.post("/api/v1/sharing/open", response_model=ShareStatus, response_model_exclude_none=True)
     async def sharing_open(payload: ShareOpenRequest, request: Request, response: Response):
         check_share_control(request)
         response.headers["Cache-Control"] = "no-store"
-        return await sharing.open(payload.session_id, payload.host, payload.port)
+        return await sharing.open(payload.session_id, payload.host, payload.port, payload.advertise_host)
 
     @app.post("/api/v1/sharing/close", response_model=ShareStatus, response_model_exclude_none=True)
     async def sharing_close(request: Request, response: Response):

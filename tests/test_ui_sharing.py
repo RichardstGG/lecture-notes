@@ -16,6 +16,7 @@ from ui.backend.settings import BackendSettings
 from ui.backend.share_app import COOKIE, create_share_app
 from ui.backend.share_runtime import ShareRuntime, validate_address
 from ui.backend.sharing import MAX_VISITORS, ShareError, ShareRoom
+from ui.backend.share_network import sharing_network, _ip_json
 
 
 class SharingTests(unittest.IsolatedAsyncioTestCase):
@@ -206,7 +207,7 @@ class SharingTests(unittest.IsolatedAsyncioTestCase):
         async with httpx.AsyncClient(transport=httpx.ASGITransport(app=app),
                                      base_url='http://127.0.0.1:8765') as client:
             self.assertFalse((await client.get('/api/v1/sharing')).json()['active'])
-            for host in ('0.0.0.0', '127.0.0.1', '8.8.8.8', 'localhost'):
+            for host in ('127.0.0.1', '8.8.8.8', 'localhost'):
                 response = await client.post('/api/v1/sharing/open', json={
                     'session_id': 'course/first', 'host': host, 'port': 8766,
                 })
@@ -270,10 +271,92 @@ class SharingTests(unittest.IsolatedAsyncioTestCase):
             self.assertFalse(runtime.status()['active'])
             await runtime.close()
 
+    async def test_default_route_hint_uses_lowest_metric_and_preferred_source(self):
+        route_data = [
+            {'dev': 'eth1', 'metric': 600},
+            {'dev': 'eth0', 'metric': 100, 'prefsrc': '192.168.1.3'},
+        ]
+        addresses = [{'addr_info': [
+            {'family': 'inet', 'scope': 'global', 'local': '192.168.1.2'},
+            {'family': 'inet', 'scope': 'global', 'local': '192.168.1.3'},
+        ]}]
+        with patch('ui.backend.share_network._ip_json', side_effect=[route_data, addresses]) as ip:
+            result = await sharing_network()
+        self.assertEqual(result['advertise_host'], '192.168.1.3')
+        self.assertEqual(result['interface'], 'eth0')
+        self.assertEqual(ip.call_args_list[1].args, ('addr', 'show', 'dev', 'eth0'))
+
+    async def test_missing_route_tool_and_no_route_offer_manual_fallback(self):
+        for side_effect, return_value in ((FileNotFoundError(), None), (None, []),
+                                          (ValueError('invalid JSON'), None)):
+            with patch('ui.backend.share_network._ip_json', side_effect=side_effect,
+                       return_value=return_value):
+                result = await sharing_network()
+            self.assertIsNone(result['advertise_host'])
+            self.assertIn('手動', result['error'])
+        runtime = ShareRuntime(self.store)
+        with patch('ui.backend.share_runtime.sharing_network', return_value=result):
+            with self.assertRaises(ShareError) as error:
+                await runtime.open('course/first', '0.0.0.0', 8766)
+        self.assertEqual(error.exception.code, 'invalid_advertise_host')
+        self.assertFalse(runtime.status()['active'])
+
+    def test_route_query_uses_fixed_argv_without_shell(self):
+        import subprocess
+        with patch('ui.backend.share_network.subprocess.run',
+                   return_value=subprocess.CompletedProcess([], 0, '[]')) as run:
+            self.assertEqual(_ip_json('route', 'show', 'default'), [])
+        self.assertEqual(run.call_args.args[0], ['ip', '-j', '-4', 'route', 'show', 'default'])
+        self.assertNotIn('shell', run.call_args.kwargs)
+        self.assertEqual(run.call_args.kwargs['timeout'], 2)
+
+    async def test_network_hint_is_local_control_only(self):
+        app = create_app(settings=BackendSettings(self.root, output_root=self.root))
+        async with httpx.AsyncClient(transport=httpx.ASGITransport(app=app),
+                                     base_url='http://127.0.0.1:8765') as client:
+            with patch('ui.backend.app.sharing_network', return_value={
+                'api_version': 1, 'interface': 'eth0', 'advertise_host': '192.168.1.2',
+            }):
+                response = await client.get('/api/v1/sharing/network')
+            self.assertEqual(response.json()['interface'], 'eth0')
+            self.assertEqual(response.headers['cache-control'], 'no-store')
+            response = await client.get('/api/v1/sharing/network', headers={'Host': 'evil.example'})
+            self.assertEqual(response.status_code, 403)
+        self.assertEqual((await self.client().get('/api/v1/sharing/network')).status_code, 404)
+
+    async def test_wildcard_accepts_two_local_addresses_and_rejects_forged_host(self):
+        probe = socket.socket()
+        probe.bind(('127.0.0.1', 0))
+        port = probe.getsockname()[1]
+        probe.close()
+        runtime = ShareRuntime(self.store)
+        try:
+            with patch('ui.backend.share_runtime.sharing_network', return_value={
+                'advertise_host': '192.168.1.2', 'interface': 'eth0',
+            }):
+                status = await runtime.open('course/first', '0.0.0.0', port)
+            self.assertEqual(runtime.sock.getsockname()[0], '0.0.0.0')
+            self.assertTrue(status['url'].startswith(f'http://192.168.1.2:{port}/#'))
+            self.assertEqual(status['bind_host'], '0.0.0.0')
+            invitation = status['url'].split('#')[1]
+            for host in ('127.0.0.1', '127.0.0.2'):
+                async with httpx.AsyncClient(base_url=f'http://{host}:{port}', trust_env=False) as client:
+                    response = await client.post('/share/v1/join', json={
+                        'invitation': invitation, 'nickname': host,
+                    }, headers={'Origin': f'http://{host}:{port}'})
+                    self.assertEqual(response.status_code, 200)
+                    self.assertEqual((await client.get('/share/v1/snapshot')).status_code, 200)
+                    self.assertEqual((await client.get('/api/v1/sharing')).status_code, 404)
+                    self.assertEqual((await client.get('/', headers={'Host': 'evil.example'})).status_code, 403)
+                    self.assertEqual((await client.get('/', headers={'Origin': 'http://evil.example'})).status_code, 403)
+            self.assertEqual(len(runtime.status()['participants']), 2)
+        finally:
+            await runtime.close()
+
     def test_private_ipv4_only(self):
-        for host in ('10.1.2.3', '172.16.1.2', '172.31.255.254', '192.168.1.2'):
+        for host in ('0.0.0.0', '10.1.2.3', '172.16.1.2', '172.31.255.254', '192.168.1.2'):
             validate_address(host, 8766)
-        for host in ('0.0.0.0', '127.0.0.1', '::1', '169.254.1.2', '172.32.0.1', '8.8.8.8', 'example.com'):
+        for host in ('127.0.0.1', '::1', '169.254.1.2', '172.32.0.1', '8.8.8.8', 'example.com'):
             with self.assertRaises(ShareError):
                 validate_address(host, 8766)
         for port in (0, 1023, 65536):
