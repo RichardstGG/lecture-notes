@@ -4,6 +4,7 @@ export type Phase =
   | "recording"
   | "transcribing"
   | "summarizing"
+  | "diarizing"
   | "finishing"
   | "done"
   | "failed"
@@ -34,6 +35,7 @@ export interface RuntimeStatus {
   course?: string;
   session?: string;
   mode?: string;
+  work_type?: "lecture" | "meeting" | string;
   status?: SessionStatus;
   [key: string]: unknown;
 }

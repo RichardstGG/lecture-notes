@@ -7,6 +7,7 @@ import { LocalSettings } from "./components/LocalSettings";
 import { SharePanel } from "./components/SharePanel";
 import { RunPanel } from "./components/RunPanel";
 import { TermCandidates } from "./components/TermCandidates";
+import { MeetingWorkbench } from "./components/MeetingWorkbench";
 import { useLectureData } from "./hooks/useLectureData";
 import { zhTW as t } from "./i18n/zh-TW";
 import type { SessionDetail, TermCandidatesResponse } from "./types";
@@ -14,12 +15,13 @@ import { formatClock, formatDate, formatDuration, progressFor, sessionIdFromPath
 
 const phaseLabels: Record<string, string> = {
   starting: "啟動中", loading: "載入模型", recording: "錄音中",
-  transcribing: "轉錄中", summarizing: "整理筆記", finishing: "收尾中",
+  transcribing: "轉錄中", summarizing: "整理筆記", diarizing: "辨識發言者", finishing: "收尾中",
   done: "已完成", failed: "失敗", aborted: "已中止",
 };
 
 export default function App() {
   const data = useLectureData();
+  const [workbench, setWorkbench] = useState<"lecture" | "meeting">("lecture");
   const [tab, setTab] = useState<"transcript" | "notes" | "terms">("transcript");
   const [termData, setTermData] = useState<TermCandidatesResponse>();
   const [actionMessage, setActionMessage] = useState<string>();
@@ -90,23 +92,33 @@ export default function App() {
     <aside className="sidebar">
       <div className="brand"><div className="brand-mark"><Icon name="wave" /></div><div><strong>{t.brand}</strong><span>{t.brandSubtitle}</span></div></div>
       <nav>
-        <a className="active" href="#live"><Icon name="wave" />課堂工作台</a>
-        <a href="#history"><Icon name="history" />歷史紀錄</a>
-        <a href="#courses"><Icon name="book" />課程設定</a>
-        <a href="#local-settings"><Icon name="mic" />本機設定</a>
+        <button className={workbench === "lecture" ? "active" : ""} onClick={() => setWorkbench("lecture")}><Icon name="wave" />課堂工作台</button>
+        <button className={workbench === "meeting" ? "active" : ""} onClick={() => setWorkbench("meeting")}><Icon name="mic" />會議工作台</button>
+        {workbench === "lecture" && <>
+          <a href="#history"><Icon name="history" />歷史紀錄</a>
+          <a href="#courses"><Icon name="book" />課程設定</a>
+          <a href="#local-settings"><Icon name="mic" />本機設定</a>
+        </>}
       </nav>
       <div className="privacy-note"><span>LOCAL</span><p>錄音與筆記只保存在這台電腦。</p></div>
     </aside>
 
     <main>
       <header className="topbar">
-        <div><p className="eyebrow">WORKSPACE</p><h1>課堂工作台</h1></div>
+        <div><p className="eyebrow">WORKSPACE</p><h1>{workbench === "lecture" ? "課堂工作台" : "會議工作台"}</h1></div>
         <div className={`connection ${data.connected ? "online" : "offline"}`}><i />{data.connected ? "本機服務已連線" : "正在重新連線"}</div>
       </header>
 
       {(data.error || actionMessage) && <div className={data.error ? "notice error" : "notice"}>
         <span>{data.error || actionMessage}</span><button onClick={() => { data.setError(undefined); setActionMessage(undefined); }}>關閉</button>
       </div>}
+
+      {data.status.running && <div className="cross-workbench-status" role="status">
+        <span>背景工作進行中：{data.status.work_type === "meeting" ? "會議" : "課堂"} · {data.status.course || data.status.session || "未命名工作"} · {phaseLabels[phase || ""] || phase || "處理中"}</span>
+        <button type="button" onClick={() => setWorkbench(data.status.work_type === "meeting" ? "meeting" : "lecture")}>回到工作台</button>
+      </div>}
+
+      {workbench === "meeting" ? <MeetingWorkbench runtime={data.status} /> : <>
 
       <section className={`hero ${data.status.running ? "running" : "idle"}`} id="live">
         <div className="hero-heading">
@@ -183,6 +195,7 @@ export default function App() {
         onError={data.setError}
         onMessage={setActionMessage}
       />
+      </>}
     </main>
   </div>;
 }
