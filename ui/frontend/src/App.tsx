@@ -118,7 +118,7 @@ export default function App() {
         <button type="button" onClick={() => setWorkbench(data.status.work_type === "meeting" ? "meeting" : "lecture")}>回到工作台</button>
       </div>}
 
-      {workbench === "meeting" ? <MeetingWorkbench runtime={data.status} /> : <>
+      {workbench === "meeting" ? <MeetingWorkbench runtime={data.status} sessions={data.sessions} /> : <>
 
       <section className={`hero ${data.status.running ? "running" : "idle"}`} id="live">
         <div className="hero-heading">

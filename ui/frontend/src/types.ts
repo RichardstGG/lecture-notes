@@ -164,6 +164,7 @@ export interface TermCandidatesResponse {
 export interface SessionSummary {
   id: string;
   course?: string;
+  work_type?: "lecture" | "meeting" | string;
   started_at: string;
   updated_at: string;
   phase?: Phase;
@@ -174,6 +175,7 @@ export interface SessionSummary {
   has_transcript: boolean;
   has_notes: boolean;
   has_recording: boolean;
+  has_speaker_transcript?: boolean;
 }
 
 export interface ContentFile {
@@ -187,6 +189,7 @@ export interface SessionDetail {
   session: SessionSummary;
   transcript: ContentFile;
   notes: ContentFile;
+  speaker_transcript?: ContentFile;
 }
 
 export interface ContentEvent {
@@ -235,6 +238,7 @@ export interface SharingStatus {
   api_version: number;
   active: boolean;
   session_id?: string;
+  work_type?: "lecture" | "meeting" | string;
   url?: string;
   max_online?: number;
   bind_host?: string;

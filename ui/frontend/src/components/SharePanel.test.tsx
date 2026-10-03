@@ -71,4 +71,13 @@ describe("SharePanel", () => {
     expect(screen.getByDisplayValue(active.url + "-new")).toBeTruthy();
   });
 
+  it("labels meeting sharing as two transcripts and keeps the existing open flow", async () => {
+    vi.mocked(api.openSharing).mockResolvedValue({ ...active, work_type: "meeting", session_id: "meetings/design" });
+    render(<SharePanel selectedId="meetings/design" workType="meeting" />);
+    expect(screen.getByText(/原逐字稿與帶發言者逐字稿/)).toBeTruthy();
+    await waitFor(() => expect(screen.getByRole("button", { name: "開啟分享" }).hasAttribute("disabled")).toBe(false));
+    fireEvent.click(screen.getByRole("button", { name: "開啟分享" }));
+    await waitFor(() => expect(api.openSharing).toHaveBeenCalledWith("meetings/design", "0.0.0.0", 8766, "192.168.1.2"));
+  });
+
 });

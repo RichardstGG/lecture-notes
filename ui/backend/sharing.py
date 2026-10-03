@@ -38,7 +38,8 @@ class ShareRoom:
         self.visitors = {}
         self.cached = None
         self.cached_at = float('-inf')
-        self.snapshot()  # Validate the fixed session before publishing a link.
+        initial = self.snapshot()  # Validate the fixed session before publishing a link.
+        self.work_type = initial['work_type']
 
     def require_active(self):
         if not self.active:
@@ -109,19 +110,28 @@ class ShareRoom:
             # Never forward local paths or internal errors to the LAN.
             raise ShareError('content_unavailable', '目前無法讀取分享內容，請稍後重試。', 503) from None
         session = detail['session']
+        work_type = session.get('work_type') or 'lecture'
+        if work_type not in {'lecture', 'meeting'}:
+            raise ShareError('unsupported_work_type', '此場次類型尚不能分享。', 422)
         transcript = detail['transcript']
-        notes = detail['notes']
-        digest = hashlib.sha256((transcript['content'] + '\0' + notes['content']).encode()).hexdigest()[:16]
+        secondary = detail.get('speaker_transcript') if work_type == 'meeting' else detail['notes']
+        if secondary is None:
+            raise ShareError('content_unavailable', '目前無法讀取分享內容，請稍後重試。', 503)
+        digest = hashlib.sha256((transcript['content'] + '\0' + secondary['content']).encode()).hexdigest()[:16]
         self.cached = {
             'api_version': 1,
+            'work_type': work_type,
             'course': session.get('course'),
             'phase': session.get('phase'),
             'transcript': transcript,
-            'notes': notes,
             'version': digest,
             'version_label': '目前版本',
             'captured_at': datetime.now(timezone.utc).isoformat(),
             'poll_seconds': POLL_SECONDS,
         }
+        if work_type == 'meeting':
+            self.cached['speaker_transcript'] = secondary
+        else:
+            self.cached['notes'] = secondary
         self.cached_at = now
         return self.cached

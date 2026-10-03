@@ -1,6 +1,7 @@
 import { useState } from "react";
-import type { RuntimeStatus } from "../types";
+import type { RuntimeStatus, SessionSummary } from "../types";
 import { formatDuration } from "../utils";
+import { SharePanel } from "./SharePanel";
 
 type PreviewStage = "ready" | "recording" | "diarizing" | "done";
 
@@ -19,14 +20,18 @@ const previewSpeakers = [
 
 interface Props {
   runtime: RuntimeStatus;
+  sessions?: SessionSummary[];
 }
 
-export function MeetingWorkbench({ runtime }: Props) {
+export function MeetingWorkbench({ runtime, sessions = [] }: Props) {
   const [name, setName] = useState("");
   const [speakers, setSpeakers] = useState(10);
   const [stage, setStage] = useState<PreviewStage>("ready");
   const [showShort, setShowShort] = useState(false);
   const [resultTab, setResultTab] = useState<"raw" | "speakers">("speakers");
+  const [selectedMeetingId, setSelectedMeetingId] = useState("");
+  const meetingSessions = sessions.filter((session) => session.work_type === "meeting");
+  const selectedMeeting = meetingSessions.find((session) => session.id === selectedMeetingId) || meetingSessions[0];
   const prominent = previewSpeakers.filter((speaker) => speaker.seconds >= 30 && Number.parseFloat(speaker.share) >= 2);
   const short = previewSpeakers.filter((speaker) => speaker.seconds < 30 || Number.parseFloat(speaker.share) < 2);
   const isBusy = runtime.running;
@@ -88,6 +93,16 @@ export function MeetingWorkbench({ runtime }: Props) {
         <div className="meeting-transcript">{previewSpeakers.slice(0, 4).map((speaker, index) =>
           <p key={speaker.id}><time>[00:0{index + 1}:12.000–00:0{index + 1}:18.000]</time> <strong>{speaker.id}:</strong> {speaker.text}</p>)}</div>
       </>}
+    </section>
+
+    <section className="meeting-card">
+      <div className="meeting-card-heading"><div><p className="eyebrow">LAN SHARING</p><h2>分享會議逐字稿</h2></div></div>
+      <p className="meeting-help">選擇真實會議場次後，可用現有內網唯讀分享提供原逐字稿與帶發言者逐字稿。示範資料不會對外分享。</p>
+      <label className="meeting-share-selection"><span>分享場次</span><select value={selectedMeeting?.id || ""} onChange={(event) => setSelectedMeetingId(event.target.value)} disabled={!meetingSessions.length}>
+        {!meetingSessions.length && <option value="">目前沒有可分享的會議場次</option>}
+        {meetingSessions.map((session) => <option key={session.id} value={session.id}>{session.course || session.id}</option>)}
+      </select></label>
+      <SharePanel selectedId={selectedMeeting?.id} workType="meeting" />
     </section>
   </div>;
 }

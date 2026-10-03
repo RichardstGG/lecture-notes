@@ -17,7 +17,7 @@
 
 ## 切分為可 review 的里程碑
 
-1. **此 PR：契約與 mock 前端。** 只新增兩份規格與獨立 meeting 預覽元件。真實課堂流程、CLI、API、設定、status 與檔案輸出均不改。示範狀態控制只改 React 本地狀態；錄音按鈕 disabled。前端測 10/4 短發言折疊與進度展示。
+1. **此 PR：契約、mock 前端及分享銜接。** 新增規格與 meeting 預覽元件；示範狀態控制只改 React 本地狀態，錄音按鈕 disabled。既有內網分享可選擇真實 `work_type=meeting` session，訪客讀取原逐字稿及目前 generation 的帶代號稿。課堂分享、CLI、設定、錄音與辨識流程不改。測 10/4 折疊、進度、兩類分享文件及下載隔離。
 2. **Codex 契約底層。** 加 work type、會議設定、來源 metadata、目錄命名、status schema 2、鎖與 CLI 入參。先以假辨識器測 error/cancel/retry 與原子輸出，不導入模型。涉及未指派檔案前先取得 maintainer 指派；文件和 contract tests 與程式同 PR。
 3. **Claude 引擎品質門檻。** 乾淨的約十人中文加英文術語錄音驗證 diarization，再依 `diarize_session` 契約做封裝與時間戳產物。原始受損錄音的 20.2% 遺失不能作準確度通過標準。模型缺失、錯誤、取消均要可測；不得依賴 torch、numpy、網路服務。
 4. **Codex API 與真資料 UI。** API 從 CLI 取得真狀態，session store 讀雙稿，前端改用 meeting 真設定與作業。移除 mock 前須有錄音／匯入／辨識／重跑/取消的 API contract tests；UI 不 import `core`。

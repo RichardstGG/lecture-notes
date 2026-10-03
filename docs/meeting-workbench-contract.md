@@ -1,6 +1,6 @@
 # 雙工作台正式契約（規格 v1，尚未實作）
 
-本文件是後續實作的目標契約，不表示 CLI、API 或引擎目前已提供這些功能。決策依據為 2026-10-04 Claude Code 的 `CROSS_AGENT_REQUEST` 及使用者回覆「以此請求作為正式依據」。選定 sherpa-onnx 1.13.8、pyannote segmentation 3.0 ONNX、3D-Speaker CAMPPlus 中文英文 ONNX；辨識品質尚待乾淨會議錄音驗證。本階段僅提供前端 mock 預覽，不接真引擎。
+本文件是後續實作的目標契約，不表示會議 CLI、錄音 API 或引擎目前已提供這些功能。決策依據為 2026-10-04 Claude Code 的 `CROSS_AGENT_REQUEST` 及使用者回覆「以此請求作為正式依據」。選定 sherpa-onnx 1.13.8、pyannote segmentation 3.0 ONNX、3D-Speaker CAMPPlus 中文英文 ONNX；辨識品質尚待乾淨會議錄音驗證。本階段提供前端 mock 預覽與既有分享服務的會議文件讀取，不接真引擎。
 
 ## 範圍與既有行為
 
@@ -66,6 +66,8 @@ Claude 引擎層提供同步可呼叫介面 `diarize_session(request, progress, 
 
 發言者列表只呈現實際出現代號，按語音秒數排序。低於總語音 2% 或少於 30 秒的代號預設收折為「其他短發言」，可展開；此為顯示分組，不改 `speakers.json` 或 Markdown。要求 10、實際有實質內容 4 時顯示 `4 位主要發言者` 與其餘已辨識短發言，不畫十個空欄。S00 顯示「未指派」。頁面清楚區分 mock 預覽與真實 session；stub 不呼叫未實作端點，不寫正式資料。
 
+會議工作台沿用現有內網唯讀分享服務與同一個分享房間限制：固定選定的一場 session、邀請連結／QR code、暱稱與最多 20 位在線、關閉即撤銷。會議訪客只看及下載原逐字稿與 `diarization.current.json` 指向的帶發言者逐字稿；未辨識時第二份顯示等待內容，不顯示課堂筆記。分享中的重新辨識切換 generation 後，最多 2 秒更新快照與版本雜湊。分享不公開音檔、結構化發言區間或其他場次。會議工作台只列 `work_type=meeting` 的真實 session 供選擇；mock 示範資料不可分享。詳細 API 見 `ui/SHARING.md`。
+
 ## 驗收與實作分工
 
 自動 contract tests：舊缺值判 lecture、設定合併順序與獨立 namespace、排他目錄、來源複製與雜湊、schema 1→2 reader、CLI JSON/exit code、API 400/404/409/422、phase 序列、兩工作並發只一個成功、stop/force/cancel/retry、不覆蓋舊產物、UI 10/4 收折與跨頁進度。UI lint/type/build 及後端/stdlib 測試全過。Mock tests 模擬長時進度、取消安全點、解碼與模型錯誤。Manual tests 用乾淨音檔檢查原稿不變、暫存清理後可重跑、UI 切頁不中斷、Obsidian 顯示。Hardware tests 在 Linux 真機錄 10 人中文夾英文會議，檢查時間戳與代號、耗時、記憶體、正常/強制停止、重試；macOS/Windows 需各自真機驗證才可聲稱支援。真實辨識準確度仍是未驗證門檻，不能以受損的 87.7 分鐘錄音作通過依據。
@@ -74,4 +76,4 @@ Codex 實作順序：契約與 UI mock → `core/config.py` / `core/cli.py` / `c
 
 ## 現況差距與待決事項
 
-目前程式沒有 meeting CLI/API、持久來源、辨識階段及輸出；本文件的命名、schema 2 與路徑均是未來契約，前端 mock 僅展示互動。Claude 所述模型組合已被採用為實作候選，尚需乾淨樣本品質驗收；模型檔再散佈方式、各平台安裝驗證及上述未指派檔案的所有權由 maintainer 決定。實作前若變更本契約須同步更新文件與 contract tests。
+目前程式沒有 meeting CLI/錄音 API、持久來源、辨識階段及輸出；本文件的大部分命名、schema 2 與路徑均是未來契約。分享 reader 已能依測試用會議 session 的 `work_type` 與 generation manifest 讀取兩份逐字稿，但正式會議來源尚未生成，mock 示範資料不能分享。Claude 所述模型組合已被採用為實作候選，尚需乾淨樣本品質驗收；模型檔再散佈方式、各平台安裝驗證及上述未指派檔案的所有權由 maintainer 決定。實作前若變更本契約須同步更新文件與 contract tests。

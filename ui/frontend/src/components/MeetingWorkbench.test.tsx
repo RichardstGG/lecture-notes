@@ -1,7 +1,9 @@
 // @vitest-environment jsdom
 import { fireEvent, render, screen } from "@testing-library/react";
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 import { MeetingWorkbench } from "./MeetingWorkbench";
+
+vi.mock("./SharePanel", () => ({ SharePanel: ({ selectedId }: { selectedId?: string }) => <div>分享目標：{selectedId || "無"}</div> }));
 
 describe("meeting workbench preview", () => {
   it("labels mock controls and collapses six short speakers in the 10/4 example", () => {
@@ -21,5 +23,14 @@ describe("meeting workbench preview", () => {
     expect(screen.getByRole("progressbar").getAttribute("aria-valuenow")).toBe("47");
     expect(screen.getByText(/要求 10 位 · 已找到 4 位主要發言者/)).toBeTruthy();
     expect(screen.getByText(/兩個工作台共用單一工作限制/)).toBeTruthy();
+  });
+
+  it("selects only real meeting sessions for sharing", () => {
+    render(<MeetingWorkbench runtime={{ schema_version: 1, running: false }} sessions={[
+      { id: "lecture/one", work_type: "lecture", started_at: "", updated_at: "", has_transcript: true, has_notes: true, has_recording: true },
+      { id: "meetings/one", work_type: "meeting", course: "設計會議", started_at: "", updated_at: "", has_transcript: true, has_notes: false, has_recording: true },
+    ]} />);
+    expect(screen.getByText("分享目標：meetings/one")).toBeTruthy();
+    expect(screen.queryByRole("option", { name: "lecture/one" })).toBeNull();
   });
 });

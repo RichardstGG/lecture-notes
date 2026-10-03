@@ -87,6 +87,56 @@ class SharingTests(unittest.IsolatedAsyncioTestCase):
                      '/share/v1/comments', '/share/v1/edit'):
             self.assertEqual((await client.post(path, json={})).status_code, 404, path)
 
+    async def test_meeting_shares_two_transcripts_without_notes(self):
+        meeting = self.root / 'meetings' / 'design'
+        generation = meeting / 'diarization' / 'v1'
+        generation.mkdir(parents=True)
+        (meeting / 'transcript.md').write_text('原稿第一版', encoding='utf-8')
+        (meeting / 'notes.md').write_text('PRIVATE NOTES', encoding='utf-8')
+        (generation / 'transcript.speakers.md').write_text('[00:00:01.000] S01: 大家好', encoding='utf-8')
+        (meeting / 'diarization.current.json').write_text(json.dumps({
+            'schema_version': 1, 'generation': 'v1',
+            'speaker_transcript': 'diarization/v1/transcript.speakers.md',
+            'speakers': 'diarization/v1/speakers.json',
+        }), encoding='utf-8')
+        (meeting / 'status.json').write_text(json.dumps({
+            'work_type': 'meeting', 'meeting': '設計會議', 'phase': 'done',
+        }), encoding='utf-8')
+        room = ShareRoom(self.store, 'meetings/design', clock=lambda: self.now)
+        app = create_share_app(room, '192.168.1.2:8766')
+        client = httpx.AsyncClient(transport=httpx.ASGITransport(app=app),
+                                   base_url='http://192.168.1.2:8766')
+        self.clients.append(client)
+        await client.post('/share/v1/join', json={'invitation': room.invitation, 'nickname': '小明'})
+        response = await client.get('/share/v1/snapshot')
+        data = response.json()
+        self.assertEqual(data['work_type'], 'meeting')
+        self.assertEqual(data['course'], '設計會議')
+        self.assertEqual(data['transcript']['content'], '原稿第一版')
+        self.assertIn('S01', data['speaker_transcript']['content'])
+        self.assertNotIn('notes', data)
+        self.assertNotIn('PRIVATE NOTES', response.text)
+        self.assertEqual((await client.get('/share/v1/download/notes')).status_code, 404)
+        self.assertIn('S01', (await client.get('/share/v1/download/speaker-transcript')).text)
+        marker = response.headers['etag']
+        (generation / 'transcript.speakers.md').write_text('S02: 更新', encoding='utf-8')
+        self.now += 2
+        response = await client.get('/share/v1/snapshot', headers={'If-None-Match': marker})
+        self.assertEqual(response.status_code, 200)
+        self.assertIn('S02', response.text)
+
+    async def test_meeting_manifest_cannot_escape_session(self):
+        meeting = self.root / 'meetings' / 'unsafe'
+        meeting.mkdir(parents=True)
+        (meeting / 'transcript.md').write_text('原稿', encoding='utf-8')
+        (meeting / 'status.json').write_text('{"work_type":"meeting"}', encoding='utf-8')
+        (meeting / 'diarization.current.json').write_text(json.dumps({
+            'generation': 'v1', 'speaker_transcript': '../second/notes.md',
+        }), encoding='utf-8')
+        with self.assertRaises(ShareError) as error:
+            ShareRoom(self.store, 'meetings/unsafe')
+        self.assertEqual(error.exception.code, 'content_unavailable')
+
     async def test_twenty_distinct_visitors_and_expiring_seats(self):
         clients = [self.client() for _ in range(21)]
         responses = await asyncio.gather(*(self.join(c, f'同學{i}') for i, c in enumerate(clients)))

@@ -22,7 +22,7 @@ function disconnected(error) {
   etag = undefined;
   $('reader').hidden = true;
   $('transcript').textContent = '';
-  $('notes').textContent = '';
+  $('secondary').textContent = '';
   if ([401, 403, 409, 410].includes(error.status)) {
     joined = false;
     clearTimeout(timer);
@@ -42,13 +42,18 @@ async function poll() {
     joined = true;
     $('join-form').hidden = true;
     $('reader').hidden = false;
-    $('course').textContent = data.course || '課堂逐字稿與筆記';
+    const meeting = data.work_type === 'meeting';
+    $('course').textContent = data.course || (meeting ? '會議逐字稿' : '課堂逐字稿與筆記');
+    $('transcript-heading').textContent = meeting ? '原逐字稿' : '即時逐字稿';
+    $('secondary-heading').textContent = meeting ? '帶發言者逐字稿' : '課堂筆記';
+    $('secondary-download').href = meeting ? '/share/v1/download/speaker-transcript' : '/share/v1/download/notes';
+    $('secondary-download').textContent = meeting ? '下載帶發言者逐字稿（目前版本）' : '下載筆記（目前版本）';
     $('version').textContent = `目前版本 · ${new Date(data.captured_at).toLocaleString()}`;
     $('status').textContent = '已連線 · 唯讀分享';
-    for (const target of ['transcript', 'notes']) {
-      const text = data[target].content || '等待內容產生…';
-      if ($(target).textContent !== text) $(target).textContent = text;
-    }
+    const raw = data.transcript?.content || '等待內容產生…';
+    const secondary = (meeting ? data.speaker_transcript : data.notes)?.content || '等待內容產生…';
+    if ($('transcript').textContent !== raw) $('transcript').textContent = raw;
+    if ($('secondary').textContent !== secondary) $('secondary').textContent = secondary;
   } catch (error) {
     if (current === generation) disconnected(error);
   } finally {

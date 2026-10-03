@@ -79,6 +79,9 @@ h1 { margin-bottom: 0; font-size: clamp(28px, 3vw, 38px); letter-spacing: -.035e
 .meeting-transcript { margin-top: 20px; padding: 18px; border-radius: 10px; background: #f4f2ec; font-size: 13px; line-height: 1.8; }
 .meeting-transcript p { margin: 0 0 8px; }
 .meeting-transcript time { color: var(--muted); font-family: ui-monospace, monospace; }
+.meeting-share-selection { display: grid; gap: 7px; max-width: 440px; margin-bottom: 20px; }
+.meeting-share-selection span { color: var(--muted); font-size: 11px; font-weight: 600; }
+.meeting-share-selection + .share-card { margin-top: 0; }
 
 .hero { border-radius: 18px; padding: clamp(22px, 3vw, 34px); margin-bottom: 24px; border: 1px solid var(--line); background: var(--paper); box-shadow: 0 12px 36px rgba(39,48,43,.045); }
 .hero.running { background: linear-gradient(118deg, #23352c 0%, #2e493a 100%); color: #f8f6ef; border-color: transparent; }

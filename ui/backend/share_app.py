@@ -73,7 +73,7 @@ def create_share_app(room, authority, *, all_interfaces=False):
     async def snapshot(request: Request):
         room.authorize(request.cookies.get(COOKIE))
         data = room.snapshot()
-        marker = json.dumps([data['version'], data['course'], data['phase']], ensure_ascii=False)
+        marker = json.dumps([data['version'], data['work_type'], data['course'], data['phase']], ensure_ascii=False)
         etag = '"' + hashlib.sha256(marker.encode()).hexdigest() + '"'
         if request.headers.get('if-none-match') == etag:
             return Response(status_code=304, headers={'ETag': etag})
@@ -89,14 +89,16 @@ def create_share_app(room, authority, *, all_interfaces=False):
     @app.get('/share/v1/download/{target}')
     async def download(target: str, request: Request):
         room.authorize(request.cookies.get(COOKIE))
-        if target not in {'transcript', 'notes'}:
-            return Response(status_code=404)
         data = room.snapshot()
-        label = '逐字稿' if target == 'transcript' else '筆記'
+        allowed = {'transcript', 'speaker-transcript'} if data['work_type'] == 'meeting' else {'transcript', 'notes'}
+        if target not in allowed:
+            return Response(status_code=404)
+        key = 'speaker_transcript' if target == 'speaker-transcript' else target
+        label = {'transcript': '原逐字稿', 'notes': '筆記', 'speaker-transcript': '帶發言者逐字稿'}[target]
         content = (f'# {label} — 目前版本\n\n'
                    f'擷取時間：{data["captured_at"]}\n\n'
                    f'版本：{data["version"]}（內容仍可能更新）\n\n---\n\n'
-                   + data[target]['content'])
+                   + data[key]['content'])
         return Response(content, media_type='text/markdown; charset=utf-8', headers={
             'Content-Disposition': f'attachment; filename="{target}-current-version-{data["version"]}.md"',
         })
