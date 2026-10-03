@@ -325,4 +325,6 @@ input:focus, select:focus, textarea:focus { border-color: #5a806b; box-shadow: 0
 .share-qr svg { width: 224px; max-width: 100%; height: auto; background: white; }
 .share-qr figcaption { margin-top: 8px; color: #486459; }
 
-.share-card .card-title .button { width: auto; min-width: 96px; height: auto; white-space: nowrap; }
+.share-actions { display: flex; flex-wrap: wrap; gap: 12px; }
+.share-actions .button { width: 104px; white-space: nowrap; }
+.share-actions .share-close { background: #b42332; color: #fff; }

@@ -89,7 +89,6 @@ export function SharePanel({ selectedId }: { selectedId?: string }) {
 
   return <section className="share-card" aria-label="內網唯讀分享">
     <div className="card-title"><div><p className="eyebrow">LAN SHARING</p><h2>內網唯讀分享</h2></div>
-      {status?.active && <button className="button secondary" disabled={busy} onClick={() => void change(false)}>關閉分享</button>}
     </div>
     <p>固定分享一場逐字稿與筆記，最多 20 位在線。停止錄音後仍可閱讀與下載，直到手動關閉分享或主控服務結束。</p>
     {error && <p className="inline-error" role="alert">{error}</p>}
@@ -101,7 +100,10 @@ export function SharePanel({ selectedId }: { selectedId?: string }) {
         <figcaption>掃描加入這場分享（需與主機網路互通）</figcaption>
       </figure>}
       <label>參與者連結<input readOnly value={status.url || ""} onFocus={(event) => event.target.select()} /></label>
-      <button className="button secondary" onClick={() => void copyLink()}>{copied ? "已複製" : "複製連結"}</button>
+      <div className="share-actions">
+        <button className="button secondary" onClick={() => void copyLink()}>{copied ? "已複製" : "複製連結"}</button>
+        <button className="button share-close" disabled={busy} onClick={() => void change(false)}>關閉分享</button>
+      </div>
       <p>在線 {status.participants.filter((person) => person.online).length} / 20 · 約 30 秒未收到更新即顯示離線</p>
       <ul className="share-roster">{status.participants.map((person) => <li key={person.id}>
         <span>{person.nickname}</span><span>{person.online ? "在線" : "離線"}</span>
