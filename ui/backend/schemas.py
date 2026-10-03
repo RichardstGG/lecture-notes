@@ -193,6 +193,7 @@ class TermCandidatesResponse(BaseModel):
 class SessionSummary(BaseModel):
     id: str
     course: str | None = None
+    work_type: str = "lecture"
     started_at: str
     updated_at: str
     phase: str | None = None
@@ -203,6 +204,7 @@ class SessionSummary(BaseModel):
     has_transcript: bool
     has_notes: bool
     has_recording: bool
+    has_speaker_transcript: bool = False
 
 
 class SessionContentFile(BaseModel):
@@ -216,6 +218,7 @@ class SessionDetail(BaseModel):
     session: SessionSummary
     transcript: SessionContentFile
     notes: SessionContentFile
+    speaker_transcript: SessionContentFile | None = None
 
 
 class RunStartRequest(BaseModel):
@@ -283,6 +286,7 @@ class ShareStatus(BaseModel):
     active: bool
     participants: list[ShareParticipant]
     session_id: str | None = None
+    work_type: str | None = None
     url: str | None = None
     max_online: int | None = None
     bind_host: str | None = None

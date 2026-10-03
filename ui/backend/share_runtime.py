@@ -51,6 +51,7 @@ class ShareRuntime:
             return {'api_version': 1, 'active': False, 'participants': [],
                     'error': '分享服務已停止，請重新開啟。'}
         return {'api_version': 1, 'active': True, 'session_id': self.room.session_id,
+                'work_type': self.room.work_type,
                 'url': self.url, 'bind_host': self.bind_host, 'advertise_host': self.advertise_host,
                 'participants': self.room.roster(), 'max_online': 20}
 

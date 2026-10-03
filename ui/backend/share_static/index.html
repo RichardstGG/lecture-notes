@@ -2,11 +2,11 @@
 <html lang="zh-Hant">
 <head>
   <meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1">
-  <title>課堂唯讀分享</title><link rel="stylesheet" href="/reader.css">
+  <title>內網唯讀分享</title><link rel="stylesheet" href="/reader.css">
   <script src="/reader.js" defer></script>
 </head>
 <body><main>
-  <header><p class="eyebrow">內網分享 · 唯讀</p><h1 id="course">課堂逐字稿與筆記</h1>
+  <header><p class="eyebrow">內網分享 · 唯讀</p><h1 id="course">逐字稿與筆記</h1>
     <p>內容約每 2 秒更新。停止錄音後仍可閱讀，直到主控端關閉分享。</p></header>
   <p id="status" role="status" aria-live="polite">請填寫暱稱加入。</p>
   <form id="join-form"><label for="nickname">暱稱（必填，主控端可見）</label>
@@ -17,8 +17,8 @@
     <div class="toolbar"><p id="version">目前版本</p><button id="leave" type="button">離開分享</button></div>
     <p>下載為擷取當下的「目前版本」，整理中的內容可能繼續更新。</p>
     <div class="documents">
-      <section><div class="toolbar"><h2>即時逐字稿</h2><a class="download" href="/share/v1/download/transcript" download>下載逐字稿（目前版本）</a></div><pre id="transcript"></pre></section>
-      <section><div class="toolbar"><h2>課堂筆記</h2><a class="download" href="/share/v1/download/notes" download>下載筆記（目前版本）</a></div><pre id="notes"></pre></section>
+      <section><div class="toolbar"><h2 id="transcript-heading">即時逐字稿</h2><a class="download" href="/share/v1/download/transcript" download>下載逐字稿（目前版本）</a></div><pre id="transcript"></pre></section>
+      <section><div class="toolbar"><h2 id="secondary-heading">課堂筆記</h2><a id="secondary-download" class="download" href="/share/v1/download/notes" download>下載筆記（目前版本）</a></div><pre id="secondary"></pre></section>
     </div>
   </section>
 </main></body></html>

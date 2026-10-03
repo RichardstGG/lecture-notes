@@ -3,7 +3,7 @@ import { QRCodeSVG } from "qrcode.react";
 import { api } from "../api";
 import type { SharingStatus } from "../types";
 
-export function SharePanel({ selectedId }: { selectedId?: string }) {
+export function SharePanel({ selectedId, workType = "lecture" }: { selectedId?: string; workType?: "lecture" | "meeting" }) {
   const [status, setStatus] = useState<SharingStatus>();
   const [host, setHost] = useState("");
   const [allInterfaces, setAllInterfaces] = useState(true);
@@ -15,6 +15,7 @@ export function SharePanel({ selectedId }: { selectedId?: string }) {
   const revision = useRef(0);
   const acting = useRef(false);
   const pollError = useRef(false);
+  const sharedType = status?.active ? (status.work_type || workType) : workType;
 
   useEffect(() => {
     let disposed = false;
@@ -90,7 +91,7 @@ export function SharePanel({ selectedId }: { selectedId?: string }) {
   return <section className="share-card" aria-label="內網唯讀分享">
     <div className="card-title"><div><p className="eyebrow">LAN SHARING</p><h2>內網唯讀分享</h2></div>
     </div>
-    <p>固定分享一場逐字稿與筆記，最多 20 位在線。停止錄音後仍可閱讀與下載，直到手動關閉分享或主控服務結束。</p>
+    <p>固定分享一場{sharedType === "meeting" ? "原逐字稿與帶發言者逐字稿" : "逐字稿與筆記"}，最多 20 位在線。停止錄音後仍可閱讀與下載，直到手動關閉分享或主控服務結束。</p>
     {error && <p className="inline-error" role="alert">{error}</p>}
     {status?.active ? <>
       <p><strong>分享場次：</strong>{status.session_id}（不隨目前檢視場次切換）</p>

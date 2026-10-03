@@ -30,11 +30,11 @@ describe("independent reader", () => {
     expect(document.getElementById("reader").hidden).toBe(false);
     fetch.mockResolvedValueOnce(response({ ...snapshot, notes: { content: "更新筆記" } }));
     await vi.advanceTimersByTimeAsync(2000);
-    expect(document.getElementById("notes").textContent).toBe("更新筆記");
+    expect(document.getElementById("secondary").textContent).toBe("更新筆記");
     fetch.mockResolvedValueOnce(response({ error: { message: "已關閉" } }, 410));
     await vi.advanceTimersByTimeAsync(2000);
     expect(document.getElementById("reader").hidden).toBe(true);
-    expect(document.getElementById("notes").textContent).toBe("");
+    expect(document.getElementById("secondary").textContent).toBe("");
     expect(vi.getTimerCount()).toBe(0);
   });
   it("resumes cookies, retries network errors and leaves", async () => {
@@ -52,5 +52,18 @@ describe("independent reader", () => {
     await flush();
     expect(document.getElementById("status").textContent).toBe("已離開分享。");
     expect(vi.getTimerCount()).toBe(0);
+  });
+  it("renders a meeting's raw and speaker transcripts without a notes download", async () => {
+    const fetch = vi.fn().mockResolvedValueOnce(response({
+      ...snapshot, work_type: "meeting", course: "設計會議", notes: undefined,
+      speaker_transcript: { content: "[00:00:01.000] S01: 大家好" },
+    }));
+    vi.stubGlobal("fetch", fetch);
+    new Function(script)();
+    await flush();
+    expect(document.getElementById("secondary-heading").textContent).toBe("帶發言者逐字稿");
+    expect(document.getElementById("secondary").textContent).toContain("S01");
+    expect(document.getElementById("secondary-download").getAttribute("href")).toBe("/share/v1/download/speaker-transcript");
+    expect(document.body.textContent).not.toContain("課堂筆記");
   });
 });

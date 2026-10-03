@@ -1,4 +1,4 @@
-"""Read-only access to completed and active lecture session files."""
+"""Read-only access to completed and active session files."""
 import json
 import re
 import tomllib
@@ -103,7 +103,9 @@ class SessionStore:
             raise SessionStoreError("session_not_found", "Session not found", 404)
         return path.resolve()
 
-    def _course_name(self, path, status):
+    def _course_name(self, path, status, work_type="lecture"):
+        if work_type == "meeting" and status.get("meeting"):
+            return str(status["meeting"])
         if status.get("course"):
             return str(status["course"])
         used = path / "config.used.toml"
@@ -111,7 +113,9 @@ class SessionStore:
             if used.is_symlink():
                 raise OSError("symbolic links are not session content")
             with open(used, "rb") as stream:
-                name = tomllib.load(stream).get("course", {}).get("name")
+                data = tomllib.load(stream)
+                section = "meeting" if work_type == "meeting" else "course"
+                name = data.get(section, {}).get("name")
             if name:
                 return str(name)
         except (OSError, tomllib.TOMLDecodeError):
@@ -130,6 +134,15 @@ class SessionStore:
 
     def _summary(self, path):
         status = _read_json(path / "status.json")
+        work_type = status.get("work_type") or "lecture"
+        if work_type == "lecture":
+            used = path / "config.used.toml"
+            if used.is_file() and not used.is_symlink():
+                try:
+                    with open(used, "rb") as stream:
+                        work_type = tomllib.load(stream).get("work", {}).get("type") or "lecture"
+                except (OSError, tomllib.TOMLDecodeError):
+                    pass
         timestamps = []
         for item in path.iterdir():
             if item.name.startswith("."):
@@ -148,7 +161,8 @@ class SessionStore:
         recordings = list(path.glob("recording_*.ogg"))
         return {
             "id": path.relative_to(self.output_root).as_posix(),
-            "course": self._course_name(path, status),
+            "course": self._course_name(path, status, work_type),
+            "work_type": work_type,
             "started_at": status.get("started_at") or _iso(oldest),
             "updated_at": status.get("updated_at") or _iso(newest),
             "phase": status.get("phase"),
@@ -161,7 +175,27 @@ class SessionStore:
             "has_notes": ((path / "notes.md").is_file()
                           and not (path / "notes.md").is_symlink()),
             "has_recording": bool(recordings),
+            "has_speaker_transcript": (path / "diarization.current.json").is_file()
+                                      and not (path / "diarization.current.json").is_symlink(),
         }
+
+    def _speaker_transcript(self, path):
+        manifest_path = path / "diarization.current.json"
+        if not manifest_path.is_file():
+            return {"content": "", "updated_at": None, "size_bytes": 0}
+        manifest = _read_json(manifest_path)
+        generation = manifest.get("generation")
+        name = manifest.get("speaker_transcript")
+        if (manifest.get("schema_version") != 1
+                or not isinstance(generation, str) or not re.fullmatch(r"[A-Za-z0-9_-]+", generation)
+                or name != f"diarization/{generation}/transcript.speakers.md"):
+            raise SessionStoreError("speaker_transcript_invalid", "Invalid speaker transcript manifest", 422)
+        current = path
+        for part in name.split("/"):
+            current /= part
+            if current.is_symlink():
+                raise SessionStoreError("speaker_transcript_invalid", "Invalid speaker transcript path", 422)
+        return self._content_file(current)
 
     def list(self):
         try:
@@ -216,12 +250,16 @@ class SessionStore:
     def get(self, session_id):
         try:
             path = self._session_dir(session_id)
-            return {
+            summary = self._summary(path)
+            detail = {
                 "api_version": 1,
-                "session": self._summary(path),
+                "session": summary,
                 "transcript": self._content_file(path / "transcript.md"),
                 "notes": self._content_file(path / "notes.md"),
             }
+            if summary["work_type"] == "meeting":
+                detail["speaker_transcript"] = self._speaker_transcript(path)
+            return detail
         except OSError as exc:
             raise SessionStoreError(
                 "session_unavailable", f"Unable to read session: {exc}",
