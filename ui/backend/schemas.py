@@ -261,3 +261,27 @@ class ApiErrorDetail(BaseModel):
 
 class ApiErrorResponse(BaseModel):
     error: ApiErrorDetail
+
+
+class ShareOpenRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid", str_strip_whitespace=True)
+
+    session_id: str = Field(min_length=1, max_length=1024)
+    host: str = Field(min_length=1, max_length=15)
+    port: int = Field(default=8766, ge=1024, le=65535, strict=True)
+
+
+class ShareParticipant(BaseModel):
+    id: str
+    nickname: str
+    online: bool
+
+
+class ShareStatus(BaseModel):
+    api_version: int = API_VERSION
+    active: bool
+    participants: list[ShareParticipant]
+    session_id: str | None = None
+    url: str | None = None
+    max_online: int | None = None
+    error: str | None = None

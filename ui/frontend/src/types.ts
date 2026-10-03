@@ -220,3 +220,14 @@ export interface ApiErrorEnvelope {
     stderr?: string;
   };
 }
+
+
+export interface SharingStatus {
+  api_version: number;
+  active: boolean;
+  session_id?: string;
+  url?: string;
+  max_online?: number;
+  error?: string;
+  participants: { id: string; nickname: string; online: boolean }[];
+}
