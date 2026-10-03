@@ -310,3 +310,11 @@ input:focus, select:focus, textarea:focus { border-color: #5a806b; box-shadow: 0
   .doctor-controls .check-field { height: auto; }
   .doctor-row { grid-template-columns: 22px minmax(80px, .45fr) minmax(0, 1fr); }
 }
+
+.share-card { background: var(--surface, #fff); border: 1px solid var(--border, #dce5e2); border-radius: 16px; padding: 24px; margin: 24px 0; }
+.share-card p { line-height: 1.7; overflow-wrap: anywhere; }
+.share-card label { display: grid; gap: 8px; margin: 12px 0; }
+.share-card input { min-width: 0; width: 100%; padding: 10px; border: 1px solid #aabeb8; border-radius: 8px; font: inherit; }
+.share-form { display: grid; gap: 8px; max-width: 620px; }
+.share-roster { list-style: none; padding: 0; max-height: 240px; overflow-y: auto; }
+.share-roster li { display: flex; justify-content: space-between; gap: 16px; padding: 8px 0; border-bottom: 1px solid #e2eae7; }

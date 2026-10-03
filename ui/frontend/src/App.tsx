@@ -4,6 +4,7 @@ import { Icon } from "./components/Icon";
 import { CourseEditor } from "./components/CourseEditor";
 import { MarkdownPane } from "./components/MarkdownPane";
 import { LocalSettings } from "./components/LocalSettings";
+import { SharePanel } from "./components/SharePanel";
 import { RunPanel } from "./components/RunPanel";
 import { TermCandidates } from "./components/TermCandidates";
 import { useLectureData } from "./hooks/useLectureData";
@@ -129,6 +130,8 @@ export default function App() {
 
         <RunPanel courses={data.courses} devices={data.devices} models={data.models} status={data.status} onChanged={data.refresh} onError={data.setError} />
       </section>
+
+      <SharePanel selectedId={data.selectedId} />
 
       <div className="workspace-grid">
         <section className="content-card">

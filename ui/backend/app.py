@@ -1,8 +1,9 @@
 """FastAPI application for the browser UI."""
 import asyncio
 import json
+from contextlib import asynccontextmanager
 
-from fastapi import FastAPI, Header, Query, Request
+from fastapi import FastAPI, Header, Query, Request, Response
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import HTMLResponse, JSONResponse, StreamingResponse
 from fastapi.staticfiles import StaticFiles
@@ -18,9 +19,11 @@ from .schemas import (ApiErrorResponse, AudioUploadResponse, CourseCreateRequest
                       DeviceSelectionRequest, DeviceTestResponse,
                       DoctorResponse, HealthResponse, ModelInventoryResponse,
                       ProcessActionResponse, RunStartRequest,
-                      RuntimeStatusResponse, SessionDetail, SessionSummary,
+                      RuntimeStatusResponse, SessionDetail, SessionSummary, ShareOpenRequest, ShareStatus,
                       StopRequest, SummarizeRequest, TermCandidatesResponse)
 from .session_store import SessionStore, SessionStoreError
+from .share_runtime import ShareRuntime
+from .sharing import ShareError
 from .settings import BackendSettings
 from .upload_store import AudioUploadStore, UploadStoreError
 
@@ -102,7 +105,7 @@ async def _session_events(
 
 def create_app(
     settings=None, client=None, sessions=None, launcher=None, course_store=None,
-    upload_store=None,
+    upload_store=None, sharing=None,
 ):
     settings = settings or BackendSettings.from_env()
     client = client or LecClient.for_repo(settings.repo_root, settings.cli_timeout)
@@ -113,12 +116,23 @@ def create_app(
     )
     launcher = launcher or LecProcessLauncher.for_client(client, settings.process_log)
     controller = ProcessController(client, launcher, sessions, settings.repo_root)
+    sharing = sharing or ShareRuntime(sessions)
+
+    @asynccontextmanager
+    async def lifespan(_app):
+        try:
+            yield
+        finally:
+            await sharing.close()
+
     app = FastAPI(
+        lifespan=lifespan,
         title="Lecture Notes UI API",
         version="1.0.0",
         docs_url="/api/docs",
         openapi_url="/api/openapi.json",
     )
+    app.state.sharing = sharing
     app.state.settings = settings
     app.state.lec_client = client
     app.state.sessions = sessions
@@ -159,6 +173,41 @@ def create_app(
     @app.exception_handler(UploadStoreError)
     async def upload_store_error_handler(_request, exc):
         return JSONResponse(status_code=exc.status_code, content={"error": exc.as_detail()})
+
+    @app.exception_handler(ShareError)
+    async def share_error_handler(_request, exc):
+        return JSONResponse(status_code=exc.status_code, content={
+            "error": {"code": exc.code, "message": exc.message},
+        })
+
+    def check_share_control(request):
+        # Reject cross-site browser requests and DNS-rebinding Host headers.
+        if request.url.hostname not in {"127.0.0.1", "localhost"}:
+            raise ShareError("invalid_origin", "分享管理僅限本機主控端。", 403)
+        origin = request.headers.get("origin")
+        allowed = {f"http://{request.url.netloc}", "http://127.0.0.1:5173", "http://localhost:5173"}
+        if origin and origin not in allowed:
+            raise ShareError("invalid_origin", "不允許此來源。", 403)
+        if request.method == "POST" and request.headers.get("content-type", "").split(";")[0] != "application/json":
+            raise ShareError("invalid_content_type", "需要 JSON 請求。", 415)
+
+    @app.get("/api/v1/sharing", response_model=ShareStatus, response_model_exclude_none=True)
+    async def sharing_status(request: Request, response: Response):
+        check_share_control(request)
+        response.headers["Cache-Control"] = "no-store"
+        return sharing.status()
+
+    @app.post("/api/v1/sharing/open", response_model=ShareStatus, response_model_exclude_none=True)
+    async def sharing_open(payload: ShareOpenRequest, request: Request, response: Response):
+        check_share_control(request)
+        response.headers["Cache-Control"] = "no-store"
+        return await sharing.open(payload.session_id, payload.host, payload.port)
+
+    @app.post("/api/v1/sharing/close", response_model=ShareStatus, response_model_exclude_none=True)
+    async def sharing_close(request: Request, response: Response):
+        check_share_control(request)
+        response.headers["Cache-Control"] = "no-store"
+        return await sharing.close()
 
     @app.get("/api/v1/health", response_model=HealthResponse)
     async def health():

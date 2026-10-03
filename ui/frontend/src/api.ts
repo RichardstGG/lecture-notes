@@ -13,6 +13,7 @@ import type {
   RuntimeStatus,
   SessionDetail,
   SessionSummary,
+  SharingStatus,
   TermCandidatesResponse,
 } from "./types";
 
@@ -85,6 +86,13 @@ async function uploadAudio(file: File): Promise<AudioUpload> {
 }
 
 export const api = {
+  sharing: () => request<SharingStatus>("/api/v1/sharing"),
+  openSharing: (session_id: string, host: string, port: number) => request<SharingStatus>(
+    "/api/v1/sharing/open", { method: "POST", body: JSON.stringify({ session_id, host, port }) },
+  ),
+  closeSharing: () => request<SharingStatus>(
+    "/api/v1/sharing/close", { method: "POST", body: "{}" },
+  ),
   status: () => request<RuntimeStatus>("/api/v1/status"),
   courses: () => request<Course[]>("/api/v1/courses"),
   models: () => request<ModelInventory>("/api/v1/models"),
