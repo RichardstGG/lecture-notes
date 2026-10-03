@@ -228,7 +228,7 @@ python3 upgrade.py --whisper-only
 
 UI 是本機 React 頁面，透過 HTTP / SSE 連到同一台電腦上的 FastAPI service；
 service 再以 subprocess 呼叫 `lec`，不會把錄音、逐字稿或課程設定上傳到外部。
-服務只綁定 `127.0.0.1`。
+主控服務只綁定 `127.0.0.1`。
 
 額外需求：Node.js 22.22+。第一次使用交給 `upgrade.py` 建立 `.venv`、
 安裝 backend dependencies，並執行 `npm ci` 與 frontend build：
@@ -278,6 +278,14 @@ lec --start-ui                           # Windows：python lec --start-ui
    Ctrl+C 停止 UI service 本身不等於停止 `lec` 工作；背景工作
    會繼續，下次啟動 UI 時重新發現。即使瀏覽器 SSE 分頁仍開著，UI service 也能
    正常由 Ctrl+C 關閉，不必先關分頁。
+
+### 內網唯讀分享
+
+在主控頁選擇場次後，到「內網唯讀分享」輸入本機內網 IPv4 與分享埠，
+手動開啟並複製新連結給參與者。參與者必填暱稱；可閱讀、下載目前版本的逐字稿
+和筆記。主控端可看到暱稱與在線狀態，最多 20 位同時在線。停止錄音後內容仍可用，
+直到手動關閉分享。重新開啟會產生新連結，舊連結失效。分享服務監聽獨立內網埠，
+主控服務仍只在本機。詳細限制與 API 契約見 [內網唯讀分享](ui/SHARING.md)。
 
 更新 frontend 程式後要重新執行 `npm run build`。開發模式可分兩個 terminal：
 
