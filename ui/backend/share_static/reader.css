@@ -1,0 +1,18 @@
+:root { font-family: system-ui, sans-serif; color: #182b36; background: #f0f5f4; }
+body { margin: 0; }
+main { max-width: 1400px; margin: auto; padding: 24px; }
+header { border-bottom: 1px solid #cadbd8; margin-bottom: 20px; }
+h1 { font-size: clamp(24px, 3vw, 36px); }
+.eyebrow { color: #256759; letter-spacing: .1em; }
+form, .documents > section { background: white; border: 1px solid #cadbd8; padding: 20px; border-radius: 12px; }
+form { max-width: 480px; display: grid; gap: 12px; }
+input, button, .download { font: inherit; padding: 10px 14px; border-radius: 6px; border: 1px solid #7a9690; }
+button, .download { background: #17634f; color: white; cursor: pointer; text-decoration: none; }
+button:disabled { opacity: .6; cursor: wait; }
+input:focus, button:focus-visible, .download:focus-visible { outline: 3px solid #76baac; outline-offset: 3px; }
+.documents { display: grid; grid-template-columns: 1fr 1fr; gap: 20px; }
+.documents > section { min-width: 0; }
+.toolbar { display: flex; align-items: center; justify-content: space-between; gap: 12px; flex-wrap: wrap; }
+pre { font: inherit; line-height: 1.8; white-space: pre-wrap; overflow-wrap: anywhere; }
+[hidden] { display: none !important; }
+@media (max-width: 850px) { .documents { grid-template-columns: 1fr; } main { padding: 16px; } }
