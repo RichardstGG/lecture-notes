@@ -619,7 +619,11 @@ def ffmpeg_input(source, backend=None):
                 break
         if idx is None:
             idx = source if str(source).isdigit() else 0
-        return ["-f", "avfoundation", "-thread_queue_size", "512", "-i", f":{idx}"]
+        # thread_queue_size 要夠大：AVFoundation 的擷取緩衝一滿就直接丟音訊，
+        # 而且連 keep_recording 的存檔一起丟（實機量到每秒固定掉約 0.2 秒，
+        # 見 docs/platform-macos.md「擷取掉音訊」）。512 個封包不足以吸收
+        # 讀取端偶發的數百毫秒停頓。
+        return ["-f", "avfoundation", "-thread_queue_size", "4096", "-i", f":{idx}"]
     if backend == "dshow":
-        return ["-f", "dshow", "-thread_queue_size", "512", "-i", f"audio={source}"]
+        return ["-f", "dshow", "-thread_queue_size", "4096", "-i", f"audio={source}"]
     raise ValueError(f"未知的錄音後端：{backend}")
