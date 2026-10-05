@@ -12,3 +12,20 @@
 JSON `schema_version` 為 1，包含 `session`、`course`、`course_id`、`course_file`、`whisper_prompt_base`、`defined`（`terms` 與 `glossary` 數量）以及 `candidates`。每個候選包含 `term`、`count`、`sections`、`explain`、`asr_original`、`verified`、`flags` 及 `variants`。`flags` 可為 `hedged`、`asr_corrected`、`unverified`、`variant_group`；變體包含術語、次數、節次與相似度。同一 label 重做時採最後一筆，無法解析的行會跳過。
 
 UI 呼叫 `GET /api/v1/sessions/{session_id}/term-candidates` 取得同一 JSON。路徑由 `SessionStore.path_for` 驗證，不能跳出 output root。`PUT /api/v1/courses/{course_id}/vocabulary` 可額外帶 `ignored_terms: string[]`；省略時保留課程檔現有忽略清單。`summary.ignored_terms` 是新增的課程設定鍵，預設空陣列；舊版 `lec` 讀取含此鍵的課程檔時可能產生未知鍵警告。
+
+## Text matching normalization
+
+Summary verification, term candidate matching, and the quality report use the
+same policy: Unicode NFKC, casefold, then retain only alphanumeric characters.
+Thus `ＵＮＩＸ` matches `UNIX`, `Ⅳ` matches `IV`, and `Straße` matches `STRASSE`.
+This intentionally changes verification, deduplication and matching results for
+compatibility characters and case-fold expansions; it does not rewrite saved
+transcripts or change CLI/JSON schemas.
+
+Core exposes `normalize_text(text)` (normalized text plus one original half-open
+source span per output character) and `bigrams(text)` from `core.summarize`.
+`core.terms` uses these public helpers. Summary quotations are sliced from their
+original spans, preserving original spelling and timestamps even when Unicode
+normalization expands or composes characters. The UI keeps a local text-only
+implementation to respect its no-core-import boundary; parity tests check it
+against core.

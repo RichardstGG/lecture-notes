@@ -10,6 +10,7 @@ import re
 import shutil
 import threading
 import time
+import unicodedata
 import urllib.error
 import urllib.request
 from dataclasses import dataclass
@@ -75,23 +76,56 @@ def link_label(label):
 
 
 # ---------------------------------------------------------------- 驗證
-def _normalize(text):
-    """只留文字與數字（小寫），並記錄每個字在原文的位置。"""
-    chars, idx = [], []
-    for i, ch in enumerate(text):
-        if ch.isalnum():
-            chars.append(ch.lower())
-            idx.append(i)
-    return "".join(chars), idx
+def _decomposed_positions(text):
+    """Canonical NFKD order, retaining each code point's source offset."""
+    ordered, marks = [], []
+    for i, char in enumerate(text):
+        for part in unicodedata.normalize("NFKD", char):
+            rank = unicodedata.combining(part)
+            if rank:
+                marks.append((rank, part, i))
+            else:
+                ordered.extend((part, pos) for _, part, pos in sorted(marks, key=lambda x: x[0]))
+                marks.clear()
+                ordered.append((part, i))
+    ordered.extend((part, pos) for _, part, pos in sorted(marks, key=lambda x: x[0]))
+    return ordered
 
 
-def _bigrams(s):
-    return {s[i:i + 2] for i in range(len(s) - 1)} or {s}
+def normalize_text(text):
+    """Return NFKC/casefold alphanumerics and original half-open source spans.
+
+    A normalized character can cover several source code points (composition),
+    or several normalized characters can share one source span (expansion).
+    Pair canonically decomposed streams to preserve both cases and mark order.
+    Keep the text policy aligned with ui.quality_eval.normalized without making
+    the UI import core; cross-layer parity tests enforce this boundary.
+    """
+    normalized = unicodedata.normalize("NFKC", text)
+    starts = [len(text)] * len(normalized)
+    ends = [0] * len(normalized)
+    source = _decomposed_positions(text)
+    target = _decomposed_positions(normalized)
+    for (_, original), (_, position) in zip(source, target):
+        starts[position] = min(starts[position], original)
+        ends[position] = max(ends[position], original + 1)
+    chars, spans = [], []
+    for i, char in enumerate(normalized):
+        for folded in char.casefold():
+            if folded.isalnum():
+                chars.append(folded)
+                spans.append((starts[i], ends[i]))
+    return "".join(chars), spans
+
+
+def bigrams(text):
+    """Return unique adjacent character pairs (or the short input itself)."""
+    return {text[i:i + 2] for i in range(len(text) - 1)} or {text}
 
 
 def find_quote(quote, norm_text):
     """在正規化後的逐字稿中找最接近 quote 的片段，回傳 (相似度, 起點, 長度)。"""
-    q, _ = _normalize(quote)
+    q, _ = normalize_text(quote)
     m, n = len(q), len(norm_text)
     if m == 0 or n == 0:
         return 0.0, 0, 0
@@ -100,12 +134,12 @@ def find_quote(quote, norm_text):
         return 1.0, pos, m
     if m >= n:
         return SequenceMatcher(None, q, norm_text, autojunk=False).ratio(), 0, n
-    qb = _bigrams(q)
+    qb = bigrams(q)
     step = max(1, m // 6)
     best, best_i = -1.0, 0
     for i in range(0, n - m + 1, step):
         w = norm_text[i:i + m]
-        score = len(qb & _bigrams(w)) / len(qb)
+        score = len(qb & bigrams(w)) / len(qb)
         if score > best:
             best, best_i = score, i
     top = (0.0, best_i, m)
@@ -367,18 +401,19 @@ class Summarizer:
         return data
 
     def _verify(self, data, body, label):
-        norm, idx = _normalize(STAMP_RE.sub(lambda m: " " * len(m.group()), body))
+        norm, spans = normalize_text(STAMP_RE.sub(lambda m: " " * len(m.group()), body))
         stamps = [(m.start(), m.group(1)) for m in STAMP_RE.finditer(body)]
         report = {"emphasis_dropped": [], "terms_unverified": []}
 
         kept = []
         for e in data["emphasis"]:
             score, pos, length = find_quote(e["quote"], norm)
-            if score < self.s["quote_match"] or not idx:
+            if score < self.s["quote_match"] or not spans or length == 0:
                 report["emphasis_dropped"].append(e["quote"])
                 continue
-            a = idx[pos]
-            b = idx[min(pos + length, len(idx)) - 1] + 1
+            matched = spans[pos:pos + length]
+            a = min(start for start, _ in matched)
+            b = max(end for _, end in matched)
             time_label = label
             for off, st in stamps:
                 if off <= a:
@@ -393,13 +428,13 @@ class Summarizer:
         mode = self.s["unverified_terms"]
         terms, seen = [], set()
         for t in data["terms"]:
-            key = _normalize(t["term"])[0]
+            key = normalize_text(t["term"])[0]
             if not key or key in seen:
                 continue
             seen.add(key)
-            if t["asr_original"] and _normalize(t["asr_original"])[0] == key:
+            if t["asr_original"] and normalize_text(t["asr_original"])[0] == key:
                 t["asr_original"] = ""
-            found = key in norm or (t["asr_original"] and _normalize(t["asr_original"])[0] in norm)
+            found = key in norm or (t["asr_original"] and normalize_text(t["asr_original"])[0] in norm)
             t["verified"] = bool(found)
             if not found:
                 report["terms_unverified"].append(t["term"])

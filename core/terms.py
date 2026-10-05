@@ -4,11 +4,11 @@ import re
 from difflib import SequenceMatcher
 from pathlib import Path
 
-from .summarize import _bigrams, _normalize
+from .summarize import bigrams, normalize_text
 
 
 def normalized(value):
-    return _normalize(str(value))[0]
+    return normalize_text(str(value))[0]
 
 
 def collect(notes_jsonl):
@@ -72,7 +72,7 @@ def similarity(a, b):
         return min(len(a), len(b)) / max(len(a), len(b))
     if len(a) == len(b) == 2 and a[0] == b[0] and {a[1], b[1]} == {"線", "纖"}:
         return 0.5
-    aa, bb = _bigrams(a), _bigrams(b)
+    aa, bb = bigrams(a), bigrams(b)
     score = len(aa & bb) / len(aa | bb)
     # Require stronger character overlap for longer Chinese terms. A single
     # common character makes short unrelated words look deceptively similar.
