@@ -38,7 +38,7 @@ segmentation_window_shift = 0.1  # 秒，須 > 0
 
 ## 辨識模組與產物
 
-Claude 引擎層提供同步可呼叫介面 `diarize_session(request, progress, cancel) -> DiarizationResult`（實際模組檔案所有權待指派）。`request` 含 session 內來源音檔的已驗證絕對路徑、預計人數、兩模型路徑、threshold、window shift、轉錄設定及輸出 staging 目錄；不得以舊 Markdown 的字元位置作對齊。`progress` 收到 `{stage: "segmentation"|"retranscription", processed_seconds, total_seconds, speakers_found}`，秒數單調不減且在 `[0,total]`；`cancel` 在每個可中斷區間被輪詢，正常取消保留原逐字稿。模組回傳實際代號數、各代號有聲秒數與暫存產物路徑。輸入、模型、解碼、推論、ASR、寫檔錯誤以穩定代碼分類；不吞例外、不產生看似成功的空稿。
+Claude 引擎層提供同步可呼叫介面 `diarize_session(request, progress, cancel) -> DiarizationResult`（模組所有權見 [CLAUDE.md](../CLAUDE.md)／[CODEX.md](../CODEX.md)）。`request` 含 session 內來源音檔的已驗證絕對路徑、預計人數、兩模型路徑、threshold、window shift、轉錄設定及輸出 staging 目錄；不得以舊 Markdown 的字元位置作對齊。`progress` 收到 `{stage: "segmentation"|"retranscription", processed_seconds, total_seconds, speakers_found}`，秒數單調不減且在 `[0,total]`；`cancel` 在每個可中斷區間被輪詢，正常取消保留原逐字稿。模組回傳實際代號數、各代號有聲秒數與暫存產物路徑。輸入、模型、解碼、推論、ASR、寫檔錯誤以穩定代碼分類；不吞例外、不產生看似成功的空稿。
 
 `transcript.md` / `transcript.srt` 繼續是錄音或匯入期間的原稿，格式不變。新 `diarization/<generation>/transcript.speakers.md` 為 UTF-8 Obsidian Markdown：首行 `# <meeting name> · 發言者逐字稿`，其後每一發言行為 `[HH:MM:SS.mmm–HH:MM:SS.mmm] S01: 文字`。代號依首次出現順序編為 S01、S02；無法可靠指派時使用 `S00`，不虛構身分。時間來自音訊區間及重新轉錄的實際時間戳，不按字數估算，也不以 OpenCC 後的字元索引貼回原稿。允許繁體中文及英文術語原文。
 
@@ -72,8 +72,8 @@ Claude 引擎層提供同步可呼叫介面 `diarize_session(request, progress, 
 
 自動 contract tests：舊缺值判 lecture、設定合併順序與獨立 namespace、排他目錄、來源複製與雜湊、schema 1→2 reader、CLI JSON/exit code、API 400/404/409/422、phase 序列、兩工作並發只一個成功、stop/force/cancel/retry、不覆蓋舊產物、UI 10/4 收折與跨頁進度。UI lint/type/build 及後端/stdlib 測試全過。Mock tests 模擬長時進度、取消安全點、解碼與模型錯誤。Manual tests 用乾淨音檔檢查原稿不變、暫存清理後可重跑、UI 切頁不中斷、Obsidian 顯示。Hardware tests 在 Linux 真機錄 10 人中文夾英文會議，檢查時間戳與代號、耗時、記憶體、正常/強制停止、重試；macOS/Windows 需各自真機驗證才可聲稱支援。真實辨識準確度仍是未驗證門檻，不能以受損的 87.7 分鐘錄音作通過依據。
 
-Codex 實作順序：契約與 UI mock → `core/config.py` / `core/cli.py` / `core/status.py` / `core/session.py` + contract tests → UI backend schema/API/store/control → 真資料 UI。Claude 實作順序：乾淨樣本品質驗證 → 引擎封裝及時間戳產物 → 與 Codex 定義的介面整合；不得在品質驗證前接入正式 UI。`core/platform.py`、`core/devices.py`、`core/doctor.py`、安裝/升級腳本及平台測試由 Claude 擁有，需變動時走 CROSS_AGENT_REQUEST。**尚未指派所有權**：`core/transcribe.py`、`core/servers.py`、`core/diarize.py`（新檔）、`core/summarize.py`、`core/util.py`、`config/default.toml`、`config/template.toml`、`meetings/` 範本、`docs/meeting-workbench-*.md`、跨層整合測試；由 human maintainer 指派後各自修改。`README.md`/`AGENTS.md` 為共用，README 變更須獨立 commit。
+Codex 實作順序：契約與 UI mock → `core/config.py` / `core/cli.py` / `core/status.py` / `core/session.py` + contract tests → UI backend schema/API/store/control → 真資料 UI。Claude 實作順序：乾淨樣本品質驗證 → 引擎封裝及時間戳產物 → 與 Codex 定義的介面整合；不得在品質驗證前接入正式 UI。檔案所有權、共用檔案規則與測試分工以 [CLAUDE.md](../CLAUDE.md)／[CODEX.md](../CODEX.md) 為準；跨所有權變更走 CROSS_AGENT_REQUEST，跨層整合測試依被斷言的契約分工。
 
 ## 現況差距與待決事項
 
-目前程式沒有 meeting CLI/錄音 API、持久來源、辨識階段及輸出；本文件的大部分命名、schema 2 與路徑均是未來契約。分享 reader 已能依測試用會議 session 的 `work_type` 與 generation manifest 讀取兩份逐字稿，但正式會議來源尚未生成，mock 示範資料不能分享。Claude 所述模型組合已被採用為實作候選，尚需乾淨樣本品質驗收；模型檔再散佈方式、各平台安裝驗證及上述未指派檔案的所有權由 maintainer 決定。實作前若變更本契約須同步更新文件與 contract tests。
+目前程式沒有 meeting CLI/錄音 API、持久來源、辨識階段及輸出；本文件的大部分命名、schema 2 與路徑均是未來契約。分享 reader 已能依測試用會議 session 的 `work_type` 與 generation manifest 讀取兩份逐字稿，但正式會議來源尚未生成，mock 示範資料不能分享。Claude 所述模型組合已被採用為實作候選，尚需乾淨樣本品質驗收；模型檔再散佈方式與各平台安裝驗證由 maintainer 決定。實作前若變更本契約須同步更新文件與 contract tests。
