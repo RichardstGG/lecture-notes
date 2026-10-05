@@ -1,8 +1,13 @@
 """whisper-server / llama-server 的啟動、沿用、關閉。
 
-擁有權紀錄存在 <state_dir>/servers/<name>.json：
+擁有權紀錄存在 `cfg.state_dir()/servers/<name>.json`，也就是 `lec doctor` 的
+「狀態資料夾」（Linux 預設 `~/.local/state/lecture-notes`），與 `run.json` 同一處：
 - lec 啟動的 server：模型相同就沿用，不同就重啟；本次執行結束時關閉。
 - 手動開啟的 server（沒有擁有權紀錄）：模型相同（或無法判斷）就沿用並提醒，不同就停止並報錯，不動它。
+
+舊版把紀錄寫在 `cfg.path(cfg["paths"]["state_dir"])`，而預設值是字面字串 "auto"，
+所以會解析成 repo 內的 `<app_root>/auto/servers/`。`_adopt_legacy_record()` 會把
+還有效的舊紀錄接過來，免得升級時把正在執行的 server 變成沒人管的孤兒。
 """
 import json
 import os
@@ -39,15 +44,26 @@ def _same_file(a, b):
         return False
 
 
+def _legacy_state_dir(cfg):
+    """舊版錯用的紀錄位置：沒有把 "auto" 交給 cfg.state_dir() 解析，直接當路徑用。"""
+    try:
+        return cfg.path(cfg["paths"]["state_dir"])
+    except (KeyError, TypeError, OSError):
+        return None
+
+
 class ManagedServer:
     name = "server"
     health_path = "/"
 
-    def __init__(self, host, port, model_path, state_dir, startup_timeout=120):
+    def __init__(self, host, port, model_path, state_dir, startup_timeout=120,
+                 legacy_state_dir=None):
         self.host, self.port = host, int(port)
         self.url = f"http://{host}:{port}"
         self.model_path = str(model_path)
         self.own_file = Path(state_dir) / "servers" / f"{self.name}.json"
+        self.legacy_own_file = (Path(legacy_state_dir) / "servers" / f"{self.name}.json"
+                                if legacy_state_dir else None)
         self.startup_timeout = startup_timeout
         self.pid = None
         self.owned = False        # 本次執行結束時是否由我們關閉
@@ -73,8 +89,31 @@ class ManagedServer:
         st, _ = http_get(self.url + self.health_path)
         return st is not None
 
+    def _adopt_legacy_record(self):
+        """把舊位置（repo 內的 auto/servers/）的紀錄接到現在的位置。
+
+        只在新位置還沒有紀錄時接管，接完就刪掉舊檔；兩個路徑相同（使用者把
+        paths.state_dir 設成絕對路徑）時什麼都不做。失敗不致命——最壞的情況
+        是那台 server 被當成「手動開啟」，沿用但不關閉，跟升級前一樣。
+        """
+        legacy = self.legacy_own_file
+        if legacy is None or legacy == self.own_file:
+            return
+        try:
+            if self.own_file.exists() or not legacy.is_file():
+                return
+            record = read_json(legacy)
+            if record is not None:
+                self.own_file.parent.mkdir(parents=True, exist_ok=True)
+                write_json(self.own_file, record)
+                log(f"▶ 已把 {self.name} 的舊擁有權紀錄移到 {self.own_file.parent}")
+            legacy.unlink(missing_ok=True)
+        except OSError as e:
+            log(f"⚠ 無法移動 {self.name} 的舊擁有權紀錄（{legacy}）：{e}")
+
     def ensure(self, log_path):
         self.log_path = Path(log_path)
+        self._adopt_legacy_record()
         own = read_json(self.own_file)
         if own and not (pid_alive(own.get("pid")) and own.get("port") == self.port):
             own = None
@@ -192,7 +231,8 @@ class WhisperServer(ManagedServer):
     def __init__(self, cfg):
         w = cfg["whisper"]
         super().__init__(w["host"], w["port"], cfg.whisper_model_path(),
-                         cfg.path(cfg["paths"]["state_dir"]), startup_timeout=120)
+                         cfg.state_dir(), startup_timeout=120,
+                         legacy_state_dir=_legacy_state_dir(cfg))
         self.whisper_dir = cfg.path(cfg["paths"]["whisper_dir"])
         self.lang, self.threads = w["language"], w["threads"]
 
@@ -212,7 +252,8 @@ class LlamaServer(ManagedServer):
         l = cfg["llm"]
         self.model = cfg.llm_model(model)
         super().__init__(l["host"], l["port"], self.model["path"],
-                         cfg.path(cfg["paths"]["state_dir"]), startup_timeout=l["startup_timeout"])
+                         cfg.state_dir(), startup_timeout=l["startup_timeout"],
+                         legacy_state_dir=_legacy_state_dir(cfg))
         self.llama_dir = cfg.path(cfg["paths"]["llama_dir"])
         self.l = l
 
