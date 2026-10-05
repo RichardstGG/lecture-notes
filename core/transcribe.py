@@ -32,6 +32,14 @@ SR = 16000
 FRAME_MS = 30
 FRAME_SAMPLES = SR * FRAME_MS // 1000
 FRAME_BYTES = FRAME_SAMPLES * 2
+READ_BLOCK = FRAME_BYTES * 10
+# 落後這麼多個 READ_BLOCK（約 30 秒音訊）就提醒一次；不丟音訊，只是讓它可見。
+BACKLOG_WARN_BLOCKS = int(30 * SR * 2 / READ_BLOCK)
+# 擷取遺失超過這個比例就當成錯誤回報（存檔是會後處理唯一的來源）。
+CAPTURE_LOSS_ERROR = 0.02
+# 低於這個比例不吭聲：ogg/opus 的 granule 取整本來就會留下一堆微小空隙，
+# 開發機上 10 份正常錄音量到 0.000–0.057%，都是無害的。
+CAPTURE_LOSS_WARN = 0.005
 
 HALLUCINATIONS = re.compile(
     r"(字幕|訂閱|點贊|點讚|按讚|感謝觀看|謝謝觀看|明鏡|Amara|請不吝|小鈴鐺|優優獨播)")
@@ -330,6 +338,93 @@ def decode_srt(raw):
     return "\n\n".join(out) + "\n"
 
 
+def capture_gap_report(packets, min_gap=0.001):
+    """擷取完整性：封包時長總和 vs 時間戳跨距，差多少就是錄音時被丟掉的音訊。
+
+    `packets` 是 (pts_seconds, duration_seconds) 的可迭代物（可以是 generator，
+    三小時的錄音有五十幾萬個封包，不要整份讀進記憶體）。
+
+    為什麼需要這個：ffmpeg 的擷取緩衝溢出時會直接丟音訊，但**結束代碼仍然是 0**，
+    逐字稿與存檔都看不出異常。macOS 實機上量到一份 87.7 分鐘的錄音只錄到 70.0
+    分鐘的音訊（5,196 個空隙、每秒固定掉約 0.2 秒），而當時完全沒有任何警告。
+    """
+    total = span_start = span_end = 0.0
+    gaps = lost = max_gap = 0.0
+    gap_count = 0
+    spacing_sum = 0.0
+    spacing_count = 0
+    prev_end = None
+    prev_gap_at = None
+    first = True
+    for pts, dur in packets:
+        if first:
+            span_start = pts
+            first = False
+        total += dur
+        if prev_end is not None:
+            g = pts - prev_end
+            if g >= min_gap:
+                gap_count += 1
+                lost += g
+                max_gap = max(max_gap, g)
+                if prev_gap_at is not None:
+                    spacing_sum += pts - prev_gap_at
+                    spacing_count += 1
+                prev_gap_at = pts
+        prev_end = pts + dur
+        span_end = prev_end
+    span = max(span_end - span_start, 0.0)
+    return {
+        "audio_seconds": round(total, 3),
+        "span_seconds": round(span, 3),
+        "lost_seconds": round(lost, 3),
+        "lost_ratio": round(lost / span, 6) if span > 0 else 0.0,
+        "gap_count": gap_count,
+        "max_gap_seconds": round(max_gap, 3),
+        # 規律的間距代表系統性丟失（某個週期性動作把擷取卡住），
+        # 不規律代表偶發的負載尖峰。診斷時差很多。
+        "mean_gap_spacing_seconds": (round(spacing_sum / spacing_count, 3)
+                                     if spacing_count else None),
+    }
+
+
+def _ffprobe_packets(path):
+    """串流讀出 (pts, duration)；ffprobe 不在或讀不到就什麼都不產生。"""
+    cmd = ["ffprobe", "-v", "error", "-select_streams", "a:0", "-show_packets",
+           "-show_entries", "packet=pts_time,duration_time",
+           "-of", "csv=p=0", str(path)]
+    try:
+        proc = subprocess.Popen(cmd, stdout=subprocess.PIPE, stderr=subprocess.DEVNULL)
+    except OSError:
+        return
+    try:
+        for line in proc.stdout:
+            parts = line.decode("utf-8", "replace").strip().split(",")
+            if len(parts) < 2:
+                continue
+            try:
+                yield float(parts[0]), float(parts[1])
+            except ValueError:
+                continue
+    finally:
+        try:
+            proc.stdout.close()
+        except OSError:
+            pass
+        proc.wait()
+
+
+def probe_capture(path):
+    """對存檔跑完整性檢查；無法檢查時回傳 None（不要因此讓錄音失敗）。"""
+    try:
+        if not Path(path).is_file():
+            return None
+    except OSError:
+        return None
+    report = capture_gap_report(_ffprobe_packets(path))
+    return report if report["span_seconds"] > 0 else None
+
+
 def _multipart(fields, file_field, file_path):
     """自己組 multipart/form-data（只用標準函式庫，不依賴 curl）。"""
     boundary = "----lec" + uuid.uuid4().hex
@@ -371,6 +466,10 @@ def transcribe_request(server, wav_path, prompt):
 
 class Transcriber:
     """一次錄音（或一個音檔）的轉錄流程。run() 會阻塞到結束；request_stop() 可由 signal handler 呼叫。"""
+
+    # keep_recording 的存檔路徑，由 run() 設定；錄完會檢查完整性。
+    # 放在類別上，繞過 __init__ 的子類別（測試 harness）也能安全取用。
+    recording_path = None
 
     def __init__(self, cfg, session_dir, server_url, input_file=None, status=None):
         self.cfg = cfg
@@ -495,6 +594,19 @@ class Transcriber:
                      sections_total=self.writer.sections)
         return tail
 
+    def _drain(self, sink):
+        """只做一件事：把 ffmpeg 的 stdout 盡快讀乾，別讓它因為我們而阻塞。"""
+        try:
+            while True:
+                data = self.proc.stdout.read(READ_BLOCK)
+                if not data:
+                    break
+                sink.put(data)
+        except (OSError, ValueError):            # pipe 被關掉就正常收尾
+            pass
+        finally:
+            sink.put(None)
+
     # -- 主流程
     def run(self):
         if self.live:
@@ -504,6 +616,7 @@ class Transcriber:
                    "-ac", "1", "-ar", str(SR), "-f", "s16le", "pipe:1"]
             if self.cfg["audio"]["keep_recording"]:
                 rec = self.session / f"recording_{datetime.now():%H%M%S}.ogg"
+                self.recording_path = rec
                 cmd += ["-ac", "1", "-ar", str(SR), "-c:a", "libopus", "-b:a", "32k", str(rec)]
         else:
             cmd = ["ffmpeg", "-hide_banner", "-loglevel", "error", "-nostdin", "-i", self.file,
@@ -521,12 +634,30 @@ class Transcriber:
         self.proc = subprocess.Popen(cmd, stdout=subprocess.PIPE, **P.spawn_kwargs())
         if self.stopping and self.live:
             self.proc.send_signal(signal.SIGINT)
+
+        # ffmpeg 的 stdout 由專屬執行緒讀乾，VAD 與 status 寫檔都不在讀取路徑上。
+        # 以前三件事在同一個迴圈：任何一次停頓都會讓 pipe 填滿 → ffmpeg 阻塞 →
+        # 作業系統的擷取緩衝溢出 → 音訊被丟掉，而且**連 keep_recording 的存檔
+        # 一起破**（存檔是會後處理唯一的來源）。macOS 實機上這條路徑每秒固定
+        # 掉約 0.2 秒；Linux 的 PulseAudio 在 server 端有緩衝所以看不出來。
+        raw = queue.Queue()
+        reader = threading.Thread(target=self._drain, args=(raw,), daemon=True)
+        reader.start()
+
         buf = b""
         last_update = 0.0
+        warned_backlog = False
         while True:
-            data = self.proc.stdout.read(FRAME_BYTES * 10)
-            if not data:
+            data = raw.get()
+            if data is None:
                 break
+            if not warned_backlog and raw.qsize() > BACKLOG_WARN_BLOCKS:
+                warned_backlog = True
+                secs = raw.qsize() * READ_BLOCK / 2 / SR
+                log(f"⚠ 音訊處理落後約 {secs:.0f} 秒（記憶體會隨之成長）；"
+                    f"錄音本身仍在繼續")
+                if self.status:
+                    self.status.event("audio_backlog", seconds=round(secs, 1))
             if self.abort:
                 continue
             buf += data
@@ -539,6 +670,7 @@ class Transcriber:
             if now - last_update >= 1:
                 last_update = now
                 self._update(elapsed=round(self.chunker.total_seconds, 1), queue=self.q.qsize())
+        reader.join(timeout=5)
         rc = self.proc.wait()
         self.ffmpeg_returncode = rc
         ffmpeg_failed = rc not in (0, 255, -2, -15) and not self.stopping
@@ -568,7 +700,35 @@ class Transcriber:
                 f"但 ffmpeg 結束代碼 {rc}，錄音或音檔可能不完整")
         else:
             log(f"✔ 轉錄完成：總長 {hms(total)}，轉錄 {speed:.1f}x 速")
+        capture = self._check_capture()
         self._update(elapsed=round(total, 1), queue=0, sections_total=self.writer.sections)
         return {"duration": total, "speed": speed, "aborted": self.abort,
                 "gaps": list(self.gaps), "lost_seconds": lost,
-                "ffmpeg_returncode": rc, "ffmpeg_failed": ffmpeg_failed}
+                "ffmpeg_returncode": rc, "ffmpeg_failed": ffmpeg_failed,
+                "capture": capture}
+
+    def _check_capture(self):
+        """錄音存檔的完整性。ffmpeg 丟音訊時結束代碼仍是 0，所以得自己量。"""
+        if not self.recording_path:
+            return None
+        report = probe_capture(self.recording_path)
+        if not report:
+            return None
+        if report["lost_ratio"] >= CAPTURE_LOSS_ERROR:
+            spacing = report["mean_gap_spacing_seconds"]
+            regular = (f"，平均每 {spacing:.2f} 秒一次（規律間隔代表系統性問題，"
+                       f"不是偶發負載）" if spacing else "")
+            msg = (f"錄音存檔遺失 {100 * report['lost_ratio']:.1f}% 的音訊"
+                   f"（錄到 {report['audio_seconds'] / 60:.1f} 分，"
+                   f"時間跨距 {report['span_seconds'] / 60:.1f} 分；"
+                   f"{report['gap_count']} 個空隙{regular}）")
+            log(f"✖ {msg}")
+            log("  存檔是會後處理唯一的來源，這份錄音不適合用來做發言者辨識。")
+            if self.status:
+                self.status.error(msg)
+        elif report["lost_ratio"] >= CAPTURE_LOSS_WARN:
+            log(f"⚠ 錄音存檔有 {report['gap_count']} 個空隙，"
+                f"共 {report['lost_seconds']:.1f} 秒（{100 * report['lost_ratio']:.2f}%）")
+        if self.status:
+            self.status.event("capture_integrity", **report)
+        return report

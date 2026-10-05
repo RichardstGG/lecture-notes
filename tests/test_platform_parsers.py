@@ -105,12 +105,12 @@ class AvfoundationSourcesTests(unittest.TestCase):
     def test_ffmpeg_input_resolves_index_by_name(self):
         with mock.patch.object(P, "_run", return_value=self.SAMPLE):
             args = P.ffmpeg_input("Background Music (UI Sound)", backend="avfoundation")
-        self.assertEqual(args, ["-f", "avfoundation", "-thread_queue_size", "512", "-i", ":1"])
+        self.assertEqual(args, ["-f", "avfoundation", "-thread_queue_size", "4096", "-i", ":1"])
 
     def test_ffmpeg_input_falls_back_to_index_zero(self):
         with mock.patch.object(P, "_run", return_value=self.SAMPLE):
             args = P.ffmpeg_input("找不到的裝置", backend="avfoundation")
-        self.assertEqual(args, ["-f", "avfoundation", "-thread_queue_size", "512", "-i", ":0"])
+        self.assertEqual(args, ["-f", "avfoundation", "-thread_queue_size", "4096", "-i", ":0"])
 
 
 class DshowSourcesTests(unittest.TestCase):
@@ -176,7 +176,7 @@ class DshowSourcesTests(unittest.TestCase):
 
     def test_ffmpeg_input_uses_audio_prefix(self):
         args = P.ffmpeg_input("@device_cm_{...}", backend="dshow")
-        self.assertEqual(args, ["-f", "dshow", "-thread_queue_size", "512",
+        self.assertEqual(args, ["-f", "dshow", "-thread_queue_size", "4096",
                                  "-i", "audio=@device_cm_{...}"])
 
     def test_missing_ffmpeg_returns_none(self):
