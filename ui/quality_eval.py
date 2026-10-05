@@ -26,6 +26,10 @@ SRT_CUE = re.compile(r"^(\d\d:\d\d:\d\d,\d{3}) --> (\d\d:\d\d:\d\d,\d{3})$",
 
 
 def normalized(value):
+    """NFKC, then casefold, then alphanumerics: same policy as core's
+    normalize_text. Kept local to preserve the UI/core import boundary;
+    cross-layer parity tests guard against drift.
+    """
     value = unicodedata.normalize("NFKC", value).casefold()
     return "".join(char for char in value if char.isalnum())
 
