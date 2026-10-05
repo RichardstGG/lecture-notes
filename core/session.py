@@ -225,9 +225,21 @@ class LectureRun(_Base):
             self.stage = "transcribe"
             self.status.phase("recording" if self.live else "transcribing")
             result = self.transcriber.run()
+            if result.get("gaps"):
+                self.status.event("transcription_gaps", gaps=result["gaps"],
+                                  lost_seconds=result["lost_seconds"],
+                                  ffmpeg_returncode=result.get("ffmpeg_returncode"))
+            if result.get("ffmpeg_failed") and result["duration"] == 0:
+                code = 1
+                self.status.error(
+                    f"沒有讀到任何音訊（ffmpeg 結束代碼 {result.get('ffmpeg_returncode')}）")
 
             # ---- 總結收尾
-            if thread:
+            if code and thread:
+                self.summarizer.abort.set()
+                self.finish.set()
+                thread.join(cfg["summary"]["final_wait"])
+            elif thread:
                 self.stage = "summarize"
                 self.status.phase("summarizing")
                 wait = cfg["summary"]["final_wait"]
@@ -240,7 +252,7 @@ class LectureRun(_Base):
                     self.summarizer.abort.set()
                     log("⚠ 最後一段總結未完成，之後可執行：lec summarize " f"\"{self.dir}\"")
             elif (summary_on and not self.live and cfg["summary"]["file_mode"] == "after"
-                  and not result["aborted"]):
+                  and not result["aborted"] and code == 0):
                 self.stage = "summarize"
                 self.status.phase("summarizing")
                 # 轉錄完先關 whisper，把 iGPU 讓給 LLM

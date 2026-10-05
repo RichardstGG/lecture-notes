@@ -18,7 +18,7 @@ from datetime import datetime
 from difflib import SequenceMatcher
 from pathlib import Path
 
-from .transcribe import parse_srt
+from .transcribe import GAP_MARK, parse_srt
 from .util import atomic_write, hms, log, opencc_available, opencc_convert, parse_hms
 
 HEADER_RE = re.compile(r"^## (\d{2}:\d{2}:\d{2})[ \t]*$", re.M)
@@ -272,6 +272,8 @@ class Summarizer:
     @staticmethod
     def _prep_body(block):
         text = "\n\n".join(s.body for s in block)
+        text = "\n".join(line for line in text.split("\n")
+                         if not line.startswith(GAP_MARK))
         text = re.sub(r"[，、]?…+[，、]?", "…", text)
         text = re.sub(r"(…\s*){2,}", "…", text)
         return text
@@ -517,7 +519,8 @@ class Summarizer:
     def process(self, block, sections, rebuild=False):
         start, end = self._time_range(block, sections)
         label = block[0].label
-        chars = sum(s.chars for s in block)
+        body = self._prep_body(block)
+        chars = Section(label, start, body).chars
         base = {"label": label, "start": start, "end": end,
                 "sections": [s.label for s in block], "chars": chars,
                 "model": self.model["name"], "created": datetime.now().isoformat(timespec="seconds")}
@@ -528,7 +531,6 @@ class Summarizer:
             self._save({**base, "status": "empty"}, rebuild)
             return
 
-        body = self._prep_body(block)
         prev = [e for e in self._ordered() if e["start"] < start and e["status"] == "ok"]
         prev = prev[-self.s["context_sections"]:] if self.s["context_sections"] > 0 else []
         recap = "\n".join(f"- {e['label']} {e['topic']}" for e in prev) or "（這是第一段）"
