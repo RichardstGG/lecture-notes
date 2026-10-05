@@ -93,3 +93,26 @@ Known event payloads are:
 Legacy lines without `schema_version` or `seq` remain valid input. When appending
 to an existing file, the producer continues after both the number of valid legacy
 records and the highest existing sequence number.
+
+## Transcription failures and gaps
+
+`lec run` now returns exit code `1` and ends with `phase="failed"` when
+`Transcriber.run()` reports `ffmpeg_failed=true` and `duration=0`. Previously this
+case incorrectly returned `0` / `done`. File-mode summarization is skipped and a
+live summary worker is stopped. This is an intentional compatibility correction
+for automation consuming the exit code or phase; no new phase is introduced.
+A zero-length result without ffmpeg failure retains its existing success behavior.
+A partial recording, including recoverable transcription gaps, still finishes
+with exit `0` / `done` unless another fatal session error occurs.
+
+When gaps are reported, the session appends one `transcription_gaps` event using
+the existing schema-1 envelope (`schema_version`, `seq`, `time`, `type`). Its
+`gaps` array contains `{start, seconds, reason}` entries from the transcriber;
+`lost_seconds` is the aggregate lost audio duration, and `ffmpeg_returncode` is
+the decoder return code (or null when unavailable). Existing error events remain.
+Readers must continue ignoring unknown event types; no schema version changes.
+
+Summary prompts omit lines starting with the exported transcription gap marker
+(`> ⚠ 轉錄失敗`). These diagnostic lines remain in the saved transcript but do
+not count toward the summary's content length. A gap-only block is recorded as
+empty without requesting an LLM summary.
