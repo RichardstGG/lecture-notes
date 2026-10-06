@@ -1,4 +1,5 @@
 import type {
+  CaptureCapabilities,
   ActionResponse,
   AudioUpload,
   ApiErrorEnvelope,
@@ -90,6 +91,7 @@ async function uploadAudio(file: File): Promise<AudioUpload> {
 }
 
 export const api = {
+  captureCapabilities: () => request<CaptureCapabilities>("/api/v1/capture-capabilities"),
   sharingNetwork: () => request<SharingNetwork>("/api/v1/sharing/network"),
   sharing: () => request<SharingStatus>("/api/v1/sharing"),
   openSharing: (session_id: string, host: string, port: number, advertise_host?: string) => request<SharingStatus>(

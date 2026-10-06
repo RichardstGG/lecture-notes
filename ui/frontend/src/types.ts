@@ -289,3 +289,10 @@ export interface SharingStatus {
   error?: string;
   participants: { id: string; nickname: string; online: boolean }[];
 }
+
+
+export interface CaptureCapabilities {
+  schema_version: 1;
+  single: { available: boolean; reason_code: string | null; message: string };
+  dual: { available: boolean; reason_code: string | null; message: string };
+}

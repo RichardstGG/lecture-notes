@@ -5,6 +5,11 @@ import { api } from "./api";
 import type { SessionSummary } from "./types";
 
 vi.mock("./api", () => ({ api: {
+  captureCapabilities: vi.fn().mockResolvedValue({
+    schema_version: 1,
+    single: { available: true, reason_code: null, message: "單來源" },
+    dual: { available: false, reason_code: "engine_not_integrated", message: "雙音源引擎與會議流程尚未整合" },
+  }),
   status: vi.fn(), courses: vi.fn(), models: vi.fn(), sessions: vi.fn(), session: vi.fn(),
   devices: vi.fn(), course: vi.fn(), termCandidates: vi.fn(), sharing: vi.fn(), sharingNetwork: vi.fn(),
   start: vi.fn(), stop: vi.fn(),

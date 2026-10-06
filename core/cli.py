@@ -401,6 +401,18 @@ def cmd_doctor(args):
     return 1 if any(it["status"] == doctor.FAIL for it in items) else 0
 
 
+def cmd_capture_capabilities(args):
+    from .session import capture_capabilities
+    result = capture_capabilities()
+    if args.json:
+        print(json.dumps(result, ensure_ascii=False))
+    else:
+        for key in ("single", "dual"):
+            item = result[key]
+            print(f"{key}: {item['message']}")
+    return 0
+
+
 def main(argv=None):
     ap = argparse.ArgumentParser(prog="lec", description="課堂筆記系統",
                                  formatter_class=argparse.RawDescriptionHelpFormatter, epilog=EPILOG)
@@ -461,6 +473,10 @@ def main(argv=None):
     p = sub.add_parser("stop", help="停止目前的 lec run（等同 Ctrl+C）")
     p.add_argument("--force", action="store_true", help="強制結束（等同連按兩次 Ctrl+C）")
     p.set_defaults(func=cmd_stop)
+
+    p = sub.add_parser("capture-capabilities", help="查詢錄音功能整合狀態（不開啟裝置）")
+    p.add_argument("--json", action="store_true")
+    p.set_defaults(func=cmd_capture_capabilities)
 
     p = sub.add_parser("devices", help="列出 / 測試 / 設定錄音來源")
     p.add_argument("--test", metavar="編號|名稱", help="錄 3 秒檢查音量")

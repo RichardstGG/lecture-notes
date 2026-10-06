@@ -4,7 +4,12 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { api } from "../api";
 import { MeetingWorkbench } from "./MeetingWorkbench";
 
-vi.mock("../api", () => ({ api: { session: vi.fn() } }));
+vi.mock("../api", () => ({ api: {
+  captureCapabilities: vi.fn().mockResolvedValue({
+    schema_version: 1,
+    single: { available: true, reason_code: null, message: "單來源" },
+    dual: { available: false, reason_code: "engine_not_integrated", message: "雙音源引擎與會議流程尚未整合" },
+  }), session: vi.fn() } }));
 vi.mock("./SharePanel", () => ({ SharePanel: ({ selectedId }: { selectedId?: string }) => <div>分享目標：{selectedId || "無"}</div> }));
 
 describe("meeting workbench preview", () => {
@@ -19,6 +24,24 @@ describe("meeting workbench preview", () => {
     });
   });
   afterEach(() => vi.unstubAllGlobals());
+
+  it("keeps dual recording disabled and never invents meters or devices", async () => {
+    render(<MeetingWorkbench runtime={{ schema_version: 1, running: false }} />);
+    fireEvent.change(screen.getByLabelText("錄音來源模式（預覽）"), { target: { value: "dual" } });
+    await screen.findByText("雙音源引擎與會議流程尚未整合");
+    expect(screen.getByLabelText("系統輸出裝置").hasAttribute("disabled")).toBe(true);
+    expect(screen.getByLabelText("麥克風裝置").hasAttribute("disabled")).toBe(true);
+    expect(screen.getByLabelText("各路音訊狀態").textContent).toContain("麥克風：未開始 · 音量未知");
+    expect(screen.getByRole("button", { name: "開始錄音（待串接）" }).hasAttribute("disabled")).toBe(true);
+  });
+
+  it("fails closed if capability lookup fails", async () => {
+    vi.mocked(api.captureCapabilities).mockRejectedValueOnce(new Error("offline"));
+    render(<MeetingWorkbench runtime={{ schema_version: 1, running: false }} />);
+    fireEvent.change(screen.getByLabelText("錄音來源模式（預覽）"), { target: { value: "dual" } });
+    await screen.findByText("無法查詢雙音源能力；錄音保持停用");
+    expect(screen.getByRole("button", { name: "開始錄音（待串接）" }).hasAttribute("disabled")).toBe(true);
+  });
 
   it("labels mock controls and collapses six short speakers in the 10/4 example", () => {
     render(<MeetingWorkbench runtime={{ schema_version: 1, running: false }} />);

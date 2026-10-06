@@ -53,6 +53,13 @@ class StubClient:
         self.term_calls = []
         self.term_result = None
 
+    async def capture_capabilities(self):
+        if self.error:
+            raise self.error
+        return {"schema_version": 1,
+                "single": {"available": True, "reason_code": None, "message": "single"},
+                "dual": {"available": False, "reason_code": "engine_not_integrated", "message": "pending"}}
+
     async def status(self):
         if self.error:
             raise self.error
@@ -188,6 +195,18 @@ class BackendApiTests(unittest.IsolatedAsyncioTestCase):
         transport = httpx.ASGITransport(app=self.app)
         async with httpx.AsyncClient(transport=transport, base_url="http://test") as client:
             return await client.request(method, path, **kwargs)
+
+    async def test_capture_capabilities_is_read_only_and_reports_gate(self):
+        response = await self.request("GET", "/api/v1/capture-capabilities")
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(response.json()["dual"]["reason_code"], "engine_not_integrated")
+        self.assertFalse(response.json()["dual"]["available"])
+        self.assertEqual(self.launcher.calls, [])
+        self.assertEqual(self.client.device_test_calls, [])
+        self.client.error = LecCommandError("cli_unavailable", "missing")
+        response = await self.request("GET", "/api/v1/capture-capabilities")
+        self.assertGreaterEqual(response.status_code, 400)
+        self.assertEqual(response.json()["error"]["code"], "cli_unavailable")
 
     async def test_upstream_selection_flows_through_run_and_redo(self):
         response = await self.request("POST", "/api/v1/runs", json={"course": "test", "upstream": "lab"})
