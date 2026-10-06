@@ -5,6 +5,7 @@ import { CourseEditor } from "./components/CourseEditor";
 import { MarkdownPane } from "./components/MarkdownPane";
 import { LocalSettings } from "./components/LocalSettings";
 import { SharePanel } from "./components/SharePanel";
+import { SummaryActions } from "./components/SummaryActions";
 import { RunPanel } from "./components/RunPanel";
 import { TermCandidates } from "./components/TermCandidates";
 import { MeetingWorkbench } from "./components/MeetingWorkbench";
@@ -25,7 +26,6 @@ export default function App() {
   const [tab, setTab] = useState<"transcript" | "notes" | "terms">("transcript");
   const [termData, setTermData] = useState<TermCandidatesResponse>();
   const [actionMessage, setActionMessage] = useState<string>();
-  const [summarizing, setSummarizing] = useState(false);
   const [phaseStartedAt, setPhaseStartedAt] = useState(() => Date.now());
   const [clockNow, setClockNow] = useState(() => Date.now());
   const runningId = sessionIdFromPath(
@@ -70,23 +70,10 @@ export default function App() {
   const stats = useMemo(() => [
     ["已處理音訊", formatDuration(data.status.status?.transcribed)],
     ["待轉錄片段", String(data.status.status?.queue ?? 0)],
+    ["摘要上游", data.status.status?.summary_upstream || "local"],
+    ["API 連線", ({ ready: "待請求", ok: "正常", failed: "失敗" } as Record<string, string>)[data.status.status?.summary_connection || ""] || "—"],
     ["筆記進度", `${data.status.status?.sections_summarized ?? 0} / ${data.status.status?.sections_total ?? 0}`],
   ], [data.status.status]);
-
-  async function summarize() {
-    if (!data.selectedId) return;
-    setSummarizing(true);
-    data.setError(undefined);
-    try {
-      const result = await api.summarize(data.selectedId);
-      setActionMessage(result.message);
-      await data.refresh();
-    } catch (reason) {
-      data.setError(reason instanceof Error ? reason.message : "無法啟動總結");
-    } finally {
-      setSummarizing(false);
-    }
-  }
 
   return <div className="app-shell">
     <aside className="sidebar">
@@ -174,7 +161,10 @@ export default function App() {
               <span className={`phase-dot ${session.phase || "unknown"}`} title={phaseLabels[session.phase || ""] || session.phase} />
             </button>)}
           </div>
-          {visibleDetail && !visibleDetail.session.has_notes && visibleDetail.session.has_transcript && <button className="button secondary full" disabled={summarizing || data.status.running} onClick={() => void summarize()}>{summarizing ? "啟動中…" : "補做課堂筆記"}</button>}
+          {visibleDetail && visibleDetail.session.has_transcript && <SummaryActions
+            key={data.selectedId} sessionId={data.selectedId!} models={data.models}
+            disabled={data.status.running} onChanged={data.refresh}
+            onError={data.setError} onMessage={setActionMessage} />}
         </aside>
       </div>
 

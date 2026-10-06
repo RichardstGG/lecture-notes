@@ -15,7 +15,7 @@ from .servers import LlamaServer, ServerError, WhisperServer
 from .status import RunLock, Status
 from .summarize import Summarizer
 from .transcribe import Transcriber
-from .util import atomic_write, die, log, safe_name
+from .util import atomic_write, die, log, read_json, safe_name
 
 
 def make_session_dir(cfg):
@@ -52,6 +52,7 @@ class _Base:
         self.whisper = None
         self.llama = None
         self.summarizer = None
+        self.summary_thread = None
         self.status = None
         self.lock = RunLock(cfg.state_dir())
         self.inhibitor = P.Inhibitor()
@@ -107,8 +108,21 @@ class _Base:
     def _on_signal(self, signum, frame):
         raise NotImplementedError
 
+    def _summary_target(self):
+        remote = self.cfg.remote_summary()
+        if remote is not None:
+            return remote
+        if self.llama is None:
+            self.llama = LlamaServer(self.cfg)
+        return self.llama.url, self.llama.model
+
     def _start_llama(self):
-        self.llama = LlamaServer(self.cfg)
+        if self.cfg.get("summary.upstream", "local") != "local":
+            if self.status:
+                self.status.update(summary_connection="ready")
+            return
+        if self.llama is None:
+            self.llama = LlamaServer(self.cfg)
         if self.status:
             self.status.set_server("llama", "loading")
         self.llama.ensure(self.dir / "llama-server.log")
@@ -120,6 +134,10 @@ class _Base:
 
     def _cleanup(self):
         self._stop_watcher()
+        if self.summarizer:
+            self.summarizer.abort.set()
+        if self.summary_thread and self.cfg.get("summary.upstream", "local") != "local":
+            self.summary_thread.join(1)
         for srv, key in ((self.llama, "llama"), (self.whisper, "whisper")):
             if srv:
                 try:
@@ -187,7 +205,9 @@ class LectureRun(_Base):
                                  course=cfg.course_name, session=str(self.dir),
                                  mode="live" if self.live else "file",
                                  input_file=str(self.input_file or ""),
-                                 summary_model=cfg["summary"]["model"] if cfg["summary"]["enabled"] else None)
+                                 summary_model=(cfg.get("summary.upstream", "local") if cfg.get("summary.upstream", "local") != "local"
+                                                else cfg["summary"]["model"]) if cfg["summary"]["enabled"] else None,
+                                 summary_upstream=cfg.get("summary.upstream", "local"))
             log(f"▶ 課程：{cfg.course_name}" + (f"（設定檔 {cfg.course_file.name}）" if cfg.course_file else ""))
             log(f"▶ 輸出資料夾：{self.dir}")
             for w in cfg.warnings:
@@ -205,22 +225,27 @@ class LectureRun(_Base):
             thread = None
             if summary_on and self.live:
                 try:
+                    target = self._summary_target()
                     self._start_llama()
-                    self.summarizer = Summarizer(cfg, self.dir, self.llama.url, self.llama.model, self.status)
+                    self.summarizer = Summarizer(cfg, self.dir, *target, self.status)
                     thread = threading.Thread(target=self.summarizer.run_live, args=(self.finish,),
                                               daemon=True)
                 except (ServerError, ConfigError) as e:
                     log(f"⚠ 無法啟動總結，本次只轉錄：{e}")
-                    self.status.set_server("llama", "failed")
-                    self.status.error(f"llama-server：{e}")
+                    if cfg.get("summary.upstream", "local") == "local":
+                        self.status.set_server("llama", "failed")
+                    else:
+                        self.status.update(summary_connection="failed")
+                    self.status.error(f"摘要上游：{e}")
                     self.summarizer = None
 
             self.transcriber = Transcriber(cfg, self.dir, self.whisper.url, self.input_file, self.status)
             if self.live:
                 log(f"  即時逐字稿：{self.dir / 'transcript.md'}")
                 if self.summarizer:
-                    log(f"  即時筆記：{self.dir / 'notes.md'}（模型 {self.llama.model['name']}）")
+                    log(f"  即時筆記：{self.dir / 'notes.md'}（模型 {self.summarizer.model['name']}）")
             if thread:
+                self.summary_thread = thread
                 thread.start()
             self.stage = "transcribe"
             self.status.phase("recording" if self.live else "transcribing")
@@ -250,6 +275,8 @@ class LectureRun(_Base):
                     thread.join(0.5)
                 if thread.is_alive():
                     self.summarizer.abort.set()
+                    if cfg.get("summary.upstream", "local") != "local":
+                        thread.join(1)  # remote waiter observes abort within 0.1s
                     log("⚠ 最後一段總結未完成，之後可執行：lec summarize " f"\"{self.dir}\"")
             elif (summary_on and not self.live and cfg["summary"]["file_mode"] == "after"
                   and not result["aborted"] and code == 0):
@@ -259,12 +286,15 @@ class LectureRun(_Base):
                 self.whisper.stop()
                 self.status.set_server("whisper", "stopped")
                 try:
+                    target = self._summary_target()
                     self._start_llama()
-                    self.summarizer = Summarizer(cfg, self.dir, self.llama.url, self.llama.model, self.status)
+                    self.summarizer = Summarizer(cfg, self.dir, *target, self.status)
                     n = self.summarizer.run_all()
                     log(f"✔ 總結完成 {n} 段")
                 except (ServerError, ConfigError) as e:
                     log(f"✖ 無法總結：{e}")
+                    if cfg.get("summary.upstream", "local") != "local":
+                        self.status.update(summary_connection="failed")
                     self.status.error(str(e))
             self.stage = "cleanup"
             self.status.phase("finishing")
@@ -305,7 +335,7 @@ class OfflineSummary(_Base):
             raise KeyboardInterrupt
         if self.summarizer and not self.summarizer.abort.is_set():
             print(flush=True)
-            log("▶ 完成目前這段後停止（再按一次 Ctrl+C 強制結束）")
+            log("▶ 停止摘要並收尾（再按一次 Ctrl+C 強制結束）")
             self.summarizer.abort.set()
             return
         self._force_exit()
@@ -322,21 +352,32 @@ class OfflineSummary(_Base):
         self._start_stop_watcher()
         code = 0
         try:
-            log(f"▶ 離線總結：{self.dir}（課程 {self.cfg.course_name}，模型 {self.cfg['summary']['model']}）")
+            log(f"▶ 離線總結：{self.dir}（課程 {self.cfg.course_name}，上游 {self.cfg.get('summary.upstream', 'local')}）")
             for w in self.cfg.warnings:
                 log(f"⚠ {w}")
-            self.llama = LlamaServer(self.cfg)
-            self.summarizer = Summarizer(self.cfg, self.dir, self.llama.url, self.llama.model)
+            target = self._summary_target()
+            self.summarizer = Summarizer(self.cfg, self.dir, *target)
             # 先確認有事可做，避免白白載入模型
             if self.redo and self.redo != "all":
                 self.summarizer.redo_block(self.redo)
             elif not self.redo and not self.summarizer.next_block(self.summarizer.read_sections(), done=True):
                 log("▷ 沒有尚未總結的段落（要重做請加 --redo <時間> 或 --redo all）")
                 return code
+            previous = read_json(self.dir / "status.json", {})
+            initial = previous if isinstance(previous, dict) else {}
+            initial.update(course=self.cfg.course_name, session=str(self.dir), pid=os.getpid(),
+                           mode="summarize", summary_upstream=self.cfg.get("summary.upstream", "local"),
+                           summary_model=target[1]["name"], summary_connection=None,
+                           llm_busy=False, llm_section=None,
+                           servers={"whisper": "not_started", "llama": "not_started"})
+            self.status = Status(self.dir, self.cfg["system"]["status_interval"], **initial)
+            self.summarizer.status = self.status
+            self.status.phase("loading")
             if self.cfg["system"]["inhibit_sleep"]:
                 self.inhibitor.start(f"lec summarize：{self.cfg.course_name}", log)
             self._start_llama()
             self.stage = "summarize"
+            self.status.phase("summarizing")
             t0 = time.time()
             n = self.summarizer.redo(self.redo) if self.redo else self.summarizer.run_all()
             log(f"✔ 完成 {n} 段，耗時 {time.time() - t0:.0f}s：{self.dir / 'notes.md'}")
@@ -345,10 +386,15 @@ class OfflineSummary(_Base):
             code = 130
         except (ServerError, ConfigError, ValueError) as e:
             log(f"✖ {e}")
+            if self.status:
+                self.status.error(str(e))
             code = 1
         finally:
             self.stage = "cleanup"
             self._cleanup()
+            if self.status:
+                self.status.phase("done" if code == 0 else "failed")
+                self.status.close()
             self.lock.release()
             log.close()
         return code

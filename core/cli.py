@@ -34,6 +34,7 @@ DEFAULT_UI_PORT = 8765
 
 
 def _add_overrides(p):
+    p.add_argument("--upstream", help="已儲存的摘要上游 ID（local 或 config/upstreams.toml 的 ID）")
     p.add_argument("--model", help="總結模型（[models.*] 的名稱，例如 qwen3-8b、qwen3-4b）")
     p.add_argument("--set", action="append", default=[], metavar="區塊.鍵=值",
                    help="覆寫任一設定，可重複使用")
@@ -45,7 +46,9 @@ def _state_dir():
 
 
 def _load(args, **kw):
-    sets = kw.pop("sets", getattr(args, "set", []))
+    sets = list(kw.pop("sets", getattr(args, "set", [])))
+    if getattr(args, "upstream", None):
+        sets.append("summary.upstream=" + json.dumps(args.upstream))
     try:
         return C.load(sets=sets, model=getattr(args, "model", None),
                       source=getattr(args, "source", None), **kw)
@@ -208,7 +211,8 @@ def cmd_courses(args):
             try:
                 cfg, _ = C.load(f.stem)
                 out.append({"file": str(f), "id": f.stem, "name": cfg.course_name,
-                            "model": cfg["summary"]["model"], "terms": len(cfg["whisper"]["terms"])})
+                            "model": cfg["summary"]["model"],
+                            "upstream": cfg.get("summary.upstream", "local"), "terms": len(cfg["whisper"]["terms"])})
             except C.ConfigError as e:
                 out.append({"file": str(f), "id": f.stem, "error": str(e)})
         print(json.dumps(out, ensure_ascii=False, indent=2))
@@ -247,6 +251,7 @@ def _model_inventory(cfg):
 
     return {
         "schema_version": 1,
+        "summary_upstreams": cfg.upstream_inventory(),
         "summary": {
             "selected": str(cfg["summary"]["model"]),
             "models": entries(cfg.data.get("models", {}), "summary"),
@@ -263,7 +268,10 @@ def cmd_models(args):
         cfg, _ = C.load(args.course)
     except C.ConfigError as exc:
         die(str(exc))
-    inventory = _model_inventory(cfg)
+    try:
+        inventory = _model_inventory(cfg)
+    except C.ConfigError as exc:
+        die(str(exc))
     if args.json:
         print(json.dumps(inventory, ensure_ascii=False, indent=2))
         return 0

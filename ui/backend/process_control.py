@@ -160,7 +160,7 @@ class ProcessController:
                 "run_active", f"Another lecture process is already running: {course}", 409,
             )
 
-    async def start_run(self, course, input_file=None, model=None, source=None, overrides=None):
+    async def start_run(self, course, input_file=None, model=None, source=None, overrides=None, upstream=None):
         args = ["run", _cli_value(course, "course")]
         if input_file:
             path = Path(input_file).expanduser()
@@ -175,6 +175,8 @@ class ProcessController:
         if source:
             args += ["--source", _cli_value(source, "source")]
         args += _override_args(overrides or {})
+        if upstream:
+            args += ["--upstream", _cli_value(upstream, "upstream")]
         async with self._lock:
             await self._ensure_idle()
             result = await self.launcher.start(*args)
@@ -189,9 +191,11 @@ class ProcessController:
         return {"accepted": True, "operation": "stop", "force": force,
                 "message": message or "Stop request sent"}
 
-    async def summarize(self, session_id, redo=None, model=None, course=None):
+    async def summarize(self, session_id, redo=None, model=None, course=None, upstream=None):
         session = self.sessions.path_for(session_id)
         args = ["summarize", str(session)]
+        if upstream:
+            args += ["--upstream", _cli_value(upstream, "upstream")]
         if redo:
             args += ["--redo", redo]
         if model:

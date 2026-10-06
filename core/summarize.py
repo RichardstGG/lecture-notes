@@ -5,6 +5,7 @@
 - 少於 summary.min_chars 字的小節會併入下一節。
 - LLM 以 JSON schema 回覆，程式驗證「老師強調」原句與術語確實出現在逐字稿中。
 """
+import io
 import json
 import re
 import shutil
@@ -48,6 +49,10 @@ SCHEMA = {
     },
     "required": ["topic", "points", "terms", "emphasis"],
 }
+
+
+class SummaryRequestError(RuntimeError):
+    """Safe user-facing request failure, with no upstream diagnostics."""
 
 
 @dataclass
@@ -280,22 +285,73 @@ class Summarizer:
 
     # -- LLM
     def _post(self, body, timeout):
-        req = urllib.request.Request(f"{self.url}/v1/chat/completions",
-                                     data=json.dumps(body).encode("utf-8"),
-                                     headers={"Content-Type": "application/json"})
+        if self.model.get("remote"):
+            # Network worker never writes notes/status, including after cancellation.
+            result, done = [], threading.Event()
+            def request():
+                try:
+                    result.append((True, self._post_http(body, timeout)))
+                except Exception as exc:
+                    result.append((False, exc))
+                finally:
+                    done.set()
+            threading.Thread(target=request, daemon=True).start()
+            deadline = time.monotonic() + timeout
+            while not done.wait(0.1):
+                if self.abort.is_set():
+                    raise SummaryRequestError("已中止")
+                if time.monotonic() >= deadline:
+                    raise TimeoutError
+            if self.abort.is_set():
+                raise SummaryRequestError("已中止")
+            success, value = result[0]
+            if not success:
+                raise value
+            return value
+        return self._post_http(body, timeout)
+
+    def _post_http(self, body, timeout):
+        remote = self.model.get("remote")
+        endpoint = f"{self.url}/chat/completions" if remote else f"{self.url}/v1/chat/completions"
+        headers = {"Content-Type": "application/json"}
+        if remote and self.model.get("api_key"):
+            headers["Authorization"] = "Bearer " + self.model["api_key"]
+        req = urllib.request.Request(endpoint, data=json.dumps(body).encode("utf-8"), headers=headers)
+        if remote:
+            class NoRedirect(urllib.request.HTTPRedirectHandler):
+                def redirect_request(self, req, fp, code, msg, headers, newurl):
+                    return None
+            # Private transcripts and credentials go directly to the saved endpoint.
+            opener = urllib.request.build_opener(urllib.request.ProxyHandler({}), NoRedirect())
+            try:
+                with opener.open(req, timeout=timeout) as r:
+                    return json.load(r)
+            except urllib.error.HTTPError as exc:
+                # Consume error bodies inside the cancellable worker, and retain
+                # only the compatibility signal, never URL/header/body diagnostics.
+                with exc:
+                    message = exc.read(4096).decode("utf-8", "replace")
+                unsupported = exc.code == 400 and any(
+                    key in message for key in ("response_format", "schema", "grammar"))
+                raise urllib.error.HTTPError(
+                    "", exc.code, "摘要 API 請求失敗", {},
+                    io.BytesIO(b"schema" if unsupported else b"")) from None
         with urllib.request.urlopen(req, timeout=timeout) as r:
             return json.load(r)
 
     def _request_body(self, messages, max_tokens):
         body = {"messages": messages, "temperature": self.s["temperature"],
                 "top_p": self.s["top_p"], "max_tokens": max_tokens, "cache_prompt": True}
+        if self.model.get("remote"):
+            body.pop("cache_prompt")
+            body["model"] = self.model["model_id"]
         if self.model["disable_thinking"]:
             body["chat_template_kwargs"] = {"enable_thinking": False}
         return body
 
     def warmup(self):
         """第一次呼叫含 shader 編譯，先暖機避免第一段特別慢。"""
-        if self.warmed:
+        if self.warmed or self.model.get("remote") or self.abort.is_set():
             return
         self.warmed = True
         suffix = " /no_think" if self.model["disable_thinking"] else ""
@@ -321,22 +377,32 @@ class Summarizer:
                 r = self._post(body, self.s["request_timeout"])
                 content = r["choices"][0]["message"].get("content") or ""
                 data = self._parse_json(content)
+                usage = r.get("usage") or {}
+                if not isinstance(usage, dict):
+                    raise ValueError("usage 格式錯誤")
+                for key in ("prompt_tokens", "completion_tokens"):
+                    if usage.get(key) is not None and type(usage[key]) is not int:
+                        raise ValueError("usage token 數格式錯誤")
+                r["usage"] = usage
                 return data, r
             except urllib.error.HTTPError as e:
-                msg = e.read().decode("utf-8", "replace")[:300]
+                msg = e.read(4096).decode("utf-8", "replace")
+                e.close()
                 if e.code == 400 and self.use_schema and ("response_format" in msg or "schema" in msg
                                                           or "grammar" in msg):
-                    log("  ⚠ llama-server 不支援 JSON schema，改用一般輸出再解析")
+                    log("  ⚠ 摘要上游不支援 JSON schema，改用一般輸出再解析")
                     self.use_schema = False
                     continue
-                last_err = f"HTTP {e.code}: {msg}"
+                last_err = f"HTTP {e.code}" if self.model.get("remote") else f"HTTP {e.code}: {msg[:300]}"
+                if self.model.get("remote") and e.code in (401, 403):
+                    break
             except (urllib.error.URLError, OSError, TimeoutError) as e:
-                last_err = f"連線失敗：{e}"
-            except (ValueError, KeyError, IndexError) as e:
-                last_err = f"回覆無法解析：{e}"
+                last_err = "摘要 API 連線失敗或逾時" if self.model.get("remote") else f"連線失敗：{e}"
+            except (ValueError, KeyError, IndexError, TypeError, AttributeError) as e:
+                last_err = "摘要 API 回覆格式不合法" if self.model.get("remote") else f"回覆無法解析：{e}"
                 try:
                     truncated = r["choices"][0].get("finish_reason") == "length"
-                except (TypeError, KeyError, IndexError):
+                except (TypeError, KeyError, IndexError, AttributeError):
                     truncated = False
                 if truncated:
                     # JSON 寫到一半就達到 max_tokens：放寬上限再試
@@ -347,8 +413,8 @@ class Summarizer:
                 break
             if i < attempts:
                 log(f"  ⚠ 總結請求失敗（第 {i} 次）：{last_err}")
-                time.sleep(3)
-        raise RuntimeError(last_err or "已中止")
+                self.abort.wait(3)
+        raise SummaryRequestError(last_err or "已中止")
 
     @staticmethod
     def _parse_json(content):
@@ -549,6 +615,12 @@ class Summarizer:
             t0 = time.time()
             data, raw = self.call_llm(user)
         except Exception as e:
+            if self.abort.is_set():
+                return
+            if self.model.get("remote") and not isinstance(e, SummaryRequestError):
+                e = RuntimeError("摘要 API 請求失敗")
+            if self.status and self.model.get("remote"):
+                self.status.update(summary_connection="failed")
             log(f"  ✖ 總結 {label} 失敗：{e}")
             if self.status:
                 self.status.error(f"總結 {label} 失敗：{e}")
@@ -559,6 +631,10 @@ class Summarizer:
             if self.status:
                 self.status.update(llm_busy=False, llm_section=None)
 
+        if self.abort.is_set():
+            return
+        if self.status and self.model.get("remote"):
+            self.status.update(summary_connection="ok")
         elapsed = time.time() - t0
         data = self._convert(data)
         report = self._verify(data, body, label)
@@ -567,6 +643,8 @@ class Summarizer:
              "prompt_tokens": usage.get("prompt_tokens"),
              "completion_tokens": usage.get("completion_tokens"),
              "finish_reason": raw["choices"][0].get("finish_reason")}
+        if self.abort.is_set():
+            return
         self._save(e, rebuild)
         notes = []
         if report["emphasis_dropped"]:
