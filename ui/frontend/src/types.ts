@@ -48,6 +48,7 @@ export interface Course {
   name?: string;
   model?: string;
   upstream?: string;
+  summary_enabled?: boolean;
   terms?: number;
   error?: string;
 }

@@ -235,12 +235,13 @@ class BackendApiTests(unittest.IsolatedAsyncioTestCase):
     async def test_courses_supports_dynamic_model_names_and_invalid_course(self):
         self.client.courses_result = [
             {"file": "/courses/a.toml", "id": "a", "name": "A",
-             "model": "future-14b", "terms": 3},
+             "model": "future-14b", "summary_enabled": False, "terms": 3},
             {"file": "/courses/b.toml", "id": "b", "error": "bad TOML"},
         ]
         response = await self.request("GET", "/api/v1/courses")
         self.assertEqual(response.status_code, 200)
         self.assertEqual(response.json()[0]["model"], "future-14b")
+        self.assertIs(response.json()[0]["summary_enabled"], False)
         self.assertEqual(response.json()[1]["error"], "bad TOML")
 
     async def test_models_exposes_versioned_dynamic_inventory(self):

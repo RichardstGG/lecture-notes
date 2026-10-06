@@ -32,6 +32,7 @@ class CourseSummary(BaseModel):
     id: str
     name: str | None = None
     model: str | None = None
+    summary_enabled: bool | None = None
     terms: int | None = Field(default=None, ge=0)
     error: str | None = None
 

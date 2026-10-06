@@ -13,6 +13,11 @@ import { applyContentEvent } from "../utils";
 
 const idleStatus: RuntimeStatus = { schema_version: 1, running: false };
 
+function lectureSelection(current: string | undefined, sessions: SessionSummary[]) {
+  const lectures = sessions.filter((session) => session.work_type !== "meeting");
+  return lectures.some((session) => session.id === current) ? current : lectures[0]?.id;
+}
+
 export function useLectureData() {
   const [status, setStatus] = useState<RuntimeStatus>(idleStatus);
   const [courses, setCourses] = useState<Course[]>([]);
@@ -31,7 +36,7 @@ export function useLectureData() {
   const refreshSessions = useCallback(async () => {
     const result = await api.sessions();
     setSessions(result);
-    setSelectedId((current) => current ?? result[0]?.id);
+    setSelectedId((current) => lectureSelection(current, result));
   }, []);
 
   const refreshDevices = useCallback(async () => {
@@ -56,7 +61,7 @@ export function useLectureData() {
       setCourses(nextCourses);
       setModels(nextModels);
       setSessions(nextSessions);
-      setSelectedId((current) => current ?? nextSessions[0]?.id);
+      setSelectedId((current) => lectureSelection(current, nextSessions));
       setError(undefined);
     } catch (reason) {
       setError(reason instanceof ApiError ? reason.message : "載入資料時發生錯誤");

@@ -212,6 +212,7 @@ def cmd_courses(args):
                 cfg, _ = C.load(f.stem)
                 out.append({"file": str(f), "id": f.stem, "name": cfg.course_name,
                             "model": cfg["summary"]["model"],
+                            "summary_enabled": cfg.get("summary.enabled", True),
                             "upstream": cfg.get("summary.upstream", "local"), "terms": len(cfg["whisper"]["terms"])})
             except C.ConfigError as e:
                 out.append({"file": str(f), "id": f.stem, "error": str(e)})

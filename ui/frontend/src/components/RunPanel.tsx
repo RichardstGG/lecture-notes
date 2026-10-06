@@ -31,17 +31,22 @@ export function RunPanel({ courses, devices, models, status, onChanged, onError 
   const [uploadedFile, setUploadedFile] = useState<AudioUpload>();
   const [uploading, setUploading] = useState(false);
   const [dragging, setDragging] = useState(false);
-  const [upstream, setUpstream] = useState("");
-  const [model, setModel] = useState("");
+  const [summaryChoice, setSummaryChoice] = useState<string>();
   const [source, setSource] = useState("");
-  const [transcribeOnly, setTranscribeOnly] = useState(false);
   const [starting, setStarting] = useState(false);
   const [stopMode, setStopMode] = useState<"normal" | "force">();
   const [stopRequesting, setStopRequesting] = useState(false);
   const selectedCourse = validCourses.find((item) => item.id === course);
-  const effectiveUpstream = upstream || selectedCourse?.upstream || models?.summary_upstreams?.selected || "local";
+  const defaultUpstream = selectedCourse?.upstream || models?.summary_upstreams?.selected || "local";
   const defaultModel = selectedCourse?.model || models?.summary.selected;
   const defaultModelInfo = models?.summary.models.find((item) => item.id === defaultModel);
+  const defaultSummary = selectedCourse?.summary_enabled === false ? "none"
+    : defaultUpstream === "local" ? `local:${defaultModel || ""}` : `api:${defaultUpstream}`;
+  const summaryMethod = summaryChoice ?? defaultSummary;
+  const transcribeOnly = summaryMethod === "none";
+  const selectedApi = summaryMethod.startsWith("api:") ? summaryMethod.slice(4) : undefined;
+  const selectedModel = summaryMethod.startsWith("local:") ? summaryMethod.slice(6) : undefined;
+  const apiOptions = models?.summary_upstreams?.options.filter((item) => item.kind === "api") || [];
   const fileInput = useRef<HTMLInputElement>(null);
 
   useEffect(() => {
@@ -61,10 +66,10 @@ export function RunPanel({ courses, devices, models, status, onChanged, onError 
       await api.start({
         course,
         input_file: mode === "file" ? inputFile.trim() : undefined,
-        model: effectiveUpstream === "local" ? model || undefined : undefined,
-        ...(upstream ? { upstream } : {}),
+        model: summaryChoice !== undefined && !transcribeOnly ? selectedModel || undefined : undefined,
+        ...(summaryChoice !== undefined && !transcribeOnly ? { upstream: selectedApi || "local" } : {}),
         ...(mode === "live" && source ? { source } : {}),
-        overrides: transcribeOnly ? { "summary.enabled": false } : undefined,
+        overrides: summaryChoice === undefined ? undefined : { "summary.enabled": !transcribeOnly },
       });
       await onChanged();
     } catch (reason) {
@@ -137,7 +142,7 @@ export function RunPanel({ courses, devices, models, status, onChanged, onError 
   return <form className="run-form" onSubmit={submit}>
     <label>
       <span>課程</span>
-      <select value={course} onChange={(event) => setCourse(event.target.value)} required>
+      <select value={course} onChange={(event) => { setCourse(event.target.value); setSummaryChoice(undefined); }} required>
         {validCourses.length === 0 && <option value="">尚無可用課程</option>}
         {validCourses.map((item) => <option value={item.id} key={item.id}>{item.name || item.id}</option>)}
       </select>
@@ -199,31 +204,21 @@ export function RunPanel({ courses, devices, models, status, onChanged, onError 
       </select>
     </label>}
     <label>
-      <span>摘要上游</span>
-      <select aria-label="摘要上游" value={upstream} onChange={(event) => setUpstream(event.target.value)} disabled={!models || transcribeOnly}>
-        <option value="">使用課程預設（{selectedCourse?.upstream || models?.summary_upstreams?.selected || "local"}）</option>
-        {(models?.summary_upstreams?.options || [{ id: "local", name: "本地 GPU", kind: "local" }]).map((item) =>
-          <option value={item.id} key={item.id}>{item.name}</option>)}
-      </select>
-      {effectiveUpstream !== "local" && <small>逐字稿會傳送至所選 API 上游。</small>}
-    </label>
-    {effectiveUpstream === "local" && <label>
-      <span>總結模型（選填）</span>
-      <select value={model} onChange={(event) => setModel(event.target.value)} disabled={!models}>
-        <option value="">{models
-          ? `使用課程預設${defaultModel ? `（${defaultModel}${defaultModelInfo && !defaultModelInfo.available ? "，未安裝" : ""}）` : ""}`
-          : "正在載入模型清單…"}</option>
-        {models?.summary.models.map((item) => <option value={item.id} disabled={!item.available} key={item.id}>
-          {item.id}{item.available
-            ? formatModelSize(item.size_bytes) ? ` · ${formatModelSize(item.size_bytes)}` : ""
-            : "（未安裝）"}
+      <span>總結方式</span>
+      <select aria-label="總結方式" value={summaryMethod} onChange={(event) => setSummaryChoice(event.target.value)}>
+        <option value="none">不總結</option>
+        {models?.summary.models.filter((item) => item.available).map((item) => <option value={`local:${item.id}`} key={item.id}>
+          本機模型 · {item.id}{formatModelSize(item.size_bytes) ? ` · ${formatModelSize(item.size_bytes)}` : ""}
         </option>)}
+        {!defaultModelInfo?.available && defaultUpstream === "local" && <option value={`local:${defaultModel || ""}`} disabled>
+          {models ? `本機模型 · ${defaultModel || "未指定"}（未安裝）` : "正在載入模型清單…"}
+        </option>}
+        {apiOptions.map((item) => <option value={`api:${item.id}`} key={`api:${item.id}`}>外部 API · {item.name}</option>)}
+        {defaultUpstream !== "local" && !apiOptions.some((item) => item.id === defaultUpstream) && <option value={`api:${defaultUpstream}`} disabled>
+          外部 API · {defaultUpstream}（{models ? "設定不可用" : "載入中…"}）
+        </option>}
       </select>
-    </label>
-    }
-    <label className="check-field">
-      <input type="checkbox" checked={transcribeOnly} onChange={(event) => setTranscribeOnly(event.target.checked)} />
-      <span>只轉錄（不啟動總結模型）</span>
+      <small>{summaryChoice === undefined ? "依課程設定選取" : "僅套用於這次處理"}{selectedApi ? "；逐字稿會傳送至所選 API。" : ""}</small>
     </label>
     <button className="button primary" disabled={starting || uploading || !course || (mode === "file" && !inputFile.trim())} type="submit">{starting ? "處理中…" : "開始處理"}</button>
   </form>;
