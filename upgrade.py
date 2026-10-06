@@ -99,11 +99,25 @@ def ensure_no_active_run():
         raise UpgradeError(f"目前仍有課程在執行（{course}）；請先正常停止後再升級")
 
 
-def install_ui():
+def ensure_venv():
     python = venv_python()
     if not python.is_file():
         step("建立 Python virtual environment")
         run([sys.executable, "-m", "venv", ROOT / ".venv"])
+    return python
+
+
+def install_diarization():
+    """會議發言者辨識：sherpa-onnx 進專案 .venv，兩個模型進 models/（驗證 SHA-256）。"""
+    python = ensure_venv()
+    step("安裝發言者辨識依賴（sherpa-onnx）")
+    run([python, "-m", "pip", "install", "-r", ROOT / "requirements-diarize.txt"])
+    step("取得發言者辨識模型")
+    run([sys.executable, ROOT / "setup_engines.py", "diarize"])
+
+
+def install_ui():
+    python = ensure_venv()
     step("更新 UI backend dependencies")
     run([python, "-m", "pip", "install", "-r", ROOT / "ui/backend/requirements.txt"])
 
@@ -121,6 +135,8 @@ def perform_upgrade(args):
         ensure_no_active_run()
         step("更新並編譯本機引擎")
         run(engine_command(args))
+    if not args.skip_diarization:
+        install_diarization()
     if not args.skip_ui:
         install_ui()
 
@@ -142,6 +158,8 @@ def parse_args(argv=None):
     parser.add_argument("--import-models", metavar="DIR", help="從指定資料夾搬入模型")
     parser.add_argument("--skip-pull", action="store_true", help=argparse.SUPPRESS)
     parser.add_argument("--skip-engines", action="store_true", help="略過本機引擎更新")
+    parser.add_argument("--skip-diarization", action="store_true",
+                        help="略過會議發言者辨識的依賴與模型（約 50MB）")
     parser.add_argument("--skip-ui", action="store_true", help="略過 UI dependencies 與 frontend build")
     return parser.parse_args(argv)
 

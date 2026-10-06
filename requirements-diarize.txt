@@ -1,0 +1,6 @@
+# 會議發言者辨識（core/diarize.py 的分群子行程）所需的第三方套件。
+# 只裝進專案 .venv：lec 本身只用標準函式庫，Debian 13 等發行版的 PEP 668 也不讓人
+# pip install 進系統 Python。版本鎖在已實測的那一版；升級前要重跑
+# tests/test_diarize_*.py 與真機驗證，並同步 core/diarize.py 的 SHERPA_ONNX_VERSION
+# （tests/test_diarize_setup.py 會檢查兩邊一致）。
+sherpa-onnx==1.13.8

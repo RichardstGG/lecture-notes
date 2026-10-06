@@ -46,7 +46,7 @@ class UpgradeTests(unittest.TestCase):
 
     def test_whisper_only_forwards_engine_options(self):
         args = U.parse_args([
-            "--skip-pull", "--skip-ui", "--whisper-only",
+            "--skip-pull", "--skip-ui", "--skip-diarization", "--whisper-only",
             "--backend", "cpu", "--generator", "Ninja", "--rebuild",
         ])
         with mock.patch.object(U, "ensure_no_active_run"), \
@@ -62,15 +62,17 @@ class UpgradeTests(unittest.TestCase):
         args = U.parse_args(["--skip-pull"])
         with mock.patch.object(U, "ensure_no_active_run") as ensure_no_active_run, \
                 mock.patch.object(U, "run", return_value=self.completed()) as run, \
+                mock.patch.object(U, "install_diarization") as install_diarization, \
                 mock.patch.object(U, "install_ui") as install_ui:
             U.perform_upgrade(args)
 
         ensure_no_active_run.assert_called_once_with()
         run.assert_called_once_with(U.engine_command(args))
+        install_diarization.assert_called_once_with()
         install_ui.assert_called_once_with()
 
     def test_skip_engines_installs_ui_only(self):
-        args = U.parse_args(["--skip-pull", "--skip-engines"])
+        args = U.parse_args(["--skip-pull", "--skip-engines", "--skip-diarization"])
         with mock.patch.object(U, "ensure_no_active_run") as ensure_no_active_run, \
                 mock.patch.object(U, "run") as run, \
                 mock.patch.object(U, "install_ui") as install_ui:
