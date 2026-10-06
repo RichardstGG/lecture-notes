@@ -14,6 +14,14 @@
 - `default_source()` 用 `pactl get-default-source`。
 - 錄音輸入參數固定 `-f pulse -i <來源名稱或 default>`。
 
+## 雙來源錄音（會議）
+
+同時收「指定輸出裝置的聲音（monitor）」與「麥克風」，兩軌分存並對齊到共同時間軸。狀態：實驗中。
+設計、可靠性行為、限制與硬體驗收步驟見 [platform-dual-capture.md](platform-dual-capture.md)。
+基本事實：輸出裝置的聲音用 `<sink 名稱>.monitor` 來源錄（`list_sources()` 預設仍濾掉它，
+單來源流程與 `lec devices` 不受影響）；來源消失時系統可能把錄音串流默默轉接到別的來源，
+所以雙來源錄音會用 `pactl -f json list source-outputs` 確認串流綁定。
+
 ## GPU 後端
 
 - 預設 Vulkan（`DEFAULT_BACKEND["linux"] = "vulkan"`）。
