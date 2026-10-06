@@ -87,6 +87,46 @@
 （87.7 分鐘會議約 57 分鐘）。把同一人的相鄰區間打包到接近 28 秒可大幅降低，但要先確認不影響時間戳，
 故延後到品質確認之後。
 
+## 雙來源錄音引擎層現況（Claude）
+
+線上會議同時收「指定輸出裝置的聲音」與「使用者麥克風」。**引擎層已完成，尚未接任何 CLI／設定／UI／狀態契約**
+（那些由 Codex 依下列介面接線）。第一版只支援 Linux（PulseAudio 相容介面，含 PipeWire），主要情境是戴耳機；
+**硬體驗收尚未做**，macOS／Windows 引擎會明確拒絕。設計、可靠性行為、限制與驗收步驟見
+[platform-dual-capture.md](platform-dual-capture.md)；以下 schema 與事件名稱都是**提案**，Codex 的契約若不同，
+以契約為準、引擎配合調整。
+
+**介面（可直接呼叫）**
+
+- `devices.plan_dual(system_output="default", mic="default")` → `{ok, sources, errors, warnings, resolved}`。
+  只查詢不錄音；`default` 在開始當下解析成實際裝置並固定（預設裝置之後改變，錄音不跟著換）。
+  `errors[].code`：`unsupported_platform`／`no_audio_tools`／`output_not_found`／`mic_not_found`／
+  `no_default_output`／`no_default_mic`／`mic_is_monitor`／`same_device`；
+  `warnings[].code`：`output_may_echo`、`no_playback_on_output`。`devices.list_outputs()` 列輸出裝置。
+- `Transcriber(cfg, dir, url, status=…, capture_sources=[SourceSpec(**s) for s in plan["sources"]])`：
+  不傳就是原本的單來源流程（不變）。停止仍走既有的 `request_stop()`（由 stop／stop_force 檔觸發，不是 OS signal）。
+  `run()` 的回傳多兩個鍵（只有雙來源模式才有）：`capture_session`、`degraded`。
+- `capture.verify_capture(session_dir)` → `state ∈ complete｜degraded｜incomplete｜invalid｜missing`；
+  重跑前的完整性閘門。強制停止或崩潰一律是 `incomplete`（不可重跑，`playable` 供人工搶救）。
+- `MultiCapture.snapshot()`：每路 `recording｜failed｜ended`、多久沒資料、近期峰值、是否數位靜音，
+  讓 UI 區分「沒聲音」與「壞了」。
+
+**產物**（session 內）：`tracks/system.ogg`、`tracks/mic.ogg`（t=0 都是同一個時間軸原點）、
+混音沿用既有的 `recording_HHMMSS.ogg`、`capture.json`（起點偏移、缺口、補丟樣本、時脈誤差、故障、SHA-256）。
+`audio.keep_recording=false` 只關混音，分軌一律保留。
+
+**事件**（`status.event`）：`capture_started`、`capture_gap`、`capture_source_failed`、`capture_warning`、
+`capture_error`、`capture_start_failed`；來源故障與 `capture_error` 同時呼叫 `status.error()`，
+UI 不會漏看。開始時兩路都必須成功開啟，否則整個不開始（`result["ffmpeg_failed"]=True`、
+`capture_session.start_error.code` 是穩定分類）。中途單路故障：另一路繼續，`degraded=true`，不自動換裝置、不自動重連。
+
+**Codex 接線需求**（細節見 PR 的 CROSS_AGENT_REQUEST）
+
+1. 設定：如何指定輸出裝置與麥克風（不改既有 `audio.sources` 別名表的意義）；呼叫 `plan_dual()`、拒絕 `ok=false`。
+2. `source_audio.ogg`／`source.json` 該指向混音還是另行處理，以及分軌如何出現在 `source.json`（`kind=recording` 的延伸）。
+3. 狀態契約：上述事件是否放進 `events.jsonl`（新類型）、`status.json` 是否顯示每路狀態與降級。
+4. 重跑閘門：用 `verify_capture()`，`incomplete`／`invalid` 不可重跑。
+5. 會議模式 `keep_recording` 的政策、UI 的來源選擇與「戴耳機、無回音消除」提示。
+
 ## 所有權依據與尚待決策
 
 - 檔案所有權與共用檔案規則以 [CLAUDE.md](../CLAUDE.md)／[CODEX.md](../CODEX.md) 為準；跨所有權變更走 CROSS_AGENT_REQUEST，跨層整合測試依被斷言的契約分工。
