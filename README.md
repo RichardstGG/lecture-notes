@@ -1,8 +1,73 @@
 # 課堂筆記系統（lec）
 
-課堂錄音 → whisper.cpp 即時逐字稿 → llama.cpp 每 5 分鐘總結 → Obsidian Markdown，全部在本機執行。
+課堂錄音 → whisper.cpp 即時逐字稿 → 每 5 分鐘分段總結 → Obsidian Markdown。預設全部在本機執行，也可選擇已儲存的相容 API 上游進行摘要。
 
 Repo：<https://github.com/RichardstGG/lecture-notes>
+
+## 摘要上游：本地 GPU 或已儲存 API
+
+預設 `[summary] upstream = "local"` 保留既有 llama-server／本機模型流程。
+UI「摘要上游」可選本地 GPU 或已儲存的 API；錄音、音檔轉錄後摘要、歷史紀錄補做／重做皆使用所選上游。
+API 模式不檢查本機 GGUF、不啟停本機或遠端 LLM 行程；語音轉錄仍使用本機 whisper。
+目前只提供課程摘要，會議工作台仍為預覽、沒有會議摘要流水線；未來會議可共用此連線層。
+
+建立 **`config/upstreams.toml`**（已加入 `.gitignore`；不要把此內容放進課程檔或 `local.toml`）：
+
+```toml
+[upstreams.lab]
+name = "內網 30B GPU"
+base_url = "http://192.0.2.10:8000/v1"  # 文件示例位址，請換成實際伺服器
+model = "your-deployed-model-id"
+api_key_env = "LEC_LAB_API_KEY"         # 無認證時省略
+
+[upstreams.backup]
+name = "備用 GPU"
+base_url = "https://gpu.example.invalid/api/v1"
+model = "another-model-id"
+# api_key = "REPLACE_ME"               # 或在此私有檔儲存 Bearer key
+```
+
+- 表格名稱是穩定 ID，允許英數開頭、後接英數／底線／連字號，最多 64 字元；`local` 保留。
+- `name` 是可公開的選單名稱。`base_url` 必須含 API 路徑（通常 `/v1`），程式只追加 `/chat/completions`；不允許 URL 帳密、query 或 fragment。
+- `model` 是該服務部署的模型 ID；`api_key` 與 `api_key_env` 二擇一或皆省略。環境變數須存在於啟動 UI／CLI 的行程環境。
+- 選單只顯示 ID、名稱與類型。URL、模型 ID、認證值及環境變數名稱不會進入 UI 清單、session 設定快照或請求錯誤紀錄。名稱與 ID 請勿放密鑰。
+- UI 重新整理後會重讀設定；選單不代表已驗證連線可達。更換或刪除 ID 後，舊 session 補做時請選擇有效 ID。
+- 請求使用標準 Chat Completions 的 `model/messages/temperature/top_p/max_tokens`，不傳本機引擎的 `cache_prompt`、`chat_template_kwargs`，也不做遠端暖機。上游明確以 HTTP 400 拒絕 JSON schema 時，改用一般輸出後解析 JSON。
+- API 上游會收到逐字稿、課程 prompt、術語與前段主題。外部連線不跟隨重新導向，也不使用環境 proxy；HTTPS 使用系統信任的憑證。
+
+可在 `config/local.toml` 或課程設定的 `[summary]` 儲存 `upstream = "lab"`，只保存 ID。
+也可單次覆寫（`--upstream` 優先於 `--set summary.upstream=...`）：
+
+```bash
+./lec run 課名 --upstream lab
+./lec run 課名 --file lecture.ogg --upstream lab
+./lec summarize outputs/課程資料夾 --upstream lab
+./lec summarize outputs/課程資料夾 --redo 00:05:00 --upstream backup
+./lec summarize outputs/課程資料夾 --redo all --upstream local
+```
+
+`--model` 仍只選本機模型；API 的模型由私有上游設定決定。未指定上游時遵循既有設定合併順序。
+補做預設優先讀目前課程設定，課程不存在才讀 `config.used.toml`；該快照僅保存上游 ID，連線資料一律讀目前私有檔。
+「只轉錄」不讀取上游認證、不發摘要請求。
+
+五分鐘是逐字稿分段；下一節出現、且達到最少字數才送摘要，並非每逢整五分鐘立刻請求。
+`request_timeout=240`、`retries=2`、`final_wait=180` 的預設值維持不變：一次請求最多等 240 秒、最多重試兩次；即時錄音結束後整體收尾最多等 180 秒，可能先於請求逾時。
+正常停止錄音先完成轉錄收尾；在摘要階段停止或超過 `final_wait`，API 模式會中止本地等待且不寫入遲到的回覆。
+**這不會停止遠端伺服器的推論**；背景連線可能持續到讀取逾時或 CLI 結束。
+音檔與離線摘要不套用 `final_wait`，每段遵循請求逾時及重試設定。`stop`／`stop_force` 檔案機制保持不變。
+
+HTTP 401/403 不重試；連線、逾時或格式錯誤會記錄去敏感資訊的失敗原因。
+已記錄的失敗段落沿用既有語意，需 `--redo <時間>` 或 UI 重做；沒有寫入的中止段落可直接補做。
+轉錄成功但摘要失敗仍保留既有 `done`／退出碼 0 語意，請查看 `errors`、`last_error` 與筆記中的失敗標記。
+
+API v1／schema 1 保留，新增可選欄位：
+
+- `lec models --json`／`GET /api/v1/models`：`summary_upstreams = {selected, options: [{id, name, kind}]}`，`kind` 為 `local|api`。
+- `lec courses --json` 增加 `upstream`；`POST /api/v1/runs` 及 `POST /api/v1/sessions/{id}/summarize` 可傳 `upstream` ID。既有 `redo=all|hh:mm:ss` 不變。
+- `status.json` 增加 `summary_upstream`，遠端 `summary_connection` 為 `ready`（尚未請求）、`ok` 或 `failed`；本機 `servers.llama` 在 API 模式維持 `not_started`。`summary_model` 與筆記 `model` 在 API 模式記錄上游 ID。
+- 補做／重做現在也更新 session 狀態和摘要進度，phase 名稱維持既有契約。
+
+此連線層以 mock HTTP／mock 引擎測試驗證；部署上游的模型相容性、摘要品質與 GPU 效能需另做實測。
 
 ## 平台支援
 
