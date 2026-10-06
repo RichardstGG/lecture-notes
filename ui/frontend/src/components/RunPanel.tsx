@@ -31,6 +31,7 @@ export function RunPanel({ courses, devices, models, status, onChanged, onError 
   const [uploadedFile, setUploadedFile] = useState<AudioUpload>();
   const [uploading, setUploading] = useState(false);
   const [dragging, setDragging] = useState(false);
+  const [upstream, setUpstream] = useState("");
   const [model, setModel] = useState("");
   const [source, setSource] = useState("");
   const [transcribeOnly, setTranscribeOnly] = useState(false);
@@ -38,6 +39,7 @@ export function RunPanel({ courses, devices, models, status, onChanged, onError 
   const [stopMode, setStopMode] = useState<"normal" | "force">();
   const [stopRequesting, setStopRequesting] = useState(false);
   const selectedCourse = validCourses.find((item) => item.id === course);
+  const effectiveUpstream = upstream || selectedCourse?.upstream || models?.summary_upstreams?.selected || "local";
   const defaultModel = selectedCourse?.model || models?.summary.selected;
   const defaultModelInfo = models?.summary.models.find((item) => item.id === defaultModel);
   const fileInput = useRef<HTMLInputElement>(null);
@@ -59,7 +61,8 @@ export function RunPanel({ courses, devices, models, status, onChanged, onError 
       await api.start({
         course,
         input_file: mode === "file" ? inputFile.trim() : undefined,
-        model: model || undefined,
+        model: effectiveUpstream === "local" ? model || undefined : undefined,
+        ...(upstream ? { upstream } : {}),
         ...(mode === "live" && source ? { source } : {}),
         overrides: transcribeOnly ? { "summary.enabled": false } : undefined,
       });
@@ -196,6 +199,15 @@ export function RunPanel({ courses, devices, models, status, onChanged, onError 
       </select>
     </label>}
     <label>
+      <span>摘要上游</span>
+      <select aria-label="摘要上游" value={upstream} onChange={(event) => setUpstream(event.target.value)} disabled={!models || transcribeOnly}>
+        <option value="">使用課程預設（{selectedCourse?.upstream || models?.summary_upstreams?.selected || "local"}）</option>
+        {(models?.summary_upstreams?.options || [{ id: "local", name: "本地 GPU", kind: "local" }]).map((item) =>
+          <option value={item.id} key={item.id}>{item.name}</option>)}
+      </select>
+      {effectiveUpstream !== "local" && <small>逐字稿會傳送至所選 API 上游。</small>}
+    </label>
+    {effectiveUpstream === "local" && <label>
       <span>總結模型（選填）</span>
       <select value={model} onChange={(event) => setModel(event.target.value)} disabled={!models}>
         <option value="">{models
@@ -208,6 +220,7 @@ export function RunPanel({ courses, devices, models, status, onChanged, onError 
         </option>)}
       </select>
     </label>
+    }
     <label className="check-field">
       <input type="checkbox" checked={transcribeOnly} onChange={(event) => setTranscribeOnly(event.target.checked)} />
       <span>只轉錄（不啟動總結模型）</span>

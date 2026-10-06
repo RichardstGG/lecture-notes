@@ -18,6 +18,8 @@ export interface SessionStatus {
   transcribe_lag?: number | null;
   queue?: number;
   sections_total?: number;
+  summary_upstream?: string;
+  summary_connection?: "ready" | "ok" | "failed";
   sections_summarized?: number;
   llm_busy?: boolean;
   llm_section?: string | null;
@@ -45,6 +47,7 @@ export interface Course {
   id: string;
   name?: string;
   model?: string;
+  upstream?: string;
   terms?: number;
   error?: string;
 }
@@ -64,7 +67,13 @@ export interface ModelGroup {
   [key: string]: unknown;
 }
 
+export interface UpstreamInventory {
+  selected: string;
+  options: { id: string; name: string; kind: "local" | "api" }[];
+}
+
 export interface ModelInventory {
+  summary_upstreams?: UpstreamInventory;
   schema_version: number;
   summary: ModelGroup;
   whisper: ModelGroup;
@@ -171,6 +180,8 @@ export interface SessionSummary {
   mode?: string;
   elapsed?: number;
   sections_total?: number;
+  summary_upstream?: string;
+  summary_connection?: "ready" | "ok" | "failed";
   sections_summarized?: number;
   has_transcript: boolean;
   has_notes: boolean;
@@ -204,6 +215,7 @@ export interface RunRequest {
   course: string;
   input_file?: string;
   model?: string;
+  upstream?: string;
   source?: string;
   overrides?: Record<string, unknown>;
 }

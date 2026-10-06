@@ -1,10 +1,13 @@
 """設定載入：config/default.toml → config/local.toml（本機）→ courses/<課名>.toml → 指令列覆寫。"""
 import copy
 import json
+import math
+import os
 import re
 import tomllib
 from datetime import datetime
 from pathlib import Path
+from urllib.parse import urlsplit
 
 APP_ROOT = Path(__file__).resolve().parent.parent
 DEFAULT_FILE = APP_ROOT / "config" / "default.toml"
@@ -15,6 +18,50 @@ COURSES_DIR = APP_ROOT / "courses"
 # 這些表格底下可以自由新增項目（模型、音源清單、課程術語）
 OPEN_TABLES = {("models",), ("audio", "sources"), ("whisper", "models"),
                ("summary", "glossary")}
+
+UPSTREAMS_FILE = APP_ROOT / "config" / "upstreams.toml"
+UPSTREAM_ID = re.compile(r"^[A-Za-z0-9][A-Za-z0-9_-]{0,63}$")
+
+
+def load_upstreams():
+    """Private registry, deliberately separate from merged/session config."""
+    if not UPSTREAMS_FILE.exists():
+        return {}
+    try:
+        with UPSTREAMS_FILE.open("rb") as f:
+            raw = tomllib.load(f)
+        if set(raw) != {"upstreams"} or not isinstance(raw["upstreams"], dict):
+            raise ValueError
+        result = {}
+        for key, spec in raw["upstreams"].items():
+            if not UPSTREAM_ID.fullmatch(key) or key == "local" or not isinstance(spec, dict):
+                raise ValueError
+            if set(spec) - {"name", "base_url", "model", "api_key", "api_key_env"}:
+                raise ValueError
+            for field in ("name", "base_url", "model"):
+                if not isinstance(spec.get(field), str) or not spec[field].strip():
+                    raise ValueError
+                if any(ord(c) < 32 for c in spec[field]):
+                    raise ValueError
+            url = urlsplit(spec["base_url"])
+            if (any(c.isspace() for c in spec["base_url"])
+                    or url.scheme not in {"http", "https"} or not url.hostname or url.username
+                    or url.password or url.query or url.fragment):
+                raise ValueError
+            _ = url.port
+            if "api_key" in spec and "api_key_env" in spec:
+                raise ValueError
+            for field in ("api_key", "api_key_env"):
+                if field in spec and (not isinstance(spec[field], str)
+                                      or not spec[field].strip()
+                                      or any(ord(c) < 32 for c in spec[field])):
+                    raise ValueError
+            result[key] = dict(spec)
+        return result
+    except (OSError, ValueError, TypeError):
+        # TOML errors can contain a credential-bearing source line.
+        raise ConfigError("config/upstreams.toml 無法讀取或格式不合法；請檢查上游設定") from None
+
 
 CHOICES = {
     ("summary", "file_mode"): {"after", "off"},
@@ -211,6 +258,30 @@ class Config:
         return {"name": name, "path": self.path(m["path"]),
                 "disable_thinking": bool(m.get("disable_thinking", False))}
 
+    def upstream_inventory(self):
+        return {"selected": self.get("summary.upstream", "local"),
+                "options": [{"id": "local", "name": "本地 GPU", "kind": "local"}] + [
+                    {"id": key, "name": spec["name"], "kind": "api"}
+                    for key, spec in load_upstreams().items()]}
+
+    def remote_summary(self):
+        key = self.get("summary.upstream", "local")
+        if key == "local":
+            return None
+        spec = load_upstreams().get(key)
+        if spec is None:
+            raise ConfigError("找不到所選摘要上游；請檢查 config/upstreams.toml 或選擇 local")
+        token = spec.get("api_key", "")
+        if "api_key_env" in spec:
+            token = os.environ.get(spec["api_key_env"], "")
+            if not token:
+                raise ConfigError("摘要上游的認證環境變數尚未設定")
+        if any(ord(c) < 32 or ord(c) > 126 for c in token):
+            raise ConfigError("摘要上游認證值格式不合法")
+        return spec["base_url"].rstrip("/"), {
+            "name": key, "remote": True, "model_id": spec["model"],
+            "api_key": token, "disable_thinking": False}
+
     def audio_source(self):
         src = self.data["audio"]["source"]
         entry = self.data["audio"].get("sources", {}).get(src)
@@ -252,13 +323,24 @@ class Config:
 
     def validate(self):
         errs = []
+        upstream = self.get("summary.upstream", "local")
+        if not isinstance(upstream, str) or not UPSTREAM_ID.fullmatch(upstream):
+            errs.append("summary.upstream 必須是有效的已儲存上游 ID")
         for (sec, key), allowed in CHOICES.items():
             v = self.data.get(sec, {}).get(key)
             if v not in allowed:
                 errs.append(f"{sec}.{key} = {v!r} 不合法（可用：{', '.join(sorted(allowed))}）")
-        if self.data["summary"]["model"] not in self.data.get("models", {}):
+        if upstream == "local" and self.data["summary"]["model"] not in self.data.get("models", {}):
             errs.append(f"summary.model = {self.data['summary']['model']!r} 未在 [models.*] 定義"
                         f"（可用：{', '.join(self.data.get('models', {}))}）")
+        if upstream != "local":
+            for key in ("request_timeout", "final_wait"):
+                value = self.get("summary." + key)
+                if (type(value) not in (int, float) or not math.isfinite(value) or value <= 0):
+                    errs.append(f"summary.{key} 必須是有限正數")
+            retries = self.get("summary.retries")
+            if type(retries) is not int or retries < 0:
+                errs.append("summary.retries 必須是非負整數")
         if self.data["whisper"]["model"] not in self.data["whisper"].get("models", {}):
             errs.append(f"whisper.model = {self.data['whisper']['model']!r} 未在 [whisper.models.*] 定義")
         glossary = self.data.get("summary", {}).get("glossary", {})

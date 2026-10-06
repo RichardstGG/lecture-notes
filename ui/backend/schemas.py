@@ -53,10 +53,23 @@ class ModelGroup(BaseModel):
     models: list[ModelInfo]
 
 
+class SummaryUpstreamInfo(BaseModel):
+    # Whitelist the public projection; connection details stay in the CLI.
+    id: str
+    name: str
+    kind: str
+
+
+class SummaryUpstreamInventory(BaseModel):
+    selected: str
+    options: list[SummaryUpstreamInfo]
+
+
 class ModelInventoryResponse(BaseModel):
     model_config = ConfigDict(extra="allow")
 
     schema_version: int = 1
+    summary_upstreams: SummaryUpstreamInventory | None = None
     summary: ModelGroup
     whisper: ModelGroup
 
@@ -226,6 +239,7 @@ class RunStartRequest(BaseModel):
 
     course: str = Field(min_length=1)
     input_file: str | None = None
+    upstream: str | None = Field(default=None, pattern=r"^[A-Za-z0-9][A-Za-z0-9_-]{0,63}$")
     model: str | None = None
     source: str | None = None
     overrides: dict[str, Any] = Field(default_factory=dict)
@@ -240,6 +254,7 @@ class StopRequest(BaseModel):
 class SummarizeRequest(BaseModel):
     model_config = ConfigDict(extra="forbid", str_strip_whitespace=True)
 
+    upstream: str | None = Field(default=None, pattern=r"^[A-Za-z0-9][A-Za-z0-9_-]{0,63}$")
     redo: str | None = Field(default=None, pattern=r"^(all|\d{2}:\d{2}:\d{2})$")
     model: str | None = None
     course: str | None = None

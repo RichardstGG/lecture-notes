@@ -45,6 +45,17 @@ describe("RunPanel", () => {
   beforeEach(() => vi.clearAllMocks());
   afterEach(cleanup);
 
+  it("selects a saved API upstream without needing an installed local model", async () => {
+    render(<RunPanel courses={[{ id: "test", file: "test.toml" }]}
+      models={{ ...models, summary: { selected: "missing", models: [] },
+        summary_upstreams: { selected: "local", options: [{ id: "local", name: "本地 GPU", kind: "local" }, { id: "lab", name: "Lab GPU", kind: "api" }] } }}
+      status={{ schema_version: 1, running: false }} onChanged={vi.fn().mockResolvedValue(undefined)} onError={vi.fn()} />);
+    fireEvent.change(screen.getByRole("combobox", { name: "摘要上游" }), { target: { value: "lab" } });
+    expect(screen.queryByRole("combobox", { name: "總結模型（選填）" })).toBeNull();
+    fireEvent.click(screen.getByRole("button", { name: "開始處理" }));
+    await waitFor(() => expect(api.start).toHaveBeenCalledWith(expect.objectContaining({ upstream: "lab", model: undefined })));
+  });
+
   it("keeps graceful-stop feedback visible until the run actually stops", async () => {
     let resolveStop!: (value: {
       accepted: boolean; operation: string; message: string;

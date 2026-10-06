@@ -364,6 +364,7 @@ def create_app(
         return await request.app.state.controller.start_run(
             payload.course, input_file=payload.input_file, model=payload.model,
             source=payload.source, overrides=payload.overrides,
+            **({"upstream": payload.upstream} if payload.upstream is not None else {}),
         )
 
     @app.post(
@@ -405,6 +406,7 @@ def create_app(
     ):
         return await request.app.state.controller.summarize(
             session_id, redo=payload.redo, model=payload.model, course=payload.course,
+            **({"upstream": payload.upstream} if payload.upstream is not None else {}),
         )
 
     @app.get(

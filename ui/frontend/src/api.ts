@@ -144,8 +144,8 @@ export const api = {
     method: "POST",
     body: JSON.stringify({ force }),
   }),
-  summarize: (id: string, redo?: string) => request<ActionResponse>(
+  summarize: (id: string, redo?: string, upstream?: string) => request<ActionResponse>(
     `/api/v1/sessions/${encodeURIComponent(id)}/summarize`,
-    { method: "POST", body: JSON.stringify(redo ? { redo } : {}) },
+    { method: "POST", body: JSON.stringify({ ...(redo ? { redo } : {}), ...(upstream ? { upstream } : {}) }) },
   ),
 };

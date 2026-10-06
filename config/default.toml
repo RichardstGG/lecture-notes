@@ -81,6 +81,8 @@ path = "models/Qwen3-4B-Q4_K_M.gguf"
 disable_thinking = true
 
 [summary]
+# local 保留本機 llama-server；其他 ID 讀取私有 config/upstreams.toml
+upstream = "local"
 enabled = true
 model = "qwen3-8b"            # [models.*] 的名稱
 file_mode = "after"           # --file 模式：after = 轉錄完才總結；off = 不總結

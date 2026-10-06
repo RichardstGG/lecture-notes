@@ -187,6 +187,31 @@ class BackendApiTests(unittest.IsolatedAsyncioTestCase):
         async with httpx.AsyncClient(transport=transport, base_url="http://test") as client:
             return await client.request(method, path, **kwargs)
 
+    async def test_upstream_selection_flows_through_run_and_redo(self):
+        response = await self.request("POST", "/api/v1/runs", json={"course": "test", "upstream": "lab"})
+        self.assertEqual(response.status_code, 202)
+        self.assertEqual(self.launcher.calls[-1][-2:], ("--upstream", "lab"))
+        session = self.make_session()
+        response = await self.request("POST", f"/api/v1/sessions/{session.name}/summarize",
+                                      json={"upstream": "lab", "redo": "00:05:00"})
+        self.assertEqual(response.status_code, 202)
+        self.assertIn("lab", self.launcher.calls[-1])
+        self.assertIn("00:05:00", self.launcher.calls[-1])
+        for upstream in ("https://private.invalid", "--secret", ""):
+            response = await self.request("POST", "/api/v1/runs", json={"course": "test", "upstream": upstream})
+            self.assertEqual(response.status_code, 422)
+
+    async def test_models_upstream_projection_excludes_connection_details(self):
+        self.client.models_result["summary_upstreams"] = {"selected": "lab", "options": [{
+            "id": "lab", "name": "Lab", "kind": "api", "base_url": "http://private.invalid",
+            "api_key": "secret-key", "model": "private-model"}]}
+        response = await self.request("GET", "/api/v1/models")
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(response.json()["summary_upstreams"]["options"],
+                         [{"id": "lab", "name": "Lab", "kind": "api"}])
+        for secret in ("secret-key", "private.invalid", "private-model"):
+            self.assertNotIn(secret, response.text)
+
     async def test_health_is_versioned(self):
         response = await self.request("GET", "/api/v1/health")
         self.assertEqual(response.status_code, 200)
