@@ -124,7 +124,9 @@ h1 { margin-bottom: 0; font-size: clamp(28px, 3vw, 38px); letter-spacing: -.035e
 .inline-error { color: #ffd0c5; font-size: 13px; margin: 18px 0 0; }
 
 .run-form { display: grid; grid-template-columns: minmax(170px, 1fr) auto minmax(180px, 1fr) auto; gap: 14px; align-items: end; margin-top: 26px; }
+.lecture-run-form { align-items: start; }
 .run-form label { display: grid; gap: 7px; }
+.lecture-run-form > .mode-switch { margin-top: 18px; }
 .run-form.summary-actions { grid-template-columns: minmax(0, 1fr); }
 .summary-actions label { min-width: 0; }
 .summary-actions small { color: var(--muted); line-height: 1.5; }

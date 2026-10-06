@@ -139,7 +139,7 @@ export function RunPanel({ courses, devices, models, status, onChanged, onError 
     </div>;
   }
 
-  return <form className="run-form" onSubmit={submit}>
+  return <form className="run-form lecture-run-form" onSubmit={submit}>
     <label>
       <span>課程</span>
       <select value={course} onChange={(event) => { setCourse(event.target.value); setSummaryChoice(undefined); }} required>
@@ -204,8 +204,8 @@ export function RunPanel({ courses, devices, models, status, onChanged, onError 
       </select>
     </label>}
     <label>
-      <span>總結方式</span>
-      <select aria-label="總結方式" value={summaryMethod} onChange={(event) => setSummaryChoice(event.target.value)}>
+      <span>LLM總結方式</span>
+      <select aria-label="LLM總結方式" value={summaryMethod} onChange={(event) => setSummaryChoice(event.target.value)}>
         <option value="none">不總結</option>
         {models?.summary.models.filter((item) => item.available).map((item) => <option value={`local:${item.id}`} key={item.id}>
           本機模型 · {item.id}{formatModelSize(item.size_bytes) ? ` · ${formatModelSize(item.size_bytes)}` : ""}
@@ -218,7 +218,10 @@ export function RunPanel({ courses, devices, models, status, onChanged, onError 
           外部 API · {defaultUpstream}（{models ? "設定不可用" : "載入中…"}）
         </option>}
       </select>
-      <small>{summaryChoice === undefined ? "依課程設定選取" : "僅套用於這次處理"}{selectedApi ? "；逐字稿會傳送至所選 API。" : ""}</small>
+      {(summaryChoice !== undefined || selectedApi) && <small>
+        {summaryChoice !== undefined && "僅套用於這次處理"}
+        {selectedApi && `${summaryChoice !== undefined ? "；" : ""}逐字稿會傳送至所選 API。`}
+      </small>}
     </label>
     <button className="button primary" disabled={starting || uploading || !course || (mode === "file" && !inputFile.trim())} type="submit">{starting ? "處理中…" : "開始處理"}</button>
   </form>;
