@@ -2,6 +2,7 @@ import { useEffect, useMemo, useState } from "react";
 import { api } from "../api";
 import type { Course, DeviceInventory, DoctorResult } from "../types";
 import { Icon } from "./Icon";
+import { UpstreamSettings } from "./UpstreamSettings";
 
 interface Props {
   courses: Course[];
@@ -12,11 +13,12 @@ interface Props {
   onRefreshDevices: () => Promise<void>;
   onError: (message?: string) => void;
   onMessage: (message?: string) => void;
+  onUpstreamsChanged: () => Promise<unknown>;
 }
 
 export function LocalSettings({
   courses, devices, devicesError, devicesLoading, onDevicesChanged,
-  onRefreshDevices, onError, onMessage,
+  onRefreshDevices, onError, onMessage, onUpstreamsChanged,
 }: Props) {
   const [source, setSource] = useState("default");
   const [saving, setSaving] = useState(false);
@@ -135,5 +137,10 @@ export function LocalSettings({
         </div> : <p className="local-hint">尚未執行檢查。若勾選錄音測試，系統可能會詢問麥克風權限。</p>}
       </section>
     </div>
+    <UpstreamSettings
+      onChanged={onUpstreamsChanged}
+      onError={onError}
+      onMessage={onMessage}
+    />
   </section>;
 }

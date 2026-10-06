@@ -282,6 +282,24 @@ input:focus, select:focus, textarea:focus { border-color: #5a806b; box-shadow: 0
 .doctor-status.ok { color: #3f8b65; }
 .doctor-status.warn { color: #b2762c; }
 .doctor-status.fail { color: #b54d37; }
+.upstream-settings { padding: 22px 24px 24px; border-top: 1px solid var(--line); }
+.upstream-settings-grid { display: grid; grid-template-columns: minmax(260px, .8fr) minmax(340px, 1.2fr); gap: 22px; }
+.upstream-list { min-width: 0; border: 1px solid var(--line); border-radius: 10px; overflow: hidden; align-self: start; }
+.upstream-row { min-width: 0; padding: 12px; border-bottom: 1px solid var(--line); display: flex; align-items: center; justify-content: space-between; gap: 12px; }
+.upstream-row:last-child { border-bottom: 0; }
+.upstream-row.builtin { background: var(--green-soft); }
+.upstream-row > div:first-child { min-width: 0; display: grid; gap: 3px; }
+.upstream-row strong, .upstream-row small { overflow-wrap: anywhere; }
+.upstream-row small, .upstream-row > span { color: var(--muted); font-size: 10px; }
+.upstream-row-actions { flex: 0 0 auto; display: flex; gap: 6px; }
+.upstream-form { min-width: 0; display: grid; grid-template-columns: 1fr 1fr; gap: 12px; }
+.upstream-form-heading, .upstream-form .local-hint, .upstream-form > button { grid-column: 1 / -1; }
+.upstream-form-heading { display: flex; align-items: center; justify-content: space-between; gap: 12px; }
+.upstream-form-heading button { color: var(--green); background: none; }
+.upstream-form label { min-width: 0; display: grid; gap: 7px; }
+.upstream-form label > span { color: var(--muted); font-size: 11px; font-weight: 600; }
+.upstream-form input, .upstream-form select { min-width: 0; width: 100%; }
+.upstream-form > button { justify-self: end; }
 .sr-only { position: absolute; width: 1px; height: 1px; padding: 0; margin: -1px; overflow: hidden; clip: rect(0, 0, 0, 0); white-space: nowrap; border: 0; }
 
 @keyframes pulse-ring { 0%, 100% { transform: scale(.94); opacity: .3; } 50% { transform: scale(1.08); opacity: 1; } }
@@ -300,6 +318,7 @@ input:focus, select:focus, textarea:focus { border-color: #5a806b; box-shadow: 0
   .course-editor-grid { grid-template-columns: 210px minmax(0, 1fr); }
   .local-grid { grid-template-columns: 1fr; }
   .local-pane + .local-pane { border-left: 0; border-top: 1px solid var(--line); }
+  .upstream-settings-grid { grid-template-columns: 1fr; }
 }
 
 @media (max-width: 760px) {
@@ -348,6 +367,10 @@ input:focus, select:focus, textarea:focus { border-color: #5a806b; box-shadow: 0
   .doctor-controls { grid-template-columns: 1fr; }
   .doctor-controls .check-field { height: auto; }
   .doctor-row { grid-template-columns: 22px minmax(80px, .45fr) minmax(0, 1fr); }
+  .upstream-settings { padding: 18px; }
+  .upstream-form { grid-template-columns: 1fr; }
+  .upstream-form-heading, .upstream-form .local-hint, .upstream-form > button { grid-column: auto; }
+  .upstream-row { align-items: flex-start; flex-direction: column; }
 }
 
 .share-card { background: var(--surface, #fff); border: 1px solid var(--border, #dce5e2); border-radius: 16px; padding: 24px; margin: 24px 0; }

@@ -19,6 +19,7 @@ if HAS_UI_DEPS:
     from ui.backend.course_store import CourseStore
     from ui.backend.process_control import LaunchResult
     from ui.backend.settings import BackendSettings
+    from ui.backend.upstream_store import UpstreamStore
 
 
 class StubClient:
@@ -165,6 +166,7 @@ class BackendApiTests(unittest.IsolatedAsyncioTestCase):
         self.app = create_app(
             settings=settings, client=self.client, launcher=self.launcher,
             course_store=CourseStore(self.course_root),
+            upstream_store=UpstreamStore(Path(self.tmp.name) / "config" / "upstreams.toml"),
         )
 
     def tearDown(self):
@@ -211,6 +213,82 @@ class BackendApiTests(unittest.IsolatedAsyncioTestCase):
                          [{"id": "lab", "name": "Lab", "kind": "api"}])
         for secret in ("secret-key", "private.invalid", "private-model"):
             self.assertNotIn(secret, response.text)
+
+    async def test_upstream_settings_crud_is_write_only_and_no_store(self):
+        payload = {
+            "id": "lab", "name": "Lab GPU",
+            "base_url": "http://192.0.2.10:8000/v1", "model": "private-model",
+            "auth_mode": "api_key", "api_key": "secret-key",
+        }
+        local = {"Host": "localhost"}
+        response = await self.request(
+            "POST", "/api/v1/summary-upstreams", json=payload, headers=local,
+        )
+        self.assertEqual(response.status_code, 201)
+        self.assertEqual(response.json(), {
+            "id": "lab", "name": "Lab GPU", "kind": "api", "auth_mode": "api_key",
+        })
+        self.assertEqual(response.headers["cache-control"], "no-store")
+
+        response = await self.request("GET", "/api/v1/summary-upstreams", headers=local)
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(response.headers["cache-control"], "no-store")
+        self.assertEqual(response.json()["upstreams"][0]["id"], "lab")
+        for secret in ("secret-key", "192.0.2.10", "private-model", "base_url"):
+            self.assertNotIn(secret, response.text)
+
+        replacement = {
+            "name": "Renamed", "base_url": "https://example.invalid/v1",
+            "model": "replacement", "auth_mode": "environment",
+            "api_key_env": "LEC_LAB_KEY",
+        }
+        response = await self.request(
+            "PUT", "/api/v1/summary-upstreams/lab", json=replacement, headers=local,
+        )
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(response.json()["auth_mode"], "environment")
+        self.assertNotIn("LEC_LAB_KEY", response.text)
+
+        response = await self.request("DELETE", "/api/v1/summary-upstreams/lab", headers=local)
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(response.json()["deleted"], "lab")
+        response = await self.request("GET", "/api/v1/summary-upstreams", headers=local)
+        self.assertEqual(response.json()["upstreams"], [])
+
+    async def test_upstream_settings_reject_cross_site_and_invalid_urls(self):
+        payload = {
+            "id": "lab", "name": "Lab", "base_url": "http://user:secret@host/v1",
+            "model": "model", "auth_mode": "none",
+        }
+        response = await self.request(
+            "POST", "/api/v1/summary-upstreams", json=payload, headers={"Host": "localhost"},
+        )
+        self.assertEqual(response.status_code, 400)
+        self.assertNotIn("secret", response.text)
+
+        response = await self.request(
+            "POST", "/api/v1/summary-upstreams", json={**payload, "base_url": "https://host/v1"},
+            headers={"Host": "localhost", "Origin": "https://attacker.invalid"},
+        )
+        self.assertEqual(response.status_code, 403)
+        response = await self.request(
+            "GET", "/api/v1/summary-upstreams", headers={"Host": "attacker.invalid"},
+        )
+        self.assertEqual(response.status_code, 403)
+
+    async def test_upstream_validation_errors_do_not_echo_private_input(self):
+        secret = "private-secret-" + "x" * 8192
+        response = await self.request(
+            "POST", "/api/v1/summary-upstreams",
+            json={
+                "id": "lab", "name": "Lab", "base_url": "https://host.invalid/v1",
+                "model": "model", "auth_mode": "api_key", "api_key": secret,
+            },
+            headers={"Host": "localhost"},
+        )
+        self.assertEqual(response.status_code, 422)
+        self.assertEqual(response.json()["error"]["code"], "invalid_upstream")
+        self.assertNotIn("private-secret", response.text)
 
     async def test_health_is_versioned(self):
         response = await self.request("GET", "/api/v1/health")

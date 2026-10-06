@@ -65,6 +65,35 @@ class SummaryUpstreamInventory(BaseModel):
     options: list[SummaryUpstreamInfo]
 
 
+class SummaryUpstreamSetting(BaseModel):
+    id: str
+    name: str
+    kind: str = "api"
+    auth_mode: str
+
+
+class SummaryUpstreamSettingsResponse(BaseModel):
+    api_version: int = API_VERSION
+    upstreams: list[SummaryUpstreamSetting]
+
+
+class SummaryUpstreamWriteRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid", str_strip_whitespace=True)
+
+    id: str | None = Field(default=None, pattern=r"^[A-Za-z0-9][A-Za-z0-9_-]{0,63}$")
+    name: str = Field(min_length=1, max_length=200)
+    base_url: str = Field(min_length=1, max_length=2048)
+    model: str = Field(min_length=1, max_length=500)
+    auth_mode: str = Field(default="none", pattern=r"^(none|api_key|environment)$")
+    api_key: str | None = Field(default=None, max_length=8192)
+    api_key_env: str | None = Field(default=None, max_length=128)
+
+
+class SummaryUpstreamDeleteResponse(BaseModel):
+    api_version: int = API_VERSION
+    deleted: str
+
+
 class ModelInventoryResponse(BaseModel):
     model_config = ConfigDict(extra="allow")
 

@@ -4,6 +4,8 @@ import json
 from contextlib import asynccontextmanager
 
 from fastapi import FastAPI, Header, Query, Request, Response
+from fastapi.exception_handlers import request_validation_exception_handler
+from fastapi.exceptions import RequestValidationError
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import HTMLResponse, JSONResponse, StreamingResponse
 from fastapi.staticfiles import StaticFiles
@@ -21,13 +23,16 @@ from .schemas import (ApiErrorResponse, AudioUploadResponse, CourseCreateRequest
                       ProcessActionResponse, RunStartRequest,
                       RuntimeStatusResponse, SessionDetail, SessionSummary,
                       ShareOpenRequest, ShareStatus, SharingNetwork,
-                      StopRequest, SummarizeRequest, TermCandidatesResponse)
+                      StopRequest, SummarizeRequest, TermCandidatesResponse,
+                      SummaryUpstreamDeleteResponse, SummaryUpstreamSetting,
+                      SummaryUpstreamSettingsResponse, SummaryUpstreamWriteRequest)
 from .session_store import SessionStore, SessionStoreError
 from .share_runtime import ShareRuntime
 from .share_network import sharing_network
 from .sharing import ShareError
 from .settings import BackendSettings
 from .upload_store import AudioUploadStore, UploadStoreError
+from .upstream_store import UpstreamStore, UpstreamStoreError
 
 
 def _sse(event, data):
@@ -107,7 +112,7 @@ async def _session_events(
 
 def create_app(
     settings=None, client=None, sessions=None, launcher=None, course_store=None,
-    upload_store=None, sharing=None,
+    upload_store=None, sharing=None, upstream_store=None,
 ):
     settings = settings or BackendSettings.from_env()
     client = client or LecClient.for_repo(settings.repo_root, settings.cli_timeout)
@@ -119,6 +124,7 @@ def create_app(
     launcher = launcher or LecProcessLauncher.for_client(client, settings.process_log)
     controller = ProcessController(client, launcher, sessions, settings.repo_root)
     sharing = sharing or ShareRuntime(sessions)
+    upstream_store = upstream_store or UpstreamStore.from_settings(settings)
 
     @asynccontextmanager
     async def lifespan(_app):
@@ -140,13 +146,14 @@ def create_app(
     app.state.sessions = sessions
     app.state.course_store = course_store
     app.state.upload_store = upload_store
+    app.state.upstream_store = upstream_store
     app.state.controller = controller
     app.state.shutdown_event = asyncio.Event()
     app.add_middleware(
         CORSMiddleware,
         allow_origins=["http://127.0.0.1:5173", "http://localhost:5173"],
         allow_credentials=False,
-        allow_methods=["GET", "POST", "PUT"],
+        allow_methods=["GET", "POST", "PUT", "DELETE"],
         allow_headers=["*"],
     )
 
@@ -182,6 +189,18 @@ def create_app(
             "error": {"code": exc.code, "message": exc.message},
         })
 
+    @app.exception_handler(UpstreamStoreError)
+    async def upstream_store_error_handler(_request, exc):
+        return JSONResponse(status_code=exc.status_code, content={"error": exc.as_detail()})
+
+    @app.exception_handler(RequestValidationError)
+    async def validation_error_handler(request, exc):
+        if request.url.path.startswith("/api/v1/summary-upstreams"):
+            return JSONResponse(status_code=422, content={"error": {
+                "code": "invalid_upstream", "message": "Invalid upstream settings",
+            }})
+        return await request_validation_exception_handler(request, exc)
+
     def check_share_control(request):
         # Reject cross-site browser requests and DNS-rebinding Host headers.
         if request.url.hostname not in {"127.0.0.1", "localhost"}:
@@ -192,6 +211,18 @@ def create_app(
             raise ShareError("invalid_origin", "不允許此來源。", 403)
         if request.method == "POST" and request.headers.get("content-type", "").split(";")[0] != "application/json":
             raise ShareError("invalid_content_type", "需要 JSON 請求。", 415)
+
+    def check_local_settings_control(request):
+        if request.url.hostname not in {"127.0.0.1", "localhost"}:
+            raise UpstreamStoreError("invalid_origin", "本機設定僅限本機主控端", 403)
+        origin = request.headers.get("origin")
+        allowed = {f"http://{request.url.netloc}", "http://127.0.0.1:5173", "http://localhost:5173"}
+        if origin and origin not in allowed:
+            raise UpstreamStoreError("invalid_origin", "不允許此來源", 403)
+        if request.method in {"POST", "PUT", "DELETE"}:
+            content_type = request.headers.get("content-type", "").split(";")[0]
+            if request.method != "DELETE" and content_type != "application/json":
+                raise UpstreamStoreError("invalid_content_type", "需要 JSON 請求", 415)
 
     @app.get("/api/v1/sharing", response_model=ShareStatus, response_model_exclude_none=True)
     async def sharing_status(request: Request, response: Response):
@@ -244,6 +275,61 @@ def create_app(
     )
     async def models(request: Request):
         return await request.app.state.lec_client.models()
+
+    @app.get(
+        "/api/v1/summary-upstreams", response_model=SummaryUpstreamSettingsResponse,
+        responses={400: {"model": ApiErrorResponse}, 403: {"model": ApiErrorResponse},
+                   500: {"model": ApiErrorResponse}},
+    )
+    async def summary_upstreams(request: Request, response: Response):
+        check_local_settings_control(request)
+        response.headers["Cache-Control"] = "no-store"
+        return request.app.state.upstream_store.list()
+
+    @app.post(
+        "/api/v1/summary-upstreams", response_model=SummaryUpstreamSetting,
+        status_code=201,
+        responses={400: {"model": ApiErrorResponse}, 403: {"model": ApiErrorResponse},
+                   409: {"model": ApiErrorResponse}, 500: {"model": ApiErrorResponse}},
+    )
+    async def summary_upstream_create(
+        payload: SummaryUpstreamWriteRequest, request: Request, response: Response,
+    ):
+        check_local_settings_control(request)
+        if payload.id is None:
+            raise UpstreamStoreError("invalid_upstream_id", "Upstream id is required")
+        response.headers["Cache-Control"] = "no-store"
+        data = payload.model_dump(exclude={"id"})
+        return request.app.state.upstream_store.create(payload.id, data)
+
+    @app.put(
+        "/api/v1/summary-upstreams/{upstream_id}", response_model=SummaryUpstreamSetting,
+        responses={400: {"model": ApiErrorResponse}, 403: {"model": ApiErrorResponse},
+                   404: {"model": ApiErrorResponse}, 500: {"model": ApiErrorResponse}},
+    )
+    async def summary_upstream_update(
+        upstream_id: str, payload: SummaryUpstreamWriteRequest,
+        request: Request, response: Response,
+    ):
+        check_local_settings_control(request)
+        if payload.id is not None and payload.id != upstream_id:
+            raise UpstreamStoreError("invalid_upstream_id", "Upstream id cannot be changed")
+        response.headers["Cache-Control"] = "no-store"
+        data = payload.model_dump(exclude={"id"})
+        return request.app.state.upstream_store.update(upstream_id, data)
+
+    @app.delete(
+        "/api/v1/summary-upstreams/{upstream_id}",
+        response_model=SummaryUpstreamDeleteResponse,
+        responses={400: {"model": ApiErrorResponse}, 403: {"model": ApiErrorResponse},
+                   404: {"model": ApiErrorResponse}, 500: {"model": ApiErrorResponse}},
+    )
+    async def summary_upstream_delete(
+        upstream_id: str, request: Request, response: Response,
+    ):
+        check_local_settings_control(request)
+        response.headers["Cache-Control"] = "no-store"
+        return request.app.state.upstream_store.delete(upstream_id)
 
     @app.get(
         "/api/v1/devices", response_model=DeviceInventoryResponse,

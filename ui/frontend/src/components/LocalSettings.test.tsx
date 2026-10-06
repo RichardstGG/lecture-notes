@@ -9,6 +9,10 @@ vi.mock("../api", () => ({
     selectDevice: vi.fn(),
     testDevice: vi.fn(),
     doctor: vi.fn(),
+    summaryUpstreams: vi.fn(),
+    createSummaryUpstream: vi.fn(),
+    updateSummaryUpstream: vi.fn(),
+    deleteSummaryUpstream: vi.fn(),
   },
 }));
 
@@ -43,6 +47,7 @@ function renderSettings(overrides = {}) {
     onRefreshDevices={vi.fn().mockResolvedValue(undefined)}
     onError={vi.fn()}
     onMessage={vi.fn()}
+    onUpstreamsChanged={vi.fn().mockResolvedValue(undefined)}
     {...overrides}
   />);
 }
@@ -55,6 +60,7 @@ describe("LocalSettings", () => {
       api_version: 1, source: "mic-2", message: "音量正常",
     });
     vi.mocked(api.doctor).mockResolvedValue(diagnostics);
+    vi.mocked(api.summaryUpstreams).mockResolvedValue({ api_version: 1, upstreams: [] });
   });
   afterEach(cleanup);
 
