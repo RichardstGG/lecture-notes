@@ -85,6 +85,13 @@ h1 { margin-bottom: 0; font-size: clamp(28px, 3vw, 38px); letter-spacing: -.035e
 .meeting-transcript { margin-top: 20px; padding: 18px; border-radius: 10px; background: #f4f2ec; font-size: 13px; line-height: 1.8; }
 .meeting-transcript p { margin: 0 0 8px; }
 .meeting-transcript time { color: var(--muted); font-family: ui-monospace, monospace; }
+.meeting-history-list { display: flex; gap: 8px; overflow-x: auto; padding: 16px 0 4px; }
+.meeting-history-list button { flex: 0 0 min(220px, 75vw); display: grid; gap: 6px; padding: 12px; border: 1px solid var(--line); border-radius: 9px; background: #fff; text-align: left; color: var(--ink); }
+.meeting-history-list button.active { border-color: #80aa8d; background: var(--green-soft); }
+.meeting-history-list strong { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: 12px; }
+.meeting-history-list span { color: var(--muted); font-size: 11px; }
+.meeting-real-transcript { min-height: 150px; max-height: 460px; overflow: auto; }
+.meeting-real-transcript .empty-copy { padding: 50px 20px; }
 .meeting-share-selection { display: grid; gap: 7px; max-width: 440px; margin-bottom: 20px; }
 .meeting-share-selection span { color: var(--muted); font-size: 11px; font-weight: 600; }
 .meeting-share-selection + .share-card { margin-top: 0; }

@@ -50,7 +50,7 @@ export function applyContentEvent(
     ...current,
     [event.target]: {
       content: event.operation === "append"
-        ? before.content + event.content
+        ? (before?.content ?? "") + event.content
         : event.content,
       updated_at: event.updated_at,
       size_bytes: event.size_bytes,

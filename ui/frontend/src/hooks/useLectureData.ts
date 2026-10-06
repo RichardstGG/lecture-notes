@@ -14,7 +14,7 @@ import { applyContentEvent } from "../utils";
 const idleStatus: RuntimeStatus = { schema_version: 1, running: false };
 
 function lectureSelection(current: string | undefined, sessions: SessionSummary[]) {
-  const lectures = sessions.filter((session) => session.work_type !== "meeting");
+  const lectures = sessions.filter((session) => !session.work_type || session.work_type === "lecture");
   return lectures.some((session) => session.id === current) ? current : lectures[0]?.id;
 }
 

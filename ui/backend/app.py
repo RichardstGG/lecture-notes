@@ -77,9 +77,14 @@ async def _session_events(
                 yield _sse("snapshot", current)
             else:
                 changed = False
-                for target in ("transcript", "notes"):
-                    before = previous[target]["content"]
-                    after = current[target]["content"]
+                targets = ("transcript", "notes")
+                if current["session"].get("work_type") == "meeting":
+                    targets += ("speaker_transcript",)
+                for target in targets:
+                    before_file = previous.get(target) or {"content": ""}
+                    after_file = current.get(target) or {"content": "", "updated_at": None, "size_bytes": 0}
+                    before = before_file["content"]
+                    after = after_file["content"]
                     if before == after:
                         continue
                     changed = True
@@ -89,8 +94,8 @@ async def _session_events(
                         "target": target,
                         "operation": "append" if append else "replace",
                         "content": after[len(before):] if append else after,
-                        "updated_at": current[target]["updated_at"],
-                        "size_bytes": current[target]["size_bytes"],
+                        "updated_at": after_file["updated_at"],
+                        "size_bytes": after_file["size_bytes"],
                     })
                 if not changed:
                     yield ": heartbeat\n\n"

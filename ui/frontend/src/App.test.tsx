@@ -114,4 +114,29 @@ describe("workbench navigation", () => {
     expect(api.termCandidates).not.toHaveBeenCalled();
     expect(screen.getByRole("button", { name: "開啟分享" }).hasAttribute("disabled")).toBe(true);
   });
+
+  it("keeps meeting diarization progress visible across pages", async () => {
+    vi.mocked(api.status).mockResolvedValue({ schema_version: 2, running: true, work_type: "meeting", course: "設計會議", mode: "diarize",
+      status: { phase: "diarizing", diarization: { stage: "retranscription", processed_seconds: 600, total_seconds: 1200, requested_speakers: 10, speakers_found: 4 } },
+    });
+    render(<App />);
+    await screen.findByText(/背景工作進行中：會議/);
+    fireEvent.click(screen.getByRole("link", { name: "本機設定" }));
+    expect(screen.getByText(/重新轉錄 10:00 \/ 20:00/)).toBeTruthy();
+    fireEvent.click(screen.getByRole("button", { name: "回到工作台" }));
+    expect(screen.getByRole("heading", { level: 1 }).textContent).toBe("會議工作台");
+    expect(api.stop).not.toHaveBeenCalled();
+  });
+
+  it("keeps explicit unknown work types out of both workbenches", async () => {
+    vi.mocked(api.sessions).mockResolvedValue([{ ...meeting, id: "other/one", work_type: "future-type" }]);
+    vi.mocked(api.status).mockResolvedValue({ schema_version: 2, running: true, work_type: "future-type", status: { phase: "processing" } });
+    render(<App />);
+    await screen.findByText("還沒有課堂紀錄。");
+    expect(screen.getByText(/背景工作進行中：未知類型/)).toBeTruthy();
+    expect(screen.queryByRole("button", { name: "回到工作台" })).toBeNull();
+    fireEvent.click(screen.getByRole("link", { name: /^會議工作台$/ }));
+    expect(screen.getByText(/尚無會議紀錄/)).toBeTruthy();
+    expect(api.session).not.toHaveBeenCalled();
+  });
 });
