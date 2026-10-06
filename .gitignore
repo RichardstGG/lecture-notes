@@ -14,6 +14,9 @@ courses/*.toml.tmp
 # 範例的原始錄音與本機工作紀錄不進 git
 samples/_raw_recording.wav
 Claude outputs/
+USER_AGENT_HANDOFF.md
+USER_AGENT_PREFERENCES.md
+docs/PR_REVIEW.md
 
 __pycache__/
 *.pyc
