@@ -51,7 +51,7 @@ describe("workbench navigation", () => {
   it("switches owner pages before scrolling and preserves lecture and meeting form state", async () => {
     const { container } = render(<App />);
     await screen.findByText("舊逐字稿");
-    fireEvent.change(screen.getByRole("combobox", { name: "總結方式" }), { target: { value: "none" } });
+    fireEvent.change(screen.getByRole("combobox", { name: "LLM總結方式" }), { target: { value: "none" } });
     const meetingMenu = screen.getByRole("group", { name: "會議工作台選單" });
     fireEvent.click(within(meetingMenu).getByRole("link", { name: "會議設定" }));
     expect(screen.getByRole("heading", { level: 1 }).textContent).toBe("會議工作台");
@@ -64,7 +64,7 @@ describe("workbench navigation", () => {
     expect(screen.getByRole("heading", { name: "本機裝置與診斷" })).toBeTruthy();
     expect(screen.queryByRole("button", { name: "逐字稿" })).toBeNull();
     fireEvent.click(screen.getByRole("link", { name: /^課堂工作台$/ }));
-    expect((screen.getByRole("combobox", { name: "總結方式" }) as HTMLSelectElement).value).toBe("none");
+    expect((screen.getByRole("combobox", { name: "LLM總結方式" }) as HTMLSelectElement).value).toBe("none");
     expect(container.querySelector(".meeting-theme")).toBeNull();
     fireEvent.click(within(meetingMenu).getByRole("link", { name: "內網共享" }));
     expect(scroll.mock.instances.at(-1)).toBe(document.getElementById("meeting-sharing"));

@@ -51,8 +51,10 @@ describe("RunPanel", () => {
       { id: "raw-course", file: "raw.toml", model: "qwen3-8b", upstream: "local", summary_enabled: false },
     ]} models={{ ...models, summary_upstreams: { selected: "local", options: [{ id: "lab", name: "Lab", kind: "api" }] } }}
       status={{ schema_version: 1, running: false }} onChanged={vi.fn().mockResolvedValue(undefined)} onError={vi.fn()} />);
-    const selector = screen.getByRole("combobox", { name: "總結方式" }) as HTMLSelectElement;
+    const selector = screen.getByRole("combobox", { name: "LLM總結方式" }) as HTMLSelectElement;
     expect(selector.value).toBe("api:lab");
+    expect(screen.queryByText("依課程設定選取")).toBeNull();
+    expect(screen.getByText("逐字稿會傳送至所選 API。")).toBeTruthy();
     expect(Array.from(selector.options).map((option) => option.value)).toEqual(["none", "local:qwen3-8b", "local:qwen3-4b", "api:lab"]);
     fireEvent.click(screen.getByRole("button", { name: "開始處理" }));
     await waitFor(() => expect(api.start).toHaveBeenCalledWith(expect.objectContaining({ course: "api-course", model: undefined, overrides: undefined })));
@@ -69,7 +71,7 @@ describe("RunPanel", () => {
     render(<RunPanel courses={[{ id: "test", file: "test.toml", upstream: "lab", summary_enabled: false }]}
       models={{ ...models, summary_upstreams: { selected: "local", options: [{ id: "lab", name: "Lab", kind: "api" }] } }}
       status={{ schema_version: 1, running: false }} onChanged={vi.fn().mockResolvedValue(undefined)} onError={vi.fn()} />);
-    const selector = screen.getByRole("combobox", { name: "總結方式" });
+    const selector = screen.getByRole("combobox", { name: "LLM總結方式" });
     fireEvent.change(selector, { target: { value: "local:qwen3-4b" } });
     fireEvent.click(screen.getByRole("button", { name: "開始處理" }));
     await waitFor(() => expect(api.start).toHaveBeenCalledWith(expect.objectContaining({ upstream: "local", model: "qwen3-4b", overrides: { "summary.enabled": true } })));
@@ -82,7 +84,8 @@ describe("RunPanel", () => {
   it("keeps an unavailable configured default visible without silently selecting none", () => {
     render(<RunPanel courses={[{ id: "test", file: "test.toml", model: "missing", summary_enabled: true }]}
       models={models} status={{ schema_version: 1, running: false }} onChanged={vi.fn()} onError={vi.fn()} />);
-    expect((screen.getByRole("combobox", { name: "總結方式" }) as HTMLSelectElement).value).toBe("local:missing");
+    expect((screen.getByRole("combobox", { name: "LLM總結方式" }) as HTMLSelectElement).value).toBe("local:missing");
+    expect(screen.queryByText("依課程設定選取")).toBeNull();
     expect(screen.getByRole("option", { name: "本機模型 · missing（未安裝）" }).hasAttribute("disabled")).toBe(true);
   });
 
@@ -91,7 +94,7 @@ describe("RunPanel", () => {
       models={{ ...models, summary: { selected: "missing", models: [] },
         summary_upstreams: { selected: "local", options: [{ id: "local", name: "本地 GPU", kind: "local" }, { id: "lab", name: "Lab GPU", kind: "api" }] } }}
       status={{ schema_version: 1, running: false }} onChanged={vi.fn().mockResolvedValue(undefined)} onError={vi.fn()} />);
-    fireEvent.change(screen.getByRole("combobox", { name: "總結方式" }), { target: { value: "api:lab" } });
+    fireEvent.change(screen.getByRole("combobox", { name: "LLM總結方式" }), { target: { value: "api:lab" } });
     expect(screen.queryByRole("combobox", { name: "總結模型（選填）" })).toBeNull();
     fireEvent.click(screen.getByRole("button", { name: "開始處理" }));
     await waitFor(() => expect(api.start).toHaveBeenCalledWith(expect.objectContaining({ upstream: "lab", model: undefined, overrides: { "summary.enabled": true } })));
@@ -144,7 +147,7 @@ describe("RunPanel", () => {
       onError={vi.fn()}
     />);
 
-    fireEvent.change(screen.getByRole("combobox", { name: "總結方式" }), { target: { value: "none" } });
+    fireEvent.change(screen.getByRole("combobox", { name: "LLM總結方式" }), { target: { value: "none" } });
     fireEvent.click(screen.getByRole("button", { name: "開始處理" }));
 
     await waitFor(() => expect(api.start).toHaveBeenCalledWith({
@@ -171,7 +174,7 @@ describe("RunPanel", () => {
       onError={vi.fn()}
     />);
 
-    const selector = screen.getByLabelText("總結方式") as HTMLSelectElement;
+    const selector = screen.getByLabelText("LLM總結方式") as HTMLSelectElement;
     expect(selector.options[0].textContent).toBe("不總結");
     expect(selector.value).toBe("local:qwen3-8b");
     expect(screen.queryByRole("option", { name: /missing/ })).toBeNull();
