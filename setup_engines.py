@@ -4,6 +4,7 @@
 用法：
   python3 setup_engines.py                    依 engines.lock 的版本編譯（已編好同版本就略過）
   python3 setup_engines.py whisper|llama      只處理其中一個
+  python3 setup_engines.py diarize            只取得會議發言者辨識用的兩個模型（約 35MB，驗證 SHA-256）
   python3 setup_engines.py --update           升級到最新版，編譯成功後寫回 engines.lock
   python3 setup_engines.py --rebuild          版本沒變也強制重新編譯
   python3 setup_engines.py --lock             不編譯，只把目前 checkout 的版本記進 engines.lock
@@ -15,10 +16,12 @@
 以靜態連結編譯（BUILD_SHARED_LIBS=OFF），整個專案資料夾搬到哪裡都能執行。
 """
 import argparse
+import hashlib
 import os
 import shutil
 import subprocess
 import sys
+import tarfile
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parent
@@ -33,6 +36,27 @@ WHISPER_MODEL = "large-v3-turbo"
 WHISPER_MODEL_URL = ("https://huggingface.co/ggerganov/whisper.cpp/resolve/main/"
                      f"ggml-{WHISPER_MODEL}.bin")
 LOCK_FILE = ROOT / "engines.lock"
+
+# 會議發言者辨識（sherpa-onnx）的兩個模型。檔名對應 docs/meeting-workbench-contract.md
+# 的 [diarization] 預設路徑。GitHub release 的資產 tag 是可變的，所以雜湊一律驗證，
+# 不信任「當下抓到的是什麼」。授權在 docs/diarize-install.md。
+_SHERPA_RELEASES = "https://github.com/k2-fsa/sherpa-onnx/releases/download"
+DIARIZE_MODELS = [
+    {"name": "segmentation", "license": "MIT", "size_mb": 7,
+     "file": "sherpa-onnx-pyannote-segmentation-3-0.onnx",
+     "url": f"{_SHERPA_RELEASES}/speaker-segmentation-models/"
+            "sherpa-onnx-pyannote-segmentation-3-0.tar.bz2",
+     "archive_sha256": "24615ee884c897d9d2ba09bb4d30da6bb1b15e685065962db5b02e76e4996488",
+     "member": "sherpa-onnx-pyannote-segmentation-3-0/model.onnx",
+     "sha256": "220ad67ca923bef2fa91f2390c786097bf305bceb5e261d4af67b38e938e1079",
+     "license_member": "sherpa-onnx-pyannote-segmentation-3-0/LICENSE",
+     "license_file": "sherpa-onnx-pyannote-segmentation-3-0.LICENSE.txt"},
+    {"name": "embedding", "license": "Apache-2.0", "size_mb": 28,
+     "file": "3dspeaker_speech_campplus_sv_zh_en_16k-common_advanced.onnx",
+     "url": f"{_SHERPA_RELEASES}/speaker-recongition-models/"
+            "3dspeaker_speech_campplus_sv_zh_en_16k-common_advanced.onnx",
+     "sha256": "aa3cfc16963a10586a9393f5035d6d6b57e98d358b347f80c2a30bf4f00ceba2"},
+]
 
 ENGINES = {
     "whisper": {"dir": ROOT / "whisper.cpp", "repo": WHISPER_REPO, "key": "WHISPER_REF",
@@ -256,12 +280,96 @@ def download(url, dest):
     urllib.request.urlretrieve(url, dest)                       # noqa: S310
 
 
+def sha256_file(path, chunk=1 << 20):
+    h = hashlib.sha256()
+    with open(path, "rb") as f:
+        while True:
+            b = f.read(chunk)
+            if not b:
+                break
+            h.update(b)
+    return h.hexdigest()
+
+
+def _verified_or_die(path, expected, what):
+    got = sha256_file(path)
+    if got != expected:
+        try:
+            Path(path).unlink()
+        except OSError:
+            pass
+        die(f"{what} 的 SHA-256 不符（預期 {expected[:12]}…，實際 {got[:12]}…），"
+            "已刪除下載的檔案。可能是下載中斷或來源被更換；請重跑一次，"
+            "仍然失敗就不要使用這個來源。")
+
+
+def _extract_member(archive, member, dest):
+    """從 tar 取出「指定的一個成員」寫到 dest。成員用完整名稱精確比對，不信任任何路徑。"""
+    with tarfile.open(archive, "r:*") as tar:
+        try:
+            info = tar.getmember(member)
+        except KeyError:
+            die(f"壓縮檔裡找不到 {member}，來源的檔案結構可能變了")
+        if not info.isfile():
+            die(f"壓縮檔裡的 {member} 不是一般檔案")
+        src = tar.extractfile(info)
+        with open(dest, "wb") as f:
+            shutil.copyfileobj(src, f)
+
+
+def fetch_diarization_models(models_dir=None, downloader=None):
+    """取得會議發言者辨識的兩個模型到 models/，全部驗證 SHA-256。
+
+    - 已存在且雜湊相符：略過。
+    - 已存在但雜湊不符：**拒絕覆蓋**，要使用者自己決定（可能是自行替換的模型）。
+    - 不存在：下載 → 驗證 → 原子改名。下載或驗證失敗不會留下半成品。
+    """
+    models_dir = Path(models_dir or ROOT / "models")
+    downloader = downloader or download
+    models_dir.mkdir(parents=True, exist_ok=True)
+    paths = []
+    for m in DIARIZE_MODELS:
+        dest = models_dir / m["file"]
+        if dest.is_file():
+            if sha256_file(dest) != m["sha256"]:
+                die(f"{dest} 已存在但 SHA-256 與預期不符，不覆蓋。"
+                    f"若是自行替換的模型就忽略這個訊息；否則請刪除後重跑。")
+            print(f"✔ 已有 {m['name']} 模型 {dest.name}")
+            paths.append(dest)
+            continue
+        print(f"▶ 下載發言者辨識的 {m['name']} 模型（約 {m['size_mb']}MB，{m['license']}）")
+        part = models_dir / f".{m['file']}.part"
+        try:
+            downloader(m["url"], part)
+            if "archive_sha256" in m:
+                _verified_or_die(part, m["archive_sha256"], f"{m['name']} 壓縮檔")
+                tmp = models_dir / f".{m['file']}.tmp"
+                _extract_member(part, m["member"], tmp)
+                _verified_or_die(tmp, m["sha256"], f"{m['name']} 模型")
+                if m.get("license_member"):
+                    _extract_member(part, m["license_member"],
+                                    models_dir / m["license_file"])
+                os.replace(tmp, dest)
+            else:
+                _verified_or_die(part, m["sha256"], f"{m['name']} 模型")
+                os.replace(part, dest)
+        finally:
+            for leftover in (part, models_dir / f".{m['file']}.tmp"):
+                try:
+                    leftover.unlink()
+                except OSError:
+                    pass
+        print(f"✔ {m['name']} 模型 {dest.stat().st_size / 1e6:.1f} MB {dest}")
+        paths.append(dest)
+    return paths
+
+
 # ---------------------------------------------------------------- 主程式
 def main():
     ap = argparse.ArgumentParser(description="取得並編譯 whisper.cpp / llama.cpp",
                                  formatter_class=argparse.RawDescriptionHelpFormatter,
                                  epilog=__doc__)
-    ap.add_argument("engines", nargs="*", metavar="whisper|llama", default=[])
+    ap.add_argument("engines", nargs="*", metavar="whisper|llama|diarize", default=[])
     ap.add_argument("--backend", default="auto",
                     choices=["auto", "vulkan", "cuda", "metal", "cpu"])
     ap.add_argument("--update", action="store_true")
@@ -272,10 +380,18 @@ def main():
                     help="傳給 cmake -G（例如 Ninja）。預設：Windows 依 vswhere 找到的 Visual Studio 自動指定，其他平台交給 cmake")
     args = ap.parse_args()
 
-    for name in args.engines:
+    want_diarize = "diarize" in args.engines
+    engine_args = [n for n in args.engines if n != "diarize"]
+    for name in engine_args:
         if name not in ENGINES:
-            die(f"未知的引擎：{name}（可用：whisper、llama）")
-    names = args.engines or ["whisper", "llama"]
+            die(f"未知的目標：{name}（可用：whisper、llama、diarize）")
+    if want_diarize and not engine_args:
+        # 只要模型：不需要編譯工具鏈，也不必動引擎
+        step("發言者辨識模型")
+        fetch_diarization_models()
+        step("完成")
+        return 0
+    names = engine_args or ["whisper", "llama"]
     backend = P.engine_backend(args.backend)
     if backend not in BACKEND_FLAGS:
         die(f"不支援的後端：{backend}")
@@ -330,6 +446,10 @@ def main():
                     print(f"✔ {f.stat().st_size / 1e9:.1f} GB  {f}")
             else:
                 print(f"⚠ {models} 裡沒有 .gguf，請依 README 下載 Qwen3-8B-Q4_K_M.gguf")
+
+    if want_diarize:
+        step("發言者辨識模型")
+        fetch_diarization_models()
 
     step("完成")
     print("下一步：" + ("python3 lec doctor" if P.IS_WINDOWS else "./lec doctor"))
