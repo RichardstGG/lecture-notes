@@ -12,6 +12,20 @@ from . import _pathfix  # noqa: F401
 from core import doctor as DOC
 
 
+class ParseGpuDevicesTests(unittest.TestCase):
+    def test_metal_uses_mtl_prefix(self):
+        out = "Available devices:\n  MTL0: Apple M3 Pro (36864 MiB, 36863 MiB free)\n"
+        self.assertEqual(DOC.parse_gpu_devices(out), ["MTL0: Apple M3 Pro (36864 MiB, 36863 MiB free)"])
+
+    def test_vulkan_and_cuda(self):
+        out = "Vulkan0: Intel(R) Arc(TM) 140V\nCUDA0: NVIDIA RTX 4060 (8188 MiB)\n"
+        self.assertEqual(len(DOC.parse_gpu_devices(out)), 2)
+
+    def test_no_gpu_ignores_noise_and_cpu(self):
+        out = "load_backend: loaded CPU backend\nAvailable devices:\nCPU0: Apple M3\n"
+        self.assertEqual(DOC.parse_gpu_devices(out), [])
+
+
 class ReadLockTests(unittest.TestCase):
     def test_parses_key_value_lines_and_ignores_comments(self):
         with tempfile.TemporaryDirectory() as d:

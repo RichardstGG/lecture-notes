@@ -1,6 +1,7 @@
 """lec doctor：檢查執行環境，回報問題時請附上輸出。"""
 import os
 import platform
+import re
 import shutil
 import subprocess
 import sys
@@ -12,6 +13,16 @@ from . import platform as P
 from .servers import LlamaServer, WhisperServer, http_get
 
 OK, WARN, FAIL = "✔", "⚠", "✖"
+
+
+# llama-server --list-devices 的裝置行長得像「  MTL0: Apple M3 Pro (...)」「Vulkan0: ...」「CUDA0: ...」，
+# 各後端的前綴不同（Metal 是 MTL，不是 Metal），所以用「名稱+數字:」判斷，不列舉前綴。
+_DEVICE_LINE = re.compile(r"^[A-Za-z][A-Za-z_]*\d+:\s")
+
+
+def parse_gpu_devices(text):
+    return [x.strip() for x in text.splitlines()
+            if _DEVICE_LINE.match(x.strip()) and not x.strip().lower().startswith("cpu")]
 
 
 def read_lock(path):
@@ -135,8 +146,7 @@ def run(course=None, sets=(), mic=False):
         try:
             r = subprocess.run([str(b), "--list-devices"], capture_output=True, text=True, encoding="utf-8", errors="replace", timeout=30,
                                env=l._env(b))
-            devs = [x.strip() for x in (r.stdout + r.stderr).splitlines()
-                    if x.strip().lower().startswith(("vulkan", "cuda", "metal"))]
+            devs = parse_gpu_devices(r.stdout + r.stderr)
             add(OK if devs else WARN, "GPU", "；".join(devs) if devs else "沒有偵測到 GPU，會用 CPU（很慢）")
         except (OSError, subprocess.TimeoutExpired) as e:
             add(WARN, "GPU", f"無法執行 --list-devices：{e}")
