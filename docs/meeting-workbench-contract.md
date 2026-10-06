@@ -1,6 +1,6 @@
 # 雙工作台正式契約（規格 v1，尚未實作）
 
-本文件是後續實作的目標契約，不表示會議 CLI、錄音 API 或引擎目前已提供這些功能。決策依據為 2026-10-04 Claude Code 的 `CROSS_AGENT_REQUEST` 及使用者回覆「以此請求作為正式依據」。選定 sherpa-onnx 1.13.8、pyannote segmentation 3.0 ONNX、3D-Speaker CAMPPlus 中文英文 ONNX；辨識品質尚待乾淨會議錄音驗證。本階段提供前端 mock 預覽與既有分享服務的會議文件讀取，不接真引擎。
+本文件是後續實作的目標契約，不表示會議 CLI、錄音 API 或引擎目前已提供這些功能。決策依據為 2026-10-04 Claude Code 的 `CROSS_AGENT_REQUEST` 及使用者回覆「以此請求作為正式依據」。選定 sherpa-onnx 1.13.8、pyannote segmentation 3.0 ONNX、3D-Speaker CAMPPlus 中文英文 ONNX；辨識品質尚待乾淨會議錄音驗證。目前前端保留 mock 錄音／辨識預覽，真實會議歷史與雙稿讀取使用既有 session API，不接真引擎。
 
 ## 範圍與既有行為
 
@@ -76,4 +76,4 @@ Codex 實作順序：契約與 UI mock → `core/config.py` / `core/cli.py` / `c
 
 ## 現況差距與待決事項
 
-目前程式沒有 meeting CLI/錄音 API、持久來源、辨識階段及輸出；本文件的大部分命名、schema 2 與路徑均是未來契約。分享 reader 已能依測試用會議 session 的 `work_type` 與 generation manifest 讀取兩份逐字稿，但正式會議來源尚未生成，mock 示範資料不能分享。Claude 所述模型組合已被採用為實作候選，尚需乾淨樣本品質驗收；模型檔再散佈方式與各平台安裝驗證由 maintainer 決定。實作前若變更本契約須同步更新文件與 contract tests。
+目前程式沒有 meeting CLI/錄音 API、持久來源、辨識執行階段及輸出；本文件的大部分命名、schema 2 與路徑均是未來契約。session API、前端歷史與分享 reader 已能依真實會議 session 的 `work_type` 與 generation manifest 讀取兩份逐字稿；session SSE 能在帶代號稿新增或切換 generation 時傳 `speaker_transcript` content event。正式會議來源尚未生成，mock 示範資料不能分享。Claude 所述模型組合已被採用為實作候選，尚需乾淨樣本品質驗收；模型檔再散佈方式與各平台安裝驗證由 maintainer 決定。實作前若變更本契約須同步更新文件與 contract tests。

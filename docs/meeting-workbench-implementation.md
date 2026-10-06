@@ -1,6 +1,6 @@
 # 雙工作台開發規格與交付順序
 
-以 [正式契約](meeting-workbench-contract.md) 為準。本文件列實作切點；目前僅完成契約與前端 mock 預覽。不得把 mock 預覽當成可錄會議或可執行辨識的功能。
+以 [正式契約](meeting-workbench-contract.md) 為準。本文件列實作切點；目前已完成契約、前端 mock 預覽，以及以現有 session API 讀取真實會議歷史與兩份逐字稿。不得把 mock 預覽當成可錄會議或可執行辨識的功能。
 
 目前前端採分組導航：會議工作台使用淡藍色主題，歷史紀錄與內網共享子選單捲動到既有區塊，會議設定指向「開始一場會議」預覽區塊；本機設定為獨立頁面。切換頁面保留預覽表單與狀態，不啟停背景工作或關閉分享。本次導航調整未新增會議設定持久化、會議摘要選單或引擎。課堂總結方式沿用 PR #53 的上游選取契約；詳見 [工作台 UI 契約](../ui/WORKBENCH.md)。
 
@@ -23,7 +23,7 @@
 1. **此 PR：契約、mock 前端及分享銜接。** 新增規格與 meeting 預覽元件；示範狀態控制只改 React 本地狀態，錄音按鈕 disabled。既有內網分享可選擇真實 `work_type=meeting` session，訪客讀取原逐字稿及目前 generation 的帶代號稿。課堂分享、CLI、設定、錄音與辨識流程不改。測 10/4 折疊、進度、兩類分享文件及下載隔離。
 2. **Codex 契約底層。** 加 work type、會議設定、來源 metadata、目錄命名、status schema 2、鎖與 CLI 入參。先以假辨識器測 error/cancel/retry 與原子輸出，不導入模型。檔案所有權與跨界變更遵循 [CLAUDE.md](../CLAUDE.md)／[CODEX.md](../CODEX.md)；文件和 contract tests 與程式同 PR。
 3. **Claude 引擎品質門檻。** 乾淨的約十人中文加英文術語錄音驗證 diarization，再依 `diarize_session` 契約做封裝與時間戳產物。原始受損錄音的 20.2% 遺失不能作準確度通過標準。模型缺失、錯誤、取消均要可測；不得依賴 torch、numpy、網路服務。
-4. **Codex API 與真資料 UI。** API 從 CLI 取得真狀態，session store 讀雙稿，前端改用 meeting 真設定與作業。移除 mock 前須有錄音／匯入／辨識／重跑/取消的 API contract tests；UI 不 import `core`。
+4. **Codex API 與真資料 UI。** 現有 session store 已能讀雙稿；前端歷史與結果現讀真實 meeting session，session SSE 在帶代號稿新增或切換 generation 時發 `speaker_transcript` content event，status schema 2 的會後階段進度可顯示在會議頁與跨頁提示。會議設定、錄音／匯入、辨識、重跑與取消 API 仍待底層 CLI／狀態契約落地。移除其 mock 前須有對應 API contract tests；UI 不 import `core`。
 5. **整合與硬體驗收。** 兩平台 beta 仍用實驗中措辭；Linux 實機錄音與匯入皆測、跨頁不中止、暫存清理後重跑、長任務進度、10/4 顯示、兩行程搶鎖、Ctrl+C/stop/stop_force。完成前不可宣稱會議功能可用。
 
 ## 契約檢查點
@@ -73,7 +73,7 @@
   直譯器依序找：`DiarizationRequest.python` → 環境變數 `LEC_DIARIZE_PYTHON` → 目前直譯器 → 專案 `.venv`。
   找不到就丟 `engine_unavailable`，訊息內含安裝指令。
 - 已實測的版本鎖：`sherpa-onnx==1.13.8`（`core/diarize.py::SHERPA_ONNX_VERSION`）。
-- **目前沒有任何安裝流程會裝它或下載兩個模型**；`setup.py`／`upgrade.py` 尚未處理。
+- `upgrade.py` 預設在專案 `.venv` 安裝依賴並下載兩個模型；也可依 [安裝說明](diarize-install.md) 單獨執行 `setup_engines.py diarize`。安裝流程已具備，仍不代表辨識品質通過驗收。
 
 **門檻值刻意留空，等乾淨樣本**
 
@@ -90,5 +90,5 @@
 ## 所有權依據與尚待決策
 
 - 檔案所有權與共用檔案規則以 [CLAUDE.md](../CLAUDE.md)／[CODEX.md](../CODEX.md) 為準；跨所有權變更走 CROSS_AGENT_REQUEST，跨層整合測試依被斷言的契約分工。
-- 模型檔的取得、授權標示、版本鎖及各平台安裝驗證要由 Claude 與 maintainer 確定（目前沒有安裝流程，見上方「引擎層現況」）。採用方案的品質尚待乾淨錄音驗證。
+- 模型取得、授權標示與版本鎖見 [安裝說明](diarize-install.md)；各平台安裝驗證與採用方案的品質仍待乾淨錄音確認。
 - 會議辨識產物的 generation manifest 具體檔名及舊檔讀取策略須在底層實作 PR 定稿並補測試；正式契約要求「舊成功結果在重跑失敗時仍可讀」，不能只依賴逐一 rename 兩個檔。

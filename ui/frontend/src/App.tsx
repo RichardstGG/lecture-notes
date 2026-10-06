@@ -25,7 +25,7 @@ export default function App() {
   const data = useLectureData();
   const [navigation, setNavigation] = useState(() => navigationFromHash(window.location.hash));
   const page = navigation.page;
-  const lectureSessions = useMemo(() => data.sessions.filter((session) => session.work_type !== "meeting"), [data.sessions]);
+  const lectureSessions = useMemo(() => data.sessions.filter((session) => !session.work_type || session.work_type === "lecture"), [data.sessions]);
   const [tab, setTab] = useState<"transcript" | "notes" | "terms">("transcript");
   const [termData, setTermData] = useState<TermCandidatesResponse>();
   const [actionMessage, setActionMessage] = useState<string>();
@@ -34,7 +34,9 @@ export default function App() {
   const runningId = sessionIdFromPath(
     data.status.session, data.sessions.map((session) => session.id),
   );
-  const visibleDetail: SessionDetail | undefined = data.detail?.session.work_type !== "meeting" ? data.detail : undefined;
+  const visibleDetail: SessionDetail | undefined = !data.detail?.session.work_type || data.detail.session.work_type === "lecture" ? data.detail : undefined;
+  const runningWorkbench = !data.status.work_type || data.status.work_type === "lecture" ? "lecture"
+    : data.status.work_type === "meeting" ? "meeting" : undefined;
 
   function navigate(next: Navigation) {
     if (window.location.hash !== `#${next.target}`) window.history.pushState(null, "", `#${next.target}`);
@@ -120,12 +122,17 @@ export default function App() {
       </div>}
 
       {data.status.running && <div className="cross-workbench-status" role="status">
-        <span>背景工作進行中：{data.status.work_type === "meeting" ? "會議" : "課堂"} · {data.status.course || data.status.session || "未命名工作"} · {phaseLabels[phase || ""] || phase || "處理中"}</span>
-        <button type="button" onClick={() => navigate(data.status.work_type === "meeting" ? { page: "meeting", target: "meeting-live" } : { page: "lecture", target: "live" })}>回到工作台</button>
+        <span>背景工作進行中：{runningWorkbench === "meeting" ? "會議" : runningWorkbench === "lecture" ? "課堂" : "未知類型"} · {data.status.course || data.status.session || "未命名工作"} · {phaseLabels[phase || ""] || phase || "處理中"}
+          {data.status.work_type === "meeting" && data.status.status?.diarization && Number.isFinite(data.status.status.diarization.processed_seconds)
+            && <> · {data.status.status.diarization.stage === "segmentation" ? "發言者辨識" : data.status.status.diarization.stage === "retranscription" ? "重新轉錄" : "會後處理"} {formatDuration(data.status.status.diarization.processed_seconds)}
+              {Number.isFinite(data.status.status.diarization.total_seconds) && (data.status.status.diarization.total_seconds ?? 0) > 0
+                ? ` / ${formatDuration(data.status.status.diarization.total_seconds ?? undefined)}` : ""}</>}
+        </span>
+        {runningWorkbench && <button type="button" onClick={() => navigate(runningWorkbench === "meeting" ? { page: "meeting", target: "meeting-live" } : { page: "lecture", target: "live" })}>回到工作台</button>}
       </div>}
 
       <div hidden={page !== "meeting"} id="meeting-live">
-        <MeetingWorkbench runtime={data.status} sessions={data.sessions} />
+        <MeetingWorkbench active={page === "meeting"} runtime={data.status} sessions={data.sessions} />
       </div>
       <div hidden={page !== "lecture"}>
 

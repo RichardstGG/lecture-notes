@@ -13,6 +13,14 @@ export type Phase =
 
 export interface SessionStatus {
   phase?: Phase;
+  diarization?: {
+    stage?: "segmentation" | "retranscription" | string;
+    processed_seconds?: number;
+    total_seconds?: number | null;
+    requested_speakers?: number;
+    speakers_found?: number;
+    actual_speakers?: number | null;
+  } | null;
   elapsed?: number;
   transcribed?: number;
   transcribe_lag?: number | null;
@@ -205,7 +213,7 @@ export interface SessionDetail {
 }
 
 export interface ContentEvent {
-  target: "transcript" | "notes";
+  target: "transcript" | "notes" | "speaker_transcript";
   operation: "append" | "replace";
   content: string;
   updated_at?: string;

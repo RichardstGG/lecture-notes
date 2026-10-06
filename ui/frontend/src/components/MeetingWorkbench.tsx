@@ -2,6 +2,7 @@ import { useState } from "react";
 import type { RuntimeStatus, SessionSummary } from "../types";
 import { formatDuration } from "../utils";
 import { SharePanel } from "./SharePanel";
+import { MeetingSessionPanel } from "./MeetingSessionPanel";
 
 type PreviewStage = "ready" | "recording" | "diarizing" | "done";
 
@@ -19,11 +20,12 @@ const previewSpeakers = [
 ];
 
 interface Props {
+  active?: boolean;
   runtime: RuntimeStatus;
   sessions?: SessionSummary[];
 }
 
-export function MeetingWorkbench({ runtime, sessions = [] }: Props) {
+export function MeetingWorkbench({ active = true, runtime, sessions = [] }: Props) {
   const [name, setName] = useState("");
   const [speakers, setSpeakers] = useState(10);
   const [stage, setStage] = useState<PreviewStage>("ready");
@@ -39,7 +41,7 @@ export function MeetingWorkbench({ runtime, sessions = [] }: Props) {
   return <div className="meeting-workbench">
     <div className="meeting-preview-note" role="status">
       <strong>會議工作台預覽</strong>
-      <span>此頁使用示範資料，尚未連接會議 CLI 或發言者辨識。下方示範控制不會啟動或停止真正的工作。</span>
+      <span>錄音、辨識控制與示範結果尚未連接會議 CLI。會議歷史與內網分享讀取真實場次；示範控制不會啟動或停止工作。</span>
     </div>
 
     <section className="meeting-card" id="meeting-settings">
@@ -76,8 +78,10 @@ export function MeetingWorkbench({ runtime, sessions = [] }: Props) {
       {stage === "done" && <p className="meeting-help">示範完成。正式版本將提供取消、強制停止及從保留來源重新辨識；此預覽不操作背景工作。</p>}
     </section>
 
-    <section className="meeting-card" id="meeting-history">
-      <div className="meeting-card-heading"><div><p className="eyebrow">RESULT PREVIEW</p><h2>會議結果與歷史</h2></div><span className="meeting-demo-tag">示範會議 · 10 人</span></div>
+    <MeetingSessionPanel active={active} runtime={runtime} sessions={meetingSessions} selectedId={selectedMeeting?.id} onSelect={setSelectedMeetingId} />
+
+    <section className="meeting-card">
+      <div className="meeting-card-heading"><div><p className="eyebrow">RESULT PREVIEW</p><h2>示範發言者結果</h2></div><span className="meeting-demo-tag">示範會議 · 10 人</span></div>
       <div className="meeting-demo-controls" role="tablist" aria-label="示範逐字稿">
         <button role="tab" aria-selected={resultTab === "raw"} className={resultTab === "raw" ? "active" : ""} onClick={() => setResultTab("raw")}>原逐字稿</button>
         <button role="tab" aria-selected={resultTab === "speakers"} className={resultTab === "speakers" ? "active" : ""} onClick={() => setResultTab("speakers")}>帶發言者逐字稿</button>

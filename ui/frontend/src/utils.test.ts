@@ -37,6 +37,9 @@ describe("frontend state helpers", () => {
     expect(applyContentEvent(detail, {
       target: "notes", operation: "replace", content: "new", size_bytes: 3,
     }).notes.content).toBe("new");
+    expect(applyContentEvent(detail, {
+      target: "speaker_transcript", operation: "append", content: "S01: hello", size_bytes: 10,
+    }).speaker_transcript?.content).toBe("S01: hello");
   });
 
   it("extracts session ids from POSIX and Windows paths", () => {

@@ -635,6 +635,44 @@ class BackendApiTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(data["operation"], "replace")
         self.assertEqual(data["content"], "rebuilt\n")
 
+    async def test_meeting_stream_reports_new_speaker_generation(self):
+        session = self.make_session("meetings/設計會議_20261006")
+        status_path = session / "status.json"
+        status = json.loads(status_path.read_text(encoding="utf-8"))
+        status["work_type"] = "meeting"
+        status_path.write_text(json.dumps(status), encoding="utf-8")
+        stream = _session_events(
+            DisconnectAfter(allowed_calls=3), self.app.state.sessions,
+            "meetings/設計會議_20261006", 0.001,
+        )
+        await anext(stream)
+        generation = session / "diarization" / "first"
+        generation.mkdir(parents=True)
+        (generation / "transcript.speakers.md").write_text("S01: 你好\n", encoding="utf-8")
+        (session / "diarization.current.json").write_text(json.dumps({
+            "schema_version": 1, "generation": "first",
+            "speaker_transcript": "diarization/first/transcript.speakers.md",
+        }), encoding="utf-8")
+
+        event = await anext(stream)
+        data = json.loads(event.split("data: ", 1)[1])
+        self.assertEqual(data["target"], "speaker_transcript")
+        self.assertEqual(data["operation"], "append")
+        self.assertEqual(data["content"], "S01: 你好\n")
+        next_generation = session / "diarization" / "second"
+        next_generation.mkdir()
+        (next_generation / "transcript.speakers.md").write_text("S02: 再見\n", encoding="utf-8")
+        (session / "diarization.current.json").write_text(json.dumps({
+            "schema_version": 1, "generation": "second",
+            "speaker_transcript": "diarization/second/transcript.speakers.md",
+        }), encoding="utf-8")
+        replacement = await anext(stream)
+        await stream.aclose()
+        changed = json.loads(replacement.split("data: ", 1)[1])
+        self.assertEqual(changed["target"], "speaker_transcript")
+        self.assertEqual(changed["operation"], "replace")
+        self.assertEqual(changed["content"], "S02: 再見\n")
+
     async def test_session_stream_emits_error_and_recovers_after_os_error(self):
         session = self.make_session()
         sessions = self.app.state.sessions
