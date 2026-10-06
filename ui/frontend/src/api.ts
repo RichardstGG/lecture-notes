@@ -15,6 +15,9 @@ import type {
   SessionSummary,
   SharingStatus,
   SharingNetwork,
+  SummaryUpstreamSetting,
+  SummaryUpstreamSettings,
+  SummaryUpstreamWrite,
   TermCandidatesResponse,
 } from "./types";
 
@@ -98,6 +101,17 @@ export const api = {
   status: () => request<RuntimeStatus>("/api/v1/status"),
   courses: () => request<Course[]>("/api/v1/courses"),
   models: () => request<ModelInventory>("/api/v1/models"),
+  summaryUpstreams: () => request<SummaryUpstreamSettings>("/api/v1/summary-upstreams"),
+  createSummaryUpstream: (payload: SummaryUpstreamWrite) => request<SummaryUpstreamSetting>(
+    "/api/v1/summary-upstreams", { method: "POST", body: JSON.stringify(payload) },
+  ),
+  updateSummaryUpstream: (id: string, payload: SummaryUpstreamWrite) => request<SummaryUpstreamSetting>(
+    `/api/v1/summary-upstreams/${encodeURIComponent(id)}`,
+    { method: "PUT", body: JSON.stringify(payload) },
+  ),
+  deleteSummaryUpstream: (id: string) => request<{ api_version: number; deleted: string }>(
+    `/api/v1/summary-upstreams/${encodeURIComponent(id)}`, { method: "DELETE" },
+  ),
   devices: () => request<DeviceInventory>("/api/v1/devices"),
   selectDevice: (source: string) => request<DeviceInventory>("/api/v1/devices/current", {
     method: "PUT",

@@ -7,7 +7,7 @@ Repo：<https://github.com/RichardstGG/lecture-notes>
 ## 摘要上游：本地 GPU 或已儲存 API
 
 預設 `[summary] upstream = "local"` 保留既有 llama-server／本機模型流程。
-UI「摘要上游」可選本地 GPU 或已儲存的 API；錄音、音檔轉錄後摘要、歷史紀錄補做／重做皆使用所選上游。
+UI「本機設定 → 摘要 API 上游」可新增、完整覆寫或刪除私有上游；課堂與歷史紀錄的「摘要上游」選單可選本地 GPU 或已儲存的 API。錄音、音檔轉錄後摘要、補做／重做皆使用所選上游。
 API 模式不檢查本機 GGUF、不啟停本機或遠端 LLM 行程；語音轉錄仍使用本機 whisper。
 目前只提供課程摘要，會議工作台仍為預覽、沒有會議摘要流水線；未來會議可共用此連線層。
 
@@ -30,7 +30,8 @@ model = "another-model-id"
 - 表格名稱是穩定 ID，允許英數開頭、後接英數／底線／連字號，最多 64 字元；`local` 保留。
 - `name` 是可公開的選單名稱。`base_url` 必須含 API 路徑（通常 `/v1`），程式只追加 `/chat/completions`；不允許 URL 帳密、query 或 fragment。
 - `model` 是該服務部署的模型 ID；`api_key` 與 `api_key_env` 二擇一或皆省略。環境變數須存在於啟動 UI／CLI 的行程環境。
-- 選單只顯示 ID、名稱與類型。URL、模型 ID、認證值及環境變數名稱不會進入 UI 清單、session 設定快照或請求錯誤紀錄。名稱與 ID 請勿放密鑰。
+- 選單只顯示 ID、名稱、類型與認證模式。URL、模型 ID、認證值及環境變數名稱不會進入 UI 清單、session 設定快照或請求錯誤紀錄。名稱與 ID 請勿放密鑰。
+- 設定頁的連線欄位為只寫：重新開啟或覆寫既有上游時，不會從後端讀回 URL、模型 ID、API key 或環境變數名稱，必須重新輸入完整連線設定。私有檔以原子替換寫入，支援的平台會限制為目前使用者可讀寫。
 - UI 重新整理後會重讀設定；選單不代表已驗證連線可達。更換或刪除 ID 後，舊 session 補做時請選擇有效 ID。
 - 請求使用標準 Chat Completions 的 `model/messages/temperature/top_p/max_tokens`，不傳本機引擎的 `cache_prompt`、`chat_template_kwargs`，也不做遠端暖機。上游明確以 HTTP 400 拒絕 JSON schema 時，改用一般輸出後解析 JSON。
 - API 上游會收到逐字稿、課程 prompt、術語與前段主題。外部連線不跟隨重新導向，也不使用環境 proxy；HTTPS 使用系統信任的憑證。

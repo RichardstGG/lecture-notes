@@ -214,6 +214,7 @@ export default function App() {
         onRefreshDevices={data.refreshDevices}
         onError={data.setError}
         onMessage={setActionMessage}
+        onUpstreamsChanged={data.refresh}
       />
       </div>
     </main>

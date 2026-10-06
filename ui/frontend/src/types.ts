@@ -81,6 +81,28 @@ export interface UpstreamInventory {
   options: { id: string; name: string; kind: "local" | "api" }[];
 }
 
+export interface SummaryUpstreamSetting {
+  id: string;
+  name: string;
+  kind: "api";
+  auth_mode: "none" | "api_key" | "environment";
+}
+
+export interface SummaryUpstreamSettings {
+  api_version: number;
+  upstreams: SummaryUpstreamSetting[];
+}
+
+export interface SummaryUpstreamWrite {
+  id?: string;
+  name: string;
+  base_url: string;
+  model: string;
+  auth_mode: "none" | "api_key" | "environment";
+  api_key?: string;
+  api_key_env?: string;
+}
+
 export interface ModelInventory {
   summary_upstreams?: UpstreamInventory;
   schema_version: number;
