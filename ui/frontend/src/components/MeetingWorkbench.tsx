@@ -42,7 +42,7 @@ export function MeetingWorkbench({ runtime, sessions = [] }: Props) {
       <span>此頁使用示範資料，尚未連接會議 CLI 或發言者辨識。下方示範控制不會啟動或停止真正的工作。</span>
     </div>
 
-    <section className="meeting-card">
+    <section className="meeting-card" id="meeting-settings">
       <div className="meeting-card-heading">
         <div><p className="eyebrow">MEETING SETUP</p><h2>開始一場會議</h2></div>
         <span className="meeting-demo-tag">介面預覽</span>
@@ -76,7 +76,7 @@ export function MeetingWorkbench({ runtime, sessions = [] }: Props) {
       {stage === "done" && <p className="meeting-help">示範完成。正式版本將提供取消、強制停止及從保留來源重新辨識；此預覽不操作背景工作。</p>}
     </section>
 
-    <section className="meeting-card">
+    <section className="meeting-card" id="meeting-history">
       <div className="meeting-card-heading"><div><p className="eyebrow">RESULT PREVIEW</p><h2>會議結果與歷史</h2></div><span className="meeting-demo-tag">示範會議 · 10 人</span></div>
       <div className="meeting-demo-controls" role="tablist" aria-label="示範逐字稿">
         <button role="tab" aria-selected={resultTab === "raw"} className={resultTab === "raw" ? "active" : ""} onClick={() => setResultTab("raw")}>原逐字稿</button>
@@ -95,7 +95,7 @@ export function MeetingWorkbench({ runtime, sessions = [] }: Props) {
       </>}
     </section>
 
-    <section className="meeting-card">
+    <section className="meeting-card" id="meeting-sharing">
       <div className="meeting-card-heading"><div><p className="eyebrow">LAN SHARING</p><h2>分享會議逐字稿</h2></div></div>
       <p className="meeting-help">選擇真實會議場次後，可用現有內網唯讀分享提供原逐字稿與帶發言者逐字稿。示範資料不會對外分享。</p>
       <label className="meeting-share-selection"><span>分享場次</span><select value={selectedMeeting?.id || ""} onChange={(event) => setSelectedMeetingId(event.target.value)} disabled={!meetingSessions.length}>

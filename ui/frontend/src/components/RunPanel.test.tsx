@@ -45,15 +45,56 @@ describe("RunPanel", () => {
   beforeEach(() => vi.clearAllMocks());
   afterEach(cleanup);
 
+  it("inherits course API and disabled defaults and resets an override on course change", async () => {
+    render(<RunPanel courses={[
+      { id: "api-course", file: "api.toml", upstream: "lab", summary_enabled: true },
+      { id: "raw-course", file: "raw.toml", model: "qwen3-8b", upstream: "local", summary_enabled: false },
+    ]} models={{ ...models, summary_upstreams: { selected: "local", options: [{ id: "lab", name: "Lab", kind: "api" }] } }}
+      status={{ schema_version: 1, running: false }} onChanged={vi.fn().mockResolvedValue(undefined)} onError={vi.fn()} />);
+    const selector = screen.getByRole("combobox", { name: "總結方式" }) as HTMLSelectElement;
+    expect(selector.value).toBe("api:lab");
+    expect(Array.from(selector.options).map((option) => option.value)).toEqual(["none", "local:qwen3-8b", "local:qwen3-4b", "api:lab"]);
+    fireEvent.click(screen.getByRole("button", { name: "開始處理" }));
+    await waitFor(() => expect(api.start).toHaveBeenCalledWith(expect.objectContaining({ course: "api-course", model: undefined, overrides: undefined })));
+    expect(vi.mocked(api.start).mock.calls[0][0]).not.toHaveProperty("upstream");
+
+    fireEvent.change(selector, { target: { value: "local:qwen3-4b" } });
+    fireEvent.change(screen.getByRole("combobox", { name: "課程" }), { target: { value: "raw-course" } });
+    expect(selector.value).toBe("none");
+    fireEvent.click(screen.getByRole("button", { name: "開始處理" }));
+    await waitFor(() => expect(api.start).toHaveBeenCalledWith(expect.objectContaining({ course: "raw-course", model: undefined, overrides: undefined })));
+  });
+
+  it("explicit local selection overrides an API or disabled course, and none drops stale choices", async () => {
+    render(<RunPanel courses={[{ id: "test", file: "test.toml", upstream: "lab", summary_enabled: false }]}
+      models={{ ...models, summary_upstreams: { selected: "local", options: [{ id: "lab", name: "Lab", kind: "api" }] } }}
+      status={{ schema_version: 1, running: false }} onChanged={vi.fn().mockResolvedValue(undefined)} onError={vi.fn()} />);
+    const selector = screen.getByRole("combobox", { name: "總結方式" });
+    fireEvent.change(selector, { target: { value: "local:qwen3-4b" } });
+    fireEvent.click(screen.getByRole("button", { name: "開始處理" }));
+    await waitFor(() => expect(api.start).toHaveBeenCalledWith(expect.objectContaining({ upstream: "local", model: "qwen3-4b", overrides: { "summary.enabled": true } })));
+    fireEvent.change(selector, { target: { value: "api:lab" } });
+    fireEvent.change(selector, { target: { value: "none" } });
+    fireEvent.click(screen.getByRole("button", { name: "開始處理" }));
+    await waitFor(() => expect(api.start).toHaveBeenLastCalledWith({ course: "test", input_file: undefined, model: undefined, overrides: { "summary.enabled": false } }));
+  });
+
+  it("keeps an unavailable configured default visible without silently selecting none", () => {
+    render(<RunPanel courses={[{ id: "test", file: "test.toml", model: "missing", summary_enabled: true }]}
+      models={models} status={{ schema_version: 1, running: false }} onChanged={vi.fn()} onError={vi.fn()} />);
+    expect((screen.getByRole("combobox", { name: "總結方式" }) as HTMLSelectElement).value).toBe("local:missing");
+    expect(screen.getByRole("option", { name: "本機模型 · missing（未安裝）" }).hasAttribute("disabled")).toBe(true);
+  });
+
   it("selects a saved API upstream without needing an installed local model", async () => {
     render(<RunPanel courses={[{ id: "test", file: "test.toml" }]}
       models={{ ...models, summary: { selected: "missing", models: [] },
         summary_upstreams: { selected: "local", options: [{ id: "local", name: "本地 GPU", kind: "local" }, { id: "lab", name: "Lab GPU", kind: "api" }] } }}
       status={{ schema_version: 1, running: false }} onChanged={vi.fn().mockResolvedValue(undefined)} onError={vi.fn()} />);
-    fireEvent.change(screen.getByRole("combobox", { name: "摘要上游" }), { target: { value: "lab" } });
+    fireEvent.change(screen.getByRole("combobox", { name: "總結方式" }), { target: { value: "api:lab" } });
     expect(screen.queryByRole("combobox", { name: "總結模型（選填）" })).toBeNull();
     fireEvent.click(screen.getByRole("button", { name: "開始處理" }));
-    await waitFor(() => expect(api.start).toHaveBeenCalledWith(expect.objectContaining({ upstream: "lab", model: undefined })));
+    await waitFor(() => expect(api.start).toHaveBeenCalledWith(expect.objectContaining({ upstream: "lab", model: undefined, overrides: { "summary.enabled": true } })));
   });
 
   it("keeps graceful-stop feedback visible until the run actually stops", async () => {
@@ -103,7 +144,7 @@ describe("RunPanel", () => {
       onError={vi.fn()}
     />);
 
-    fireEvent.click(screen.getByRole("checkbox", { name: "只轉錄（不啟動總結模型）" }));
+    fireEvent.change(screen.getByRole("combobox", { name: "總結方式" }), { target: { value: "none" } });
     fireEvent.click(screen.getByRole("button", { name: "開始處理" }));
 
     await waitFor(() => expect(api.start).toHaveBeenCalledWith({
@@ -130,19 +171,20 @@ describe("RunPanel", () => {
       onError={vi.fn()}
     />);
 
-    const selector = screen.getByLabelText("總結模型（選填）") as HTMLSelectElement;
-    expect(selector.options[0].textContent).toBe("使用課程預設（qwen3-8b）");
-    expect(screen.getByRole("option", { name: "missing（未安裝）" }).hasAttribute("disabled"))
-      .toBe(true);
+    const selector = screen.getByLabelText("總結方式") as HTMLSelectElement;
+    expect(selector.options[0].textContent).toBe("不總結");
+    expect(selector.value).toBe("local:qwen3-8b");
+    expect(screen.queryByRole("option", { name: /missing/ })).toBeNull();
 
-    fireEvent.change(selector, { target: { value: "qwen3-4b" } });
+    fireEvent.change(selector, { target: { value: "local:qwen3-4b" } });
     fireEvent.click(screen.getByRole("button", { name: "開始處理" }));
 
     await waitFor(() => expect(api.start).toHaveBeenCalledWith({
       course: "測試課",
       input_file: undefined,
       model: "qwen3-4b",
-      overrides: undefined,
+      upstream: "local",
+      overrides: { "summary.enabled": true },
     }));
     expect(onChanged).toHaveBeenCalledOnce();
   });
