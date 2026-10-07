@@ -1,0 +1,104 @@
+name: Windows station
+run-name: Windows station ${{ inputs.request_id }} (${{ inputs.profile }})
+
+on:
+  workflow_dispatch:
+    inputs:
+      target_ref:
+        description: Trusted branch in this repository (main, codex/* or claude/*)
+        required: true
+        type: string
+      target_sha:
+        description: Full 40-character SHA matching the branch head
+        required: true
+        type: string
+      profile:
+        description: Hardware profiles require a local test window
+        required: true
+        type: choice
+        options: [basic, gpu, microphone]
+      request_id:
+        description: Unique lowercase request ID (letters, numbers, hyphens)
+        required: true
+        type: string
+      reason:
+        description: Why this revision needs Windows testing (no private data)
+        required: true
+        type: string
+
+permissions:
+  contents: read
+
+jobs:
+  validate:
+    if: github.actor == github.repository_owner && github.ref == 'refs/heads/main'
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - name: Validate request before scheduling personal PC
+        env:
+          GH_TOKEN: ${{ github.token }}
+          REPOSITORY: ${{ github.repository }}
+          TARGET_REF: ${{ inputs.target_ref }}
+          TARGET_SHA: ${{ inputs.target_sha }}
+          PROFILE: ${{ inputs.profile }}
+          REQUEST_ID: ${{ inputs.request_id }}
+        run: |
+          python3 - <<'PY'
+          import json, os, re, urllib.request, urllib.parse
+          ref = os.environ['TARGET_REF']
+          sha = os.environ['TARGET_SHA']
+          assert ref == 'main' or re.fullmatch(r'(codex|claude)/[A-Za-z0-9._/-]+', ref), 'untrusted branch'
+          assert re.fullmatch(r'[0-9a-f]{40}', sha), 'full SHA required'
+          assert re.fullmatch(r'[a-z0-9-]{1,64}', os.environ['REQUEST_ID']), 'invalid request ID'
+          assert os.environ['PROFILE'] in ('basic', 'gpu', 'microphone'), 'invalid profile'
+          url = 'https://api.github.com/repos/' + os.environ['REPOSITORY'] + '/git/ref/heads/' + urllib.parse.quote(ref, safe='')
+          req = urllib.request.Request(url, headers={'Authorization': 'Bearer ' + os.environ['GH_TOKEN'], 'Accept': 'application/vnd.github+json'})
+          with urllib.request.urlopen(req, timeout=30) as response:
+              actual = json.load(response)['object']['sha']
+          assert actual == sha, 'branch head changed; dispatch a fresh request'
+          PY
+
+  windows:
+    needs: validate
+    runs-on: [self-hosted, Windows, X64, lecture-notes-win11]
+    # GitHub concurrency keeps at most one pending job; superseded pending requests
+    # can be cancelled by GitHub. They must never be reported as tested.
+    concurrency:
+      group: lecture-notes-windows-station
+      cancel-in-progress: false
+    timeout-minutes: 40
+    steps:
+      - name: Checkout trusted harness
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          ref: ${{ github.sha }}
+          path: harness
+          persist-credentials: false
+      - name: Checkout exact test revision
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          ref: ${{ inputs.target_sha }}
+          path: target
+          persist-credentials: false
+      - name: Run station profile
+        shell: powershell
+        env:
+          TARGET_SHA: ${{ inputs.target_sha }}
+          TEST_PROFILE: ${{ inputs.profile }}
+          REQUEST_ID: ${{ inputs.request_id }}
+        run: |
+          $ErrorActionPreference = 'Stop'
+          $python = Join-Path $env:LOCALAPPDATA 'lecture-notes-test-runner\venv\Scripts\python.exe'
+          if (-not (Test-Path $python)) { throw 'Run Initialize-Station.ps1 under this Windows account first.' }
+          $report = Join-Path $env:RUNNER_TEMP "station-$env:GITHUB_RUN_ID-$env:GITHUB_RUN_ATTEMPT"
+          & $python harness/tools/windows_runner/station.py run --repo "$env:GITHUB_WORKSPACE\target" --sha $env:TARGET_SHA --profile $env:TEST_PROFILE --request-id $env:REQUEST_ID --report-dir $report --timeout-seconds 1800
+          exit $LASTEXITCODE
+      - name: Upload summary only
+        if: always()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: windows-summary-${{ github.run_id }}-${{ github.run_attempt }}
+          path: ${{ runner.temp }}/station-${{ github.run_id }}-${{ github.run_attempt }}/summary.json
+          if-no-files-found: warn
+          retention-days: 14
