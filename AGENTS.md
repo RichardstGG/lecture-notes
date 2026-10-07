@@ -42,6 +42,31 @@ The following restrictions are mandatory:
 
 If subsequent work depends on the Pull Request being merged, stop after reporting the Pull Request and wait for the user. If the next work is genuinely independent, it may continue on a separate branch based on the default branch; do not create unnecessary stacked Pull Request dependencies.
 
+## Windows test station
+
+- Codex owns `.github/workflows/windows-station.yml`, `tools/windows_runner/`,
+  `tests/test_windows_runner.py`, and `docs/windows-test-station.md` (maintainer-authorized).
+  Existing platform/engine ownership remains unchanged.
+- For path/encoding, CLI/API, settings, or UI launch changes, request the `basic`
+  Windows profile after local checks and pushing a reviewable commit. Pure docs or
+  prompt changes normally do not need it. Assess affected behavior, not only filenames.
+- Engine/process changes also need relevant real Windows validation; recording/device
+  changes need the `microphone` profile and any additional targeted checks. The `gpu`
+  profile only covers Vulkan whisper file transcription, not stop/force-stop, LLM,
+  installation, or all engine behavior. See `docs/windows-test-station.md` for scope.
+- Use the documented dispatch helper with the exact full commit SHA, trusted repository
+  branch, profile and reason. This workflow is authorized for project testing only.
+  Do not dispatch external/fork code or switch the workflow ref away from `main`.
+- Hardware profiles require a test window opened by the PC user. Agents must not open
+  or extend it themselves. Basic tests do not require a hardware window.
+- Check existing runs before dispatch; avoid duplicate requests. Match request ID and
+  SHA when reading results. Offline, cancelled, blocked, missing report, timeout and
+  skipped tests must be reported explicitly, never as a pass. Read the result before
+  claiming Windows verification. Report mock versus actual hardware evidence separately.
+- Upload only the station summary. Keep raw logs, recordings, transcripts, models,
+  machine configuration and credentials local. Station failures are reported to the
+  implementation owner; they do not transfer ownership or permit automatic merge.
+
 ## Completion and reporting
 
 - Do not claim a milestone is complete until the diff has been reviewed and applicable verification has passed.
