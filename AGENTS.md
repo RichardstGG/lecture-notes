@@ -67,6 +67,16 @@ If subsequent work depends on the Pull Request being merged, stop after reportin
   machine configuration and credentials local. Station failures are reported to the
   implementation owner; they do not transfer ownership or permit automatic merge.
 
+## Changelog
+
+- `CHANGELOG.md` is co-owned by Claude and Antigravity (maintainer-authorized).
+  Do not update it in feature or fix Pull Requests.
+- The maintainer periodically hands Antigravity the prompt in `docs/changelog-update.md`
+  (Claude-owned). Antigravity edits only `CHANGELOG.md` on an `antigravity/changelog-*`
+  branch and opens a Pull Request; Claude reviews it with the checklist in that file.
+  This is the only implementation work Antigravity performs; it still never approves or merges.
+  The same rule is in `.agents/agents/code-reviewer/agent.md`.
+
 ## Completion and reporting
 
 - Do not claim a milestone is complete until the diff has been reviewed and applicable verification has passed.
