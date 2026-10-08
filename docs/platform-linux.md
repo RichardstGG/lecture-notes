@@ -1,6 +1,6 @@
 # Linux 平台備忘（已實測）
 
-狀態：**已實測**（Debian 13、Intel Arc 140V，見主 README「平台支援」表）。
+狀態：**已實測**（Debian 13、Intel Arc 140V，見主 README「平台支援」表；安裝步驟見 [linux_setup.md](linux_setup.md)）。
 本檔記錄 Linux 特有的行為與已知限制，方便日後跨平台修改時對照迴歸。
 
 ## 錄音（PulseAudio / PipeWire）

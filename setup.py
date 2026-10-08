@@ -43,8 +43,8 @@ RUNTIME_TOOLS = {
     "pactl": ("pactl", False, "列出麥克風"),
 }
 
-# key → 各套件管理器的套件名稱。只寫有實際依據的（apt = Debian/Ubuntu，見 README
-# 的安裝章節；brew = macOS；winget = Windows）。沒有對應項目的就印 note 讓使用者自己處理，
+# key → 各套件管理器的套件名稱。只寫有實際依據的（apt = Debian/Ubuntu，見 docs/linux_setup.md
+# 的系統套件；brew = macOS；winget = Windows）。沒有對應項目的就印 note 讓使用者自己處理，
 # 不猜套件名稱——套件名稱在不同發行版並不一致。
 # 「notes」是某個套件管理器專屬的說明，「note」才是不分平台都成立的說明——
 # 否則偵測不到套件管理器時會把 Windows 的說明印在 Linux 上（實測踩到過）。
@@ -518,10 +518,10 @@ def model_url(model):
 
 def model_hint(model):
     """LLM 模型要自己下載（setup_engines.py 只會自動抓 whisper 模型）。
-    這裡不印 shell 指令：curl 的換行寫法在 PowerShell 與 cmd 不一樣，README 步驟 3 兩種都有。"""
+    這裡不印 shell 指令：curl 的換行寫法在 PowerShell 與 cmd 不一樣，docs/windows_setup.md 與 Linux／macOS 的安裝文件各有一份。"""
     return [f"  檔案：{MODEL_FILES[model]} → 放進 {ROOT / 'models'}",
             f"  來源：{model_url(model)}",
-            "  指令見 README「下載 LLM 模型」（Linux/macOS 與 Windows 各一份）"]
+            "  指令見 docs/<windows|mac|linux>_setup.md 的「下載總結模型」"]
 
 
 def run_setup(args, ask):
@@ -558,7 +558,7 @@ def run_setup(args, ask):
             return 1
         if backend != "vulkan":
             print("\n✖ 內建的 Windows 預編譯檔是 Vulkan 版 llama.cpp（whisper 為官方 CPU 版）。")
-            print("  CUDA 請看 README「Windows 預編譯檔」，或拿掉 --prebuilt 自己編譯。")
+            print("  CUDA 請看 docs/windows_setup.md「預編譯檔」，或拿掉 --prebuilt 自己編譯。")
             return 1
         use_prebuilt = True
     if wants_full_install(args) and env["platform"] == "windows":

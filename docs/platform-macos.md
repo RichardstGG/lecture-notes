@@ -8,7 +8,7 @@
 
 ## 安裝時的 macOS 差異（實機回報，2026-09）
 
-在 MacBook 上照 README 安裝時遇到的三個問題，都已經寫進 README 的安裝步驟：
+在 MacBook 上照 README 安裝時遇到的三個問題，都已經寫進 [mac_setup.md](mac_setup.md)：
 
 - **zsh 把 `#` 當參數**：zsh 預設沒開 `interactivecomments`，貼上
   `python3 setup_engines.py whisper    # Linux/macOS；…` 時 `#` 和後面的字都被當成
@@ -18,7 +18,7 @@
   `ln -s … ~/.local/bin/lec` 會回報 `No such file or directory`。要先 `mkdir -p`，
   再把它加進 `~/.zshrc` 的 PATH。
 - **內建 `python3` 太舊**：Command Line Tools 附的 `python3` 通常是 3.9，`lec` 需要
-  3.11+（`tomllib`）。README 的 brew 指令已加上 `python`。
+  3.11+（`tomllib`）。[mac_setup.md](mac_setup.md) 的 brew 指令已加上 `python`。
 
 ## 錄音（AVFoundation）
 
@@ -188,7 +188,7 @@ macOS 10.14+ 對麥克風有系統層級的權限管制：
 
 ### 1. 安裝與編譯（對應風險項目 3）
 
-依 README 的「安裝」章節裝好 Homebrew 套件與 `lec` 之後：
+依 [mac_setup.md](mac_setup.md) 裝好 Homebrew 套件與 `lec` 之後：
 
 ```bash
 python3 setup_engines.py whisper
@@ -293,7 +293,7 @@ pgrep -fl "whisper-server|llama-server|ffmpeg"
 
 ### 8. 總結與效能（第二輪，需要 Qwen3-8B）
 
-依 README 下載 `models/Qwen3-8B-Q4_K_M.gguf` 並 `python3 setup_engines.py llama` 之後：
+依 [mac_setup.md](mac_setup.md) 下載 `models/Qwen3-8B-Q4_K_M.gguf` 並 `python3 setup_engines.py llama` 之後：
 
 ```bash
 ./lec run mac測試3 --file samples/test8min.ogg
