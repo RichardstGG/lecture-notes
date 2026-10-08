@@ -150,10 +150,8 @@ macOS 內建的 `python3` 通常是 3.9，低於需求的 3.11；上面的 `brew
 
 不確定該選哪個 GPU 後端的話，用互動式安裝：它會先做依賴自檢（Python、ffmpeg、
 GPU、CUDA Toolkit、磁碟），再問幾個問題，然後呼叫 `setup_engines.py`。
-有顯示卡時會先問總結要走本機 GPU，還是改用外部模型 API。選 API 只裝本機 whisper.cpp，
-位址與金鑰寫進不進 git 的 `config/upstreams.toml`。NVIDIA 會再問要不要用 CUDA；
-還沒有 CUDA Toolkit 時選 CUDA 只會印出安裝說明，不會編譯或下載。
-`--yes` 不會詢問，也不會改成外部 API。
+NVIDIA 會問要不要用 CUDA；還沒有 CUDA Toolkit 時選 CUDA 只會印出安裝說明，不會編譯或下載。
+`--yes` 不會詢問。外部摘要 API 不在這裡設定，用 Web UI 的「本機設定 → 摘要 API 上游」。
 
 **全新的 Windows：** clone 之後雙擊 `windows_setup.bat`（或在 repo 資料夾執行它）。
 它會尋找 Python 3.11+，沒有就用 winget 安裝 Python 3.13，接著補上缺少的 ffmpeg、Git、
