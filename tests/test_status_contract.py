@@ -12,7 +12,7 @@ from unittest import mock
 from tests import _pathfix  # noqa: F401
 from core import cli
 from core.status import (EVENT_SCHEMA_VERSION, RUN_SCHEMA_VERSION,
-                         STATUS_SCHEMA_VERSION, RunLock, Status)
+                         STATUS_SCHEMA_VERSION, RunLock, Status, normalize_status)
 
 
 STATUS_KEYS = {
@@ -20,7 +20,7 @@ STATUS_KEYS = {
     "course", "session", "mode", "input_file", "summary_model",
     "elapsed", "transcribed", "transcribe_lag", "queue",
     "sections_total", "sections_summarized", "llm_busy", "llm_section",
-    "servers", "errors", "last_error",
+    "servers", "errors", "last_error", "work_type", "stop_reason", "diarization",
 }
 
 
@@ -47,7 +47,10 @@ class StatusContractTests(unittest.TestCase):
 
         data = json.loads((self.session / "status.json").read_text(encoding="utf-8"))
         self.assertEqual(set(data), STATUS_KEYS)
-        self.assertEqual(data["schema_version"], STATUS_SCHEMA_VERSION)
+        self.assertEqual(data["schema_version"], 2)
+        self.assertEqual(data["work_type"], "lecture")
+        self.assertIsNone(data["stop_reason"])
+        self.assertIsNone(data["diarization"])
         self.assertEqual(data["course"], "測試課")
         self.assertEqual(data["mode"], "live")
         self.assertEqual(data["session"], str(self.session))
@@ -56,6 +59,36 @@ class StatusContractTests(unittest.TestCase):
         self.assertEqual(data["servers"], {
             "whisper": "not_started", "llama": "not_started",
         })
+
+    def test_schema_one_reader_preserves_unknown_types_and_extra_fields(self):
+        for work_type in (None, "", "meeting", "future"):
+            old = {"schema_version": 1, "phase": "custom", "extension": {"value": 7}}
+            if work_type is not None:
+                old["work_type"] = work_type
+            result = normalize_status(old)
+            self.assertEqual(result["work_type"], work_type or "lecture")
+            self.assertEqual(result["schema_version"], 1)
+            self.assertEqual(result["extension"], {"value": 7})
+            self.assertNotIn("diarization", old)
+
+    def test_meeting_stage_reset_and_cancellation_are_additive_schema_two(self):
+        status = self.make_status(work_type="meeting", mode="diarize")
+        for stage, seconds in (("segmentation", 120), ("retranscription", 0)):
+            progress = {"stage": stage, "processed_seconds": seconds, "total_seconds": 120,
+                        "requested_speakers": 10, "speakers_found": 4, "actual_speakers": None}
+            status.phase("diarizing", diarization=progress)
+            status.event("diarization_progress", **progress)
+        status.event("diarization_cancelled", stage="retranscription")
+        status.phase("aborted", stop_reason="user")
+        result = json.loads((self.session / "status.json").read_text(encoding="utf-8"))
+        self.assertEqual(result["schema_version"], 2)
+        self.assertEqual(result["work_type"], "meeting")
+        self.assertEqual(result["stop_reason"], "user")
+        self.assertEqual(result["diarization"]["processed_seconds"], 0)
+        self.assertIsNone(result["diarization"]["actual_speakers"])
+        events = [json.loads(line) for line in (self.session / "events.jsonl").read_text(encoding="utf-8").splitlines()]
+        self.assertTrue(all(event["schema_version"] == 1 for event in events))
+        self.assertEqual([event["processed_seconds"] for event in events if event["type"] == "diarization_progress"], [120, 0])
 
     def test_events_are_versioned_and_sequenced(self):
         status = self.make_status()
@@ -162,8 +195,9 @@ class RunContractTests(unittest.TestCase):
         self.assertEqual(data["schema_version"], RUN_SCHEMA_VERSION)
         self.assertEqual(data["mode"], "live")
         self.assertEqual(data["status"], {
-            "schema_version": STATUS_SCHEMA_VERSION,
-            "phase": "recording",
+            "schema_version": 1,
+            "phase": "recording", "work_type": "lecture",
+            "stop_reason": None, "diarization": None,
         })
         lock.release()
 

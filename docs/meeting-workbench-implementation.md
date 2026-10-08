@@ -1,6 +1,8 @@
 # 雙工作台開發規格與交付順序
 
-2026-10-08 設定與資料層：已加入獨立會議設定載入／驗證、`lec meetings --json`、`lec config --work-type meeting`、work type 快照及排他輸出目錄函式。status／run 仍 schema 1；錄音、辨識編排與 API 控制尚未實作。詳見 [已實作範圍、CLI schema 與相容性](meeting-workbench-config.md)。
+2026-10-08 鎖與狀態層：status／run writer 已升 schema 2，events 維持 schema 1；所有工作共用持有至結束的原子 OS 鎖，舊檔不回寫。會議錄音與辨識編排尚未接線。詳見 [單工作鎖與狀態相容性](meeting-workbench-lock-status.md)。
+
+2026-10-08 設定與資料層：已加入獨立會議設定載入／驗證、`lec meetings --json`、`lec config --work-type meeting`、work type 快照及排他輸出目錄函式。此設定里程碑未接錄音、辨識編排與 API 控制。詳見 [已實作範圍、CLI schema 與相容性](meeting-workbench-config.md)。
 
 2026-10-06 雙音源增量：已實作設定驗證、能力查詢與安全阻擋，錄音仍未開放；引擎介面、來源 schema 2 與硬體驗收皆明標提案／未測試。詳見 [雙音源契約與 CROSS_AGENT_REQUEST](meeting-workbench-dual-audio.md)。
 
@@ -15,7 +17,7 @@
 | `core/config.py`、`config/default.toml` | default → local → course → CLI；`--model` 只改 summary | 加 work type 選擇、獨立 meetings 設定檔、diarization 驗證；舊 `load()` 行為不變，測相同 id 不串資料 |
 | `core/cli.py` | `lec run` 同步執行；`status --json` 查單一鎖 | 加 meeting 子命令與 JSON/exit contract；沒有引擎時不可宣稱辨識成功 |
 | `core/session.py` | 建課堂 session、轉錄後可總結；停用 stop 檔輪詢 | meeting 跳過 LLM、來源保存、會後辨識工作；正常停與強停按契約區分 |
-| `core/status.py` | status/event/run schema 1；`RunLock` 目前 check+write 有競態 | schema 2 追加欄位與原子單工作鎖；雙行程競跑測試 |
+| `core/status.py` | status/run schema 2、event schema 1；持有整段工作的 OS 鎖，四行程競跑測試 | 接線時供 meeting run/diarize 共用；實際引擎取消仍待整合驗證 |
 | `core/transcribe.py` | ffmpeg 16 kHz mono、VAD、whisper、原稿/SRT；`keep_recording` 可關 | 由 Claude 製作持久來源與帶音訊時間戳之重新轉錄介面；禁止字數或 OpenCC 字元位置對齊 |
 | `core/diarize.py`（新）、`core/diarize_worker.py`（新） | 已實作 `diarize_session`；詳見下方「引擎層現況」 | 接 CLI／設定／狀態檔屬 Codex；品質門檻值待乾淨樣本 |
 | `core/servers.py` | whisper/llama server | 由 Claude 確認辨識期 server 生命週期，不能影響課堂 |

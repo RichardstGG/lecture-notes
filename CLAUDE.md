@@ -74,7 +74,7 @@ UI 的測試需要 `ui/backend/requirements.txt` 的 fastapi；沒安裝時 `tes
 - **總結模型固定 Qwen3-8B**（`[models.*]` 設定驅動，不要在程式裡寫死模型清單）
 - CLI 指令與既有參數名稱、exit code、JSON/TOML schema 同樣算 contract，要改必須先說明現況、差異、相容性，並補 contract test。
 
-目前實際出貨的狀態：`status.json` / `events.jsonl` / `run.json` 都還是 **schema 1**，phase 就是上面那六個，沒有 `diarizing`。
+目前實際出貨的狀態：`status.json` / `run.json` writer 為 **schema 2**，`events.jsonl` 維持 **schema 1**。status 只新增 `work_type`、`stop_reason`、`diarization`，run 只新增 `work_type`；reader 相容 schema 1、不回寫舊檔。所有 mode 共用 `<state_dir>/run.lock` 的原子 OS 鎖與公開 `run.json`。課堂 phase 序列不變；`diarizing` 與進度事件已有狀態容器契約測試，但 meeting run/diarize 編排尚未接線。詳見 [鎖與狀態契約](docs/meeting-workbench-lock-status.md)。
 
 **文件優先順序**：`docs/meeting-workbench-contract.md` 規劃了 schema 2、`diarizing` phase、`mode=diarize` 與 `lec meeting *` 指令。經 maintainer 核准的契約文件優先於本檔上面這份清單，但**實作該變更的同一個 PR 必須同時更新本檔**，不要讓兩邊各說一套。還沒核准、或程式還沒跟上的部分，一律以上面這份清單為準。
 

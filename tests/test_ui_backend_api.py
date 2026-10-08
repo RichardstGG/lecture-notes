@@ -329,6 +329,50 @@ class BackendApiTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(response.json()["course"], "測試課")
         self.assertEqual(response.json()["future_field"], "kept")
 
+    async def test_status_schema_two_keeps_meeting_progress_and_unknown_types(self):
+        for work_type in ("meeting", "future"):
+            self.client.status_result = {
+                "schema_version": 2, "running": True, "work_type": work_type, "mode": "diarize",
+                "status": {"schema_version": 2, "phase": "diarizing", "work_type": work_type,
+                           "stop_reason": None, "diarization": {"stage": "retranscription",
+                           "processed_seconds": 0, "total_seconds": None, "requested_speakers": 10,
+                           "speakers_found": 4, "actual_speakers": None}}, "extension": "retained",
+            }
+            response = await self.request("GET", "/api/v1/status")
+            self.assertEqual(response.status_code, 200)
+            data = response.json()
+            self.assertEqual(data["work_type"], work_type)
+            self.assertEqual(data["status"], self.client.status_result["status"])
+            self.assertEqual(data["extension"], "retained")
+
+    async def test_start_race_returns_busy_after_cli_loses_shared_lock(self):
+        async def raced(*args):
+            self.client.status_result = {"schema_version": 2, "running": True,
+                                         "work_type": "meeting", "mode": "diarize"}
+            raise LecCommandError("cli_start_failed", "busy", exit_code=1)
+        self.launcher.start = raced
+        response = await self.request("POST", "/api/v1/runs", json={"course": "test"})
+        self.assertEqual(response.status_code, 409)
+        self.assertEqual(response.json()["error"]["code"], "run_active")
+
+    async def test_summary_race_uses_the_same_busy_response(self):
+        session = self.make_session()
+        async def raced(*args):
+            self.client.status_result = {"schema_version": 2, "running": True, "work_type": "meeting"}
+            raise LecCommandError("cli_start_failed", "busy", exit_code=1)
+        self.launcher.start = raced
+        response = await self.request("POST", f"/api/v1/sessions/{session.name}/summarize", json={})
+        self.assertEqual(response.status_code, 409)
+        self.assertEqual(response.json()["error"]["code"], "run_active")
+
+    async def test_start_failure_without_active_owner_is_not_hidden_as_busy(self):
+        async def failed(*args):
+            raise LecCommandError("cli_start_failed", "model unavailable", exit_code=1)
+        self.launcher.start = failed
+        response = await self.request("POST", "/api/v1/runs", json={"course": "test"})
+        self.assertNotEqual(response.status_code, 409)
+        self.assertEqual(response.json()["error"]["code"], "cli_start_failed")
+
     async def test_courses_supports_dynamic_model_names_and_invalid_course(self):
         self.client.courses_result = [
             {"file": "/courses/a.toml", "id": "a", "name": "A",

@@ -3,6 +3,7 @@
 - <輸出資料夾>/events.jsonl：只追加的事件紀錄
 - <state_dir>/run.json：目前是否有 lec run 在執行（同一時間只允許一個）
 """
+import errno
 import json
 import os
 import threading
@@ -10,11 +11,48 @@ from copy import deepcopy
 from datetime import datetime
 from pathlib import Path
 
+from .config import normalize_work_type
 from .util import pid_alive, read_json, write_json
 
-STATUS_SCHEMA_VERSION = 1
+STATUS_SCHEMA_VERSION = 2
 EVENT_SCHEMA_VERSION = 1
-RUN_SCHEMA_VERSION = 1
+RUN_SCHEMA_VERSION = 2
+
+
+def normalize_status(value):
+    """Read schema 1/2 without rewriting files or guessing unknown work types."""
+    result = dict(value) if isinstance(value, dict) else {}
+    result["work_type"] = normalize_work_type(result.get("work_type"))
+    result.setdefault("stop_reason", None)
+    result.setdefault("diarization", None)
+    return result
+
+
+def _try_lock(stream):
+    """Nonblocking local-filesystem lock; the sidecar is never replaced/unlinked."""
+    try:
+        if os.name == "nt":
+            import msvcrt
+            stream.seek(0)
+            msvcrt.locking(stream.fileno(), msvcrt.LK_NBLCK, 1)
+        else:
+            import fcntl
+            fcntl.flock(stream.fileno(), fcntl.LOCK_EX | fcntl.LOCK_NB)
+        return True
+    except OSError as exc:
+        if exc.errno in (errno.EACCES, errno.EAGAIN):
+            return False
+        raise
+
+
+def _unlock(stream):
+    if os.name == "nt":
+        import msvcrt
+        stream.seek(0)
+        msvcrt.locking(stream.fileno(), msvcrt.LK_UNLCK, 1)
+    else:
+        import fcntl
+        fcntl.flock(stream.fileno(), fcntl.LOCK_UN)
 
 
 def now_iso():
@@ -49,6 +87,7 @@ class Status:
         self._lock = threading.RLock()
         self._data = {
             "schema_version": STATUS_SCHEMA_VERSION,
+            "work_type": "lecture", "stop_reason": None, "diarization": None,
             "phase": "starting", "pid": os.getpid(), "started_at": now_iso(),
             "course": None, "session": str(self.dir), "mode": None, "input_file": "",
             "summary_model": None,
@@ -59,6 +98,7 @@ class Status:
             "errors": 0, "last_error": None,
         }
         self._data.update(initial)
+        self._data = normalize_status(self._data)
         self._data["schema_version"] = STATUS_SCHEMA_VERSION
         servers = initial.get("servers")
         if isinstance(servers, dict):
@@ -75,6 +115,7 @@ class Status:
     def update(self, **kv):
         with self._lock:
             self._data.update(kv)
+            self._data["work_type"] = normalize_work_type(self._data.get("work_type"))
             self._data["schema_version"] = STATUS_SCHEMA_VERSION
             self._dirty = True
 
@@ -111,10 +152,11 @@ class Status:
         with self._lock:
             data = dict(deepcopy(self._data), updated_at=now_iso())
             self._dirty = False
-        try:
-            write_json(self.dir / "status.json", data)
-        except OSError:
-            pass
+            # Serialize publication too: heartbeat and phase updates share a temp file.
+            try:
+                write_json(self.dir / "status.json", data)
+            except OSError:
+                pass
 
     def _loop(self):
         while not self._stop.wait(self.interval):
@@ -129,55 +171,123 @@ class Status:
 
 
 class RunLock:
-    """<state_dir>/run.json：確保同一時間只有一個 lec run。"""
+    """One lifetime lock for all work types/modes; run.json remains the public record.
+
+    run.lock is an empty, persistent OS-lock sidecar. Never delete/replace it:
+    unlinking a locked inode could admit a second owner. Process exit closes the
+    handle and releases the lock; stale JSON alone cannot retain ownership.
+    """
 
     def __init__(self, state_dir):
         self.path = Path(state_dir) / "run.json"
+        self.guard_path = Path(state_dir) / "run.lock"
         self.held = False
+        self._stream = None
+        self._owner_pid = None
+        self._mutex = threading.RLock()
+
+    def _live_record(self):
+        info = read_json(self.path)
+        if not isinstance(info, dict):
+            return None
+        pid = info.get("pid")
+        if type(pid) is not int or pid <= 0 or not pid_alive(pid):
+            return None
+        result = {"schema_version": 0, "pid": pid, "started_at": None,
+                  "course": None, "session": None, "mode": "run", **info}
+        result["mode"] = result.get("mode") or "run"
+        result["work_type"] = normalize_work_type(result.get("work_type"))
+        return result
+
+    @staticmethod
+    def _pending():
+        # The owner may not have published metadata yet. Busy must remain visible.
+        return {"schema_version": RUN_SCHEMA_VERSION, "pid": None, "started_at": None,
+                "course": None, "session": None, "mode": "run", "work_type": "unknown"}
 
     def current(self):
-        info = read_json(self.path)
-        if info and pid_alive(info.get("pid")):
-            normalized = {
-                "schema_version": info.get("schema_version", 0),
-                "pid": info.get("pid"), "started_at": info.get("started_at"),
-                "course": info.get("course"), "session": info.get("session"),
-                "mode": info.get("mode") or "run",
-            }
-            normalized.update(info)
-            normalized["mode"] = normalized.get("mode") or "run"
-            return normalized
-        return None
+        with self._mutex:
+            record = self._live_record()
+            if record:
+                return record
+            if self.held and self._owner_pid == os.getpid():
+                return self._pending()
+            try:
+                stream = self.guard_path.open("r+b")
+            except FileNotFoundError:
+                return None
+            with stream:
+                if not _try_lock(stream):
+                    # Re-read after contention in case metadata was just published.
+                    return self._live_record() or self._pending()
+                try:
+                    return self._live_record()
+                finally:
+                    _unlock(stream)
 
     def acquire(self, **info):
-        self.path.parent.mkdir(parents=True, exist_ok=True)
-        cur = self.current()
-        if cur and cur.get("pid") != os.getpid():
-            return cur
-        record = {
-            "schema_version": RUN_SCHEMA_VERSION,
-            "pid": os.getpid(), "started_at": now_iso(),
-            "course": None, "session": None, "mode": "run",
-        }
-        record.update(info)
-        record["schema_version"] = RUN_SCHEMA_VERSION
-        write_json(self.path, record)
-        self.held = True
-        return None
+        with self._mutex:
+            if self.held:
+                return self.current() or self._pending()
+            self.path.parent.mkdir(parents=True, exist_ok=True)
+            stream = self.guard_path.open("a+b")
+            try:
+                if not _try_lock(stream):
+                    stream.close()
+                    return self._live_record() or self._pending()
+            except BaseException:
+                stream.close()
+                raise
+            try:
+                # Respect a still-live legacy writer that does not hold run.lock.
+                current = self._live_record()
+                if current:
+                    _unlock(stream)
+                    stream.close()
+                    return current
+                record = {"started_at": now_iso(), "course": None, "session": None,
+                          "mode": "run", **info, "schema_version": RUN_SCHEMA_VERSION,
+                          "pid": os.getpid(),
+                          "work_type": normalize_work_type(info.get("work_type"))}
+                write_json(self.path, record)
+            except BaseException:
+                try:
+                    _unlock(stream)
+                finally:
+                    stream.close()
+                raise
+            self._stream = stream
+            self._owner_pid = os.getpid()
+            self.held = True
+            return None
 
     def update(self, **info):
-        if self.held:
-            data = read_json(self.path, {})
-            data.update(info)
-            data["schema_version"] = RUN_SCHEMA_VERSION
-            write_json(self.path, data)
+        with self._mutex:
+            if self.held and self._owner_pid == os.getpid():
+                data = read_json(self.path, {})
+                if not isinstance(data, dict) or data.get("pid") != self._owner_pid:
+                    raise RuntimeError("run.json ownership changed while lock was held")
+                data.update(info)
+                data["schema_version"] = RUN_SCHEMA_VERSION
+                data["pid"] = self._owner_pid
+                data["work_type"] = normalize_work_type(data.get("work_type"))
+                write_json(self.path, data)
 
     def release(self):
-        if self.held:
+        with self._mutex:
+            if not self.held:
+                return
             try:
-                info = read_json(self.path)
-                if info and info.get("pid") == os.getpid():
-                    self.path.unlink()
-            except OSError:
-                pass
-            self.held = False
+                if self._owner_pid == os.getpid():
+                    info = read_json(self.path)
+                    if isinstance(info, dict) and info.get("pid") == self._owner_pid:
+                        self.path.unlink(missing_ok=True)
+            finally:
+                try:
+                    if self._owner_pid == os.getpid():
+                        _unlock(self._stream)
+                finally:
+                    self._stream.close()
+                    self._stream = None
+                    self._owner_pid = None
+                    self.held = False
