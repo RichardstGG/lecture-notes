@@ -1,5 +1,7 @@
 # 雙工作台正式契約（規格 v1，分階段實作）
 
+2026-10-09 單來源錄音與匯入：`lec meeting run` 已接上原稿與持久來源，強制保留錄音、停用總結，並處理 stop／force、來源雜湊與擷取遺失。辨識編排與 meeting API／UI 控制仍待後續里程碑。詳見 [CLI、source.json 與驗證限制](meeting-workbench-run.md)。
+
 2026-10-08 鎖與狀態層：status／run writer 已升 schema 2，events 維持 schema 1；所有工作共用持有至結束的原子 OS 鎖，舊檔不回寫。會議錄音與辨識編排尚未接線。詳見 [單工作鎖與狀態相容性](meeting-workbench-lock-status.md)。
 
 2026-10-08 設定與資料層：已加入獨立會議設定載入／驗證、`lec meetings --json`、`lec config --work-type meeting`、work type 快照及排他輸出目錄函式。此設定里程碑未接錄音、辨識編排與 API 控制。詳見 [已實作範圍、CLI schema 與相容性](meeting-workbench-config.md)。
@@ -56,7 +58,7 @@ Claude 引擎層提供同步可呼叫介面 `diarize_session(request, progress, 
 
 所有課堂 run、summarize、會議 run、會後辨識共用現有 `<state_dir>/run.json` 的單一鎖。同時間只允許一項；會後辨識中開始錄音回 busy/HTTP 409，不以 `mode` 分鎖。這是使用者明確要求，優先於 Claude 請求中的併行建議。`mode` 繼續為 `live|file|summarize`，辨識用 `diarize`；新增 `work_type`。UI 換頁或斷線不得停止 CLI 子行程。背景工作以 lock/session status 為準，不以頁面 component 狀態為準。
 
-`lec stop` 與 UI stop 仍在鎖所指 session 寫 `stop` / `stop_force`，由工作行程輪詢；不得改 OS signal。正常停止錄音：完成已收集片段、寫原稿、來源與狀態，結束為 `done`（明記 `stop_reason=user`），不自動啟動會後辨識。強制停止：立即終止，狀態 `aborted`，已完成來源片段可保留但 `source.json` 只有檔案完整校驗後才可用於重試。辨識正常取消：在安全點停下，`aborted`、`stop_reason=user`，舊成功產物保留；強制停止：立即 `aborted`，清理 staging 可延後。重試須重新取得同一把鎖、驗證來源與設定，再從頭跑；不宣稱可續跑。重試時若正在執行，回 busy，不刪原有成果。CLI Ctrl+C 須與同一語義對齊。既有 `run.json` 的 pid 檢查加寫入不是跨行程原子鎖，實作階段必須修正競態並測試兩個並發啟動只有一個成功。
+`lec stop` 與 UI stop 仍在鎖所指 session 寫 `stop` / `stop_force`，由工作行程輪詢；不得改 OS signal。正常停止錄音：完成已收集片段、寫原稿、來源與狀態，結束為 `done`（明記 `stop_reason=user`），不自動啟動會後辨識。強制停止：立即終止，狀態 `aborted`，已完成來源片段可保留但 `source.json` 只有檔案完整校驗後才可用於重試。辨識正常取消：在安全點停下，`aborted`、`stop_reason=user`，舊成功產物保留；強制停止：立即 `aborted`，清理 staging 可延後。重試須重新取得同一把鎖、驗證來源與設定，再從頭跑；不宣稱可續跑。重試時若正在執行，回 busy，不刪原有成果。CLI Ctrl+C 須與同一語義對齊。鎖已由持續存在的 `run.lock` OS 鎖保護，`run.json` 是公開 metadata；跨行程競跑只允許一個 owner。
 
 ## CLI、JSON、API 與相容性
 
@@ -82,4 +84,4 @@ Codex 實作順序：契約與 UI mock → `core/config.py` / `core/cli.py` / `c
 
 ## 現況差距與待決事項
 
-目前程式沒有 meeting CLI/錄音 API、持久來源、辨識執行階段及輸出；本文件的大部分命名、schema 2 與路徑均是未來契約。session API、前端歷史與分享 reader 已能依真實會議 session 的 `work_type` 與 generation manifest 讀取兩份逐字稿；session SSE 能在帶代號稿新增或切換 generation 時傳 `speaker_transcript` content event。正式會議來源尚未生成，mock 示範資料不能分享。Claude 所述模型組合已被採用為實作候選，尚需乾淨樣本品質驗收；模型檔再散佈方式與各平台安裝驗證由 maintainer 決定。實作前若變更本契約須同步更新文件與 contract tests。
+已實作 meeting run CLI、單來源保存、status/run schema 2 與原子鎖；尚無 meeting 錄音 API、辨識編排或真實錄音 UI。session API、前端歷史與分享 reader 已能依真實會議 session 的 `work_type` 與 generation manifest 讀取兩份逐字稿；session SSE 能在帶代號稿新增或切換 generation 時傳 `speaker_transcript` content event。mock 示範資料不能分享。Claude 所述模型組合已被採用為實作候選，尚需乾淨樣本品質驗收；模型檔再散佈方式與各平台安裝驗證由 maintainer 決定。實作前若變更本契約須同步更新文件與 contract tests。
