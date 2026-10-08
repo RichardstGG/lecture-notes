@@ -54,7 +54,7 @@ class OutputRootTests(unittest.TestCase):
 class SessionStoreTests(unittest.TestCase):
     def setUp(self):
         self.tmp = tempfile.TemporaryDirectory()
-        self.output = Path(self.tmp.name) / "outputs"
+        self.output = Path(self.tmp.name).resolve() / "outputs"
         self.output.mkdir()
         self.store = SessionStore(self.output, max_content_bytes=1024)
 
@@ -70,8 +70,8 @@ class SessionStoreTests(unittest.TestCase):
             "sections_summarized": 2, "started_at": "2026-09-18T10:00:00+08:00",
             "updated_at": updated,
         }), encoding="utf-8")
-        (session / "transcript.md").write_text("# Transcript\n", encoding="utf-8")
-        (session / "notes.md").write_text("# Notes\n", encoding="utf-8")
+        (session / "transcript.md").write_text("# Transcript\n", encoding="utf-8", newline="\n")
+        (session / "notes.md").write_text("# Notes\n", encoding="utf-8", newline="\n")
         (session / "recording_100000.ogg").write_bytes(b"audio")
         return session
 
@@ -123,12 +123,27 @@ class SessionStoreTests(unittest.TestCase):
             writer.join()
         self.assertEqual(failures, [])
 
+    def test_content_preserves_crlf_bytes(self):
+        session = self.make_session()
+        (session / "transcript.md").write_bytes(b"first\r\nsecond\r\n")
+        transcript = self.store.get(session.name)["transcript"]
+        self.assertEqual(transcript["content"], "first\r\nsecond\r\n")
+        self.assertEqual(transcript["size_bytes"], 15)
+
     def test_summary_skips_file_removed_between_listing_and_stat(self):
         session = self.make_session()
         disappearing = session / "stop"
         disappearing.write_text("stop", encoding="utf-8")
         real_stat = Path.stat
+        real_is_file = Path.is_file
         calls = 0
+
+        def is_file(path):
+            nonlocal calls
+            if path == disappearing:
+                calls += 1
+                return True
+            return real_is_file(path)
 
         def stat(path, *args, **kwargs):
             nonlocal calls
@@ -138,7 +153,8 @@ class SessionStoreTests(unittest.TestCase):
                     raise FileNotFoundError(disappearing)
             return real_stat(path, *args, **kwargs)
 
-        with patch.object(Path, "stat", stat):
+        # Python 3.14 is_file no longer necessarily calls Path.stat.
+        with patch.object(Path, "stat", stat), patch.object(Path, "is_file", is_file):
             summary = self.store._summary(session)
         self.assertEqual(summary["id"], session.name)
         self.assertGreaterEqual(calls, 2)
