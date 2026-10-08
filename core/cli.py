@@ -9,7 +9,7 @@ import time
 from pathlib import Path
 
 from . import config as C
-from .status import RUN_SCHEMA_VERSION, RunLock
+from .status import RUN_SCHEMA_VERSION, RunLock, normalize_status
 from .util import die, hms, read_json
 
 EPILOG = """範例：
@@ -327,12 +327,16 @@ def cmd_new(args):
 
 def cmd_status(args):
     lock = RunLock(_state_dir())
-    cur = lock.current()
+    try:
+        cur = lock.current()
+    except OSError as exc:
+        die(f"無法讀取工作鎖：{exc}")
     if not cur:
         print(json.dumps({"schema_version": RUN_SCHEMA_VERSION, "running": False})
               if args.json else "目前沒有 lec 在執行")
         return 0
     st = read_json(Path(cur.get("session", "")) / "status.json", {}) if cur.get("session") else {}
+    st = normalize_status(st)
     if args.json:
         print(json.dumps({"running": True, **cur, "status": st}, ensure_ascii=False, indent=2))
         return 0
@@ -350,14 +354,15 @@ def cmd_status(args):
 
 def cmd_stop(args):
     """在輸出資料夾寫 stop / stop_force 檔（三個平台通用；UI 也用同一個方式）。"""
-    from . import platform as P
     from .session import STOP_FILE, STOP_FORCE_FILE
     lock = RunLock(_state_dir())
-    cur = lock.current()
+    try:
+        cur = lock.current()
+    except OSError as exc:
+        die(f"無法讀取工作鎖：{exc}")
     if not cur:
         print("目前沒有 lec 在執行")
         return 0
-    pid = int(cur["pid"])
     session = Path(cur.get("session", "")) if cur.get("session") else None
     if session and session.is_dir():
         name = STOP_FORCE_FILE if args.force else STOP_FILE
@@ -365,9 +370,7 @@ def cmd_stop(args):
         print(f"✔ 已寫入停止要求（{session / name}）"
               + ("，會立即結束" if args.force else "，會轉完剩餘段落、補做最後一段總結；最多 1 秒內反應"))
     else:
-        if not P.interrupt(pid):
-            die(f"找不到輸出資料夾，也無法對 pid {pid} 送訊號（Windows 請改用 Ctrl+C）")
-        print(f"✔ 已送出停止訊號給 pid {pid}")
+        die("工作仍在啟動或輸出資料夾不可用；尚未送出停止要求，請稍後重試 lec stop")
     return 0
 
 

@@ -99,6 +99,12 @@ class _Base:
         self._watcher = None
         self._watch_stop = threading.Event()
 
+    def _acquire_lock(self, **info):
+        try:
+            return self.lock.acquire(**info)
+        except OSError as exc:
+            die(f"無法取得工作鎖：{exc}")
+
     def _install_signals(self):
         signal.signal(signal.SIGINT, self._on_signal)
         if not P.IS_WINDOWS:
@@ -232,7 +238,7 @@ class LectureRun(_Base):
             if not shutil.which(cmd):
                 die(f"缺少指令：{cmd}")
 
-        cur = self.lock.acquire(course=cfg.course_name,
+        cur = self._acquire_lock(course=cfg.course_name,
                                 mode="live" if self.live else "file")
         if cur:
             die(f"已有 lec 在執行（pid {cur.get('pid')}，課程 {cur.get('course')}，"
@@ -390,7 +396,7 @@ class OfflineSummary(_Base):
             die("此入口只處理 lecture；會議或未知工作類型不可使用課堂流程")
         if not (self.dir / "transcript.md").exists():
             die(f"{self.dir} 裡沒有 transcript.md")
-        cur = self.lock.acquire(course=self.cfg.course_name, session=str(self.dir), mode="summarize")
+        cur = self._acquire_lock(course=self.cfg.course_name, session=str(self.dir), mode="summarize")
         if cur:
             die(f"已有 lec 在執行（pid {cur.get('pid')}，{cur.get('session', '')}），請等它結束")
         self._install_signals()

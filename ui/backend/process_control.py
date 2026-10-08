@@ -157,8 +157,18 @@ class ProcessController:
         if status.get("running"):
             course = status.get("course") or "unknown course"
             raise ControlError(
-                "run_active", f"Another lecture process is already running: {course}", 409,
+                "run_active", f"Another work item is already running: {course}", 409,
             )
+
+    async def _start(self, *args):
+        try:
+            return await self.launcher.start(*args)
+        except LecCommandError as exc:
+            if exc.code == "cli_start_failed":
+                # Another CLI/API process may have acquired the shared lock since
+                # _ensure_idle. Preserve legacy CLI exit codes, return HTTP 409.
+                await self._ensure_idle()
+            raise
 
     async def start_run(self, course, input_file=None, model=None, source=None, overrides=None, upstream=None):
         args = ["run", _cli_value(course, "course")]
@@ -179,7 +189,7 @@ class ProcessController:
             args += ["--upstream", _cli_value(upstream, "upstream")]
         async with self._lock:
             await self._ensure_idle()
-            result = await self.launcher.start(*args)
+            result = await self._start(*args)
         return {"accepted": True, "operation": "run", "pid": result.pid,
                 "completed": result.completed, "exit_code": result.exit_code,
                 "message": ("Lecture process completed" if result.completed
@@ -204,7 +214,7 @@ class ProcessController:
             args += ["--course", _cli_value(course, "course")]
         async with self._lock:
             await self._ensure_idle()
-            result = await self.launcher.start(*args)
+            result = await self._start(*args)
         return {"accepted": True, "operation": "summarize", "pid": result.pid,
                 "completed": result.completed, "exit_code": result.exit_code,
                 "message": ("Summary process completed" if result.completed

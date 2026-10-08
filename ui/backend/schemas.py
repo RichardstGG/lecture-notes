@@ -17,6 +17,7 @@ class RuntimeStatusResponse(BaseModel):
 
     schema_version: int = 0
     running: bool
+    work_type: str = "lecture"
     pid: int | None = None
     started_at: str | None = None
     course: str | None = None
