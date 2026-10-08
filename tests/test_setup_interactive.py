@@ -1,18 +1,16 @@
 """setup.py：互動式安裝的決策邏輯（Mock test，不會編譯、不會安裝任何東西）。
 
 重點：
-1. 有顯卡時先問本機 GPU 還是外部摘要 API。沒有顯卡不問。`--yes` 不選 API。
-2. 後端決策表（有沒有 NVIDIA、有沒有 CUDA Toolkit、有沒有 GPU）要選對。
+1. 後端決策表（有沒有 NVIDIA、有沒有 CUDA Toolkit、有沒有 GPU）要選對。
    Vulkan 在 NVIDIA 上也能跑。沒有 Toolkit 時仍可選 CUDA，但只印安裝說明。
-3. 缺少的套件預設只會被印出來。`--provision` 在 Windows 才會呼叫 winget，而且不裝編譯器或 CUDA。
-4. `--yes` / `--dry-run` 不能停下來等輸入。沒有 `--provision` 時也不會下載模型、裝 UI 或啟動服務。
+2. 缺少的套件預設只會被印出來。`--provision` 在 Windows 才會呼叫 winget，而且不裝編譯器或 CUDA。
+3. `--yes` / `--dry-run` 不能停下來等輸入。沒有 `--provision` 時也不會下載模型、裝 UI 或啟動服務。
 
-有 GPU 的 `run_setup([])` 第一個答案是路線：`"1"` 本機、`"2"` 外部 API。
-`"y"` 不是路線代號，會直接取消。
+摘要 API 不在這裡詢問。有 GPU、不是 NVIDIA 的 `run_setup([])`，第一個 `"y"` / `"n"`
+是要不要裝 llama.cpp。
 """
 import io
 import tempfile
-import tomllib
 import unittest
 from contextlib import redirect_stdout
 from pathlib import Path
@@ -296,8 +294,8 @@ class InteractiveFlowTests(unittest.TestCase):
                 mock.patch.object(S, "missing_tools", return_value=([], [])), \
                 mock.patch.object(S.subprocess, "run") as run, \
                 redirect_stdout(out):
-            # 有 GPU：本機（1）→ 要不要裝 llama.cpp → 要不要開始編譯
-            code = S.run_setup(S.parse_args([]), answers("1", "y", "n"))
+            # 有 GPU、不是 NVIDIA：要不要裝 llama.cpp → 要不要開始編譯
+            code = S.run_setup(S.parse_args([]), answers("y", "n"))
         self.assertEqual(code, 1)
         self.assertIn("已取消", out.getvalue())
         run.assert_not_called()
@@ -309,8 +307,8 @@ class InteractiveFlowTests(unittest.TestCase):
                 mock.patch.object(S.subprocess, "run",
                                   return_value=mock.Mock(returncode=0)) as run, \
                 redirect_stdout(out):
-            # 有 GPU：本機（1）→ 不裝 llama → 開始編譯
-            code = S.run_setup(S.parse_args([]), answers("1", "n", "y"))
+            # 有 GPU、不是 NVIDIA：不裝 llama → 開始編譯
+            code = S.run_setup(S.parse_args([]), answers("n", "y"))
         self.assertEqual(code, 0)
         self.assertIn("whisper", run.call_args[0][0])
         # 沒裝 llama 就不該叫人去下載 LLM 模型（問題文字裡提到 Qwen3-8B 不算）
@@ -372,8 +370,8 @@ class WindowsPrebuiltChoiceTests(unittest.TestCase):
                                   return_value=(["msvc"], ["msvc"])), \
                 mock.patch.object(S.subprocess, "run") as run, \
                 redirect_stdout(out):
-            # 有 GPU：本機（1）→ 要不要裝 llama.cpp → 要不要改用預編譯檔
-            code = S.run_setup(S.parse_args([]), answers("1", "y", "n"))
+            # 有 GPU、不是 NVIDIA：要不要裝 llama.cpp → 要不要改用預編譯檔
+            code = S.run_setup(S.parse_args([]), answers("y", "n"))
         self.assertEqual(code, 1)
         self.assertNotIn("接下來會做的事", out.getvalue())
         run.assert_not_called()
@@ -416,6 +414,36 @@ class WindowsPrebuiltChoiceTests(unittest.TestCase):
         self.assertEqual(cuda, 1)
         run.assert_not_called()
 
+    def test_cuda_without_toolkit_stops_before_any_download(self):
+        out = io.StringIO()
+        with mock.patch.object(S, "detect",
+                               return_value=env(nvidia="RTX 4060", cuda=None, gpus=["RTX 4060"])), \
+                mock.patch.object(S, "missing_tools", return_value=([], [])), \
+                mock.patch.object(S.subprocess, "run") as run, \
+                redirect_stdout(out):
+            code = S.run_setup(S.parse_args([]), answers("y"))
+        text = out.getvalue()
+        self.assertEqual(code, 1)
+        self.assertIn("也不會下載", text)
+        self.assertIn("CUDA Toolkit", text)
+        self.assertNotIn("接下來會做的事", text)
+        run.assert_not_called()
+
+    def test_nvidia_without_toolkit_can_still_choose_windows_prebuilt(self):
+        out = io.StringIO()
+        machine = windows_env() | {"nvidia": "RTX 4060", "cuda": None, "gpus": ["RTX 4060"]}
+        with mock.patch.object(S, "detect", return_value=machine), \
+                mock.patch.object(S, "missing_tools", return_value=(["msvc"], ["msvc"])), \
+                mock.patch.object(S.subprocess, "run",
+                                  return_value=mock.Mock(returncode=0)) as run, \
+                redirect_stdout(out):
+            # 不選 CUDA → 要裝 llama.cpp → 預編譯用預設（是）
+            code = S.run_setup(S.parse_args([]), answers("n", "y"))
+        self.assertEqual(code, 0, out.getvalue())
+        command = run.call_args[0][0]
+        self.assertIn("--prebuilt", command)
+        self.assertEqual(command[command.index("--backend") + 1], "vulkan")
+
 
 class DependencyCheckTests(unittest.TestCase):
     def test_compile_only_gaps_are_warnings_and_nothing_is_installed(self):
@@ -443,164 +471,6 @@ class DependencyCheckTests(unittest.TestCase):
         self.assertIn("⚠ CUDA Toolkit", text)
         self.assertIn("可改用 Vulkan", text)
         self.assertNotIn("✖ CUDA Toolkit", text)
-
-
-class SummaryRouteTests(unittest.TestCase):
-    """有顯卡才問本機／外部 API。寫入的設定都在暫存目錄，不碰這台機器的 toml。"""
-
-    def _run(self, argv, environment, reply, missing=([], [])):
-        out = io.StringIO()
-        tmp = tempfile.TemporaryDirectory()
-        self.addCleanup(tmp.cleanup)
-        root = Path(tmp.name)
-        upstreams = root / "upstreams.toml"
-        local = root / "local.toml"
-        with mock.patch.object(S, "detect", return_value=environment), \
-                mock.patch.object(S, "missing_tools", return_value=missing), \
-                mock.patch.object(S.C, "UPSTREAMS_FILE", upstreams), \
-                mock.patch.object(S.C, "LOCAL_FILE", local), \
-                mock.patch.object(S.subprocess, "run",
-                                  return_value=mock.Mock(returncode=0)) as run, \
-                redirect_stdout(out):
-            code = S.run_setup(S.parse_args(argv), answers(*reply))
-        return code, out.getvalue(), run, upstreams, local
-
-    def test_no_gpu_skips_the_route_question(self):
-        self.assertEqual(S.choose_summary_route(env(gpus=[], nvidia=None), answers("2")),
-                         "local")
-        out = io.StringIO()
-        with mock.patch.object(S, "detect", return_value=env(gpus=[], nvidia=None)), \
-                mock.patch.object(S, "missing_tools", return_value=([], [])), \
-                mock.patch.object(S.subprocess, "run") as run, \
-                redirect_stdout(out):
-            code = S.run_setup(S.parse_args([]), answers("n"))
-        self.assertEqual(code, 1)
-        self.assertNotIn("總結要怎麼做", out.getvalue())
-        run.assert_not_called()
-
-    def test_unknown_route_cancels(self):
-        code, text, run, upstreams, _local = self._run([], env(), ("9",))
-        self.assertEqual(code, 1)
-        self.assertIn("已取消", text)
-        run.assert_not_called()
-        self.assertFalse(upstreams.exists())
-
-    def test_empty_route_answer_stays_on_local_gpu(self):
-        with redirect_stdout(io.StringIO()):
-            self.assertEqual(S.choose_summary_route(env(), answers("")), "local")
-
-    def test_api_route_installs_whisper_only_and_records_the_upstream(self):
-        code, text, run, upstreams, local = self._run(
-            [], env(),
-            ("2", "lab", "Lab", "https://example.test/v1", "qwen-lab", "1", "y"))
-        self.assertEqual(code, 0)
-        command = run.call_args[0][0]
-        self.assertIn("whisper", command)
-        self.assertNotIn("llama", command)
-        self.assertNotIn(S.MODEL_FILES[S.MODEL_8B], text)
-        saved = tomllib.loads(upstreams.read_text(encoding="utf-8"))["upstreams"]["lab"]
-        self.assertEqual(saved, {
-            "name": "Lab", "base_url": "https://example.test/v1", "model": "qwen-lab"})
-        self.assertIn('upstream = "lab"', local.read_text(encoding="utf-8"))
-
-    def test_pasted_key_is_saved_but_not_printed(self):
-        secret = "test-key-value"
-        code, text, run, upstreams, _local = self._run(
-            [], env(),
-            ("2", "lab", "Lab", "https://example.test/v1", "qwen-lab", "3", secret, "y"))
-        self.assertEqual(code, 0)
-        self.assertNotIn(secret, text)
-        saved = tomllib.loads(upstreams.read_text(encoding="utf-8"))["upstreams"]["lab"]
-        self.assertEqual(saved["api_key"], secret)
-        self.assertNotIn("api_key_env", saved)
-        run.assert_called_once()
-
-    def test_declining_the_download_does_not_write_the_upstream(self):
-        code, text, run, upstreams, local = self._run(
-            [], env(),
-            ("2", "lab", "Lab", "https://example.test/v1", "qwen-lab", "1", "n"))
-        self.assertEqual(code, 1)
-        self.assertIn("已取消", text)
-        run.assert_not_called()
-        self.assertFalse(upstreams.exists())
-        self.assertFalse(local.exists())
-
-    def test_dry_run_does_not_write_the_upstream(self):
-        code, text, run, upstreams, local = self._run(
-            ["--dry-run"], env(),
-            ("2", "lab", "Lab", "https://example.test/v1", "qwen-lab", "1"))
-        self.assertEqual(code, 0)
-        self.assertIn("--dry-run", text)
-        self.assertIn("lab", text)
-        run.assert_not_called()
-        self.assertFalse(upstreams.exists())
-        self.assertFalse(local.exists())
-
-    def test_invalid_upstream_cancels_before_install(self):
-        code, text, run, upstreams, _local = self._run(
-            [], env(), ("2", "local", "Lab", "https://example.test/v1", "qwen-lab", "1"))
-        self.assertEqual(code, 1)
-        self.assertIn("已取消", text)
-        self.assertIn("不能叫 local", text)
-        run.assert_not_called()
-        self.assertFalse(upstreams.exists())
-
-    def test_env_var_auth_is_saved_without_a_pasted_key(self):
-        code, text, _run, upstreams, _local = self._run(
-            [], env(),
-            ("2", "lab", "Lab", "https://example.test/v1", "qwen-lab", "2",
-             "LEC_LAB_API_KEY", "y"))
-        self.assertEqual(code, 0, text)
-        saved = tomllib.loads(upstreams.read_text(encoding="utf-8"))["upstreams"]["lab"]
-        self.assertEqual(saved["api_key_env"], "LEC_LAB_API_KEY")
-        self.assertNotIn("api_key", saved)
-        self.assertIn("LEC_LAB_API_KEY", text)
-
-    def test_broken_upstreams_file_is_not_overwritten(self):
-        with tempfile.TemporaryDirectory() as tmp:
-            upstreams = Path(tmp) / "upstreams.toml"
-            local = Path(tmp) / "local.toml"
-            original = 'api_key = "test-key-value"\n[[[\n'
-            upstreams.write_text(original, encoding="utf-8")
-            spec = {"id": "lab", "name": "Lab", "base_url": "https://example.test/v1",
-                    "model": "qwen-lab"}
-            with mock.patch.object(S.C, "UPSTREAMS_FILE", upstreams), \
-                    mock.patch.object(S.C, "LOCAL_FILE", local):
-                with self.assertRaises(S.C.ConfigError):
-                    S.save_api_upstream(spec)
-            self.assertEqual(upstreams.read_text(encoding="utf-8"), original)
-            self.assertFalse(local.exists())
-
-    def test_cuda_without_toolkit_stops_before_any_download(self):
-        code, text, run, _upstreams, _local = self._run(
-            [], env(nvidia="RTX 4060", cuda=None, gpus=["RTX 4060"]),
-            ("1", "y"), missing=([], []))
-        self.assertEqual(code, 1)
-        self.assertIn("也不會下載", text)
-        self.assertIn("CUDA Toolkit", text)
-        self.assertNotIn("接下來會做的事", text)
-        run.assert_not_called()
-
-    def test_nvidia_without_toolkit_can_still_choose_windows_prebuilt(self):
-        code, text, run, _upstreams, _local = self._run(
-            [], windows_env() | {"nvidia": "RTX 4060", "cuda": None,
-                                 "gpus": ["RTX 4060"]},
-            ("1", "n", "y"),
-            missing=(["msvc"], ["msvc"]))
-        self.assertEqual(code, 0, text)
-        command = run.call_args[0][0]
-        self.assertIn("--prebuilt", command)
-        self.assertEqual(command[command.index("--backend") + 1], "vulkan")
-
-    def test_upstream_rules_reject_secrets_in_the_url(self):
-        base = {"id": "lab", "name": "Lab", "base_url": "https://example.test/v1",
-                "model": "m"}
-        self.assertIsNone(S.upstream_error(base))
-        self.assertIsNotNone(S.upstream_error({**base, "id": "local"}))
-        self.assertIsNotNone(S.upstream_error(
-            {**base, "base_url": "https://user:pw@example.test/v1"}))
-        self.assertIsNotNone(S.upstream_error({**base, "base_url": "ftp://example.test/v1"}))
-        self.assertIsNotNone(S.upstream_error({**base, "api_key": "a", "api_key_env": "B"}))
 
 
 class WindowsProvisionTests(unittest.TestCase):
@@ -726,13 +596,13 @@ class WindowsProvisionTests(unittest.TestCase):
         self.assertIn('model = "qwen3-4b"', text)
         self.assertNotIn("api_key", text)
 
-    def test_finish_skips_the_gguf_for_whisper_only_or_an_external_api(self):
+    def test_finish_skips_the_gguf_for_whisper_only(self):
         args = S.parse_args(["--provision", "--yes"])
         with mock.patch.object(S, "ensure_llm_model") as model, \
                 mock.patch.object(S, "ensure_ui", return_value=0), \
                 mock.patch.object(S, "maybe_launch_ui", return_value=0), \
                 redirect_stdout(io.StringIO()):
-            code = S.finish_usable_install(args, env(), ["whisper"], {"id": "lab"}, answers())
+            code = S.finish_usable_install(args, env(), ["whisper"], answers())
         self.assertEqual(code, 0)
         model.assert_not_called()
 
@@ -742,7 +612,7 @@ class WindowsProvisionTests(unittest.TestCase):
                 mock.patch.object(S, "ensure_ui", return_value=0) as ui, \
                 mock.patch.object(S, "maybe_launch_ui", return_value=0) as launch, \
                 redirect_stdout(io.StringIO()):
-            code = S.finish_usable_install(args, env(memory_gb=32), [], None, answers())
+            code = S.finish_usable_install(args, env(memory_gb=32), [], answers())
         self.assertEqual(code, 0)
         self.assertEqual(model.call_args[0][0], S.MODEL_8B)
         ui.assert_called_once()

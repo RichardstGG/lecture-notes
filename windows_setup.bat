@@ -32,7 +32,7 @@ exit /b 1
 echo.
 echo Installing anything still missing: ffmpeg, Git, Node.js, the VC++ runtime,
 echo speech engines, the summary model, and the Web UI.
-echo If a GPU is present, setup.py asks about CUDA or an external summary API.
+echo If an NVIDIA GPU is present, setup.py asks whether to use CUDA.
 echo.
 "%PY%" setup.py --provision %*
 set RC=%errorlevel%

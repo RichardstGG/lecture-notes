@@ -110,11 +110,9 @@ opencc 一直等到 20 秒逾時，`opencc_convert()` 只好回傳沒轉換的�
 python setup_engines.py --prebuilt
 ```
 
-`python setup.py`（`windows_setup.bat` 只是入口）會先做依賴自檢。有顯示卡、而且沒有加
-`--yes`、`--backend` 或 `--whisper-only` 時，會問總結要走本機 GPU 還是外部摘要 API。
-NVIDIA 才會再問要不要 CUDA；還沒有 CUDA Toolkit 就只印安裝說明，不編譯、也不下載。
-Intel 內顯不會被問 CUDA。選外部 API 時只裝 whisper.cpp，位址與金鑰寫進不進 git 的
-`config/upstreams.toml`。這個選單有單元測試，還沒在這台 Iris Xe 上重跑過互動安裝。
+`python setup.py`（`windows_setup.bat` 只是入口）會先做依賴自檢。
+NVIDIA 才會問要不要 CUDA；還沒有 CUDA Toolkit 就只印安裝說明，不編譯、也不下載。
+Intel 內顯不會被問 CUDA。摘要用的外部 API 在 Web UI 設定，啟動時不問、也不寫設定檔。
 
 本機 GPU 且偵測到缺的都是編譯工具（後端是 Vulkan）時，會改走同一條預編譯路徑。
 它下載官方 zip、核對 SHA-256，再把 `.exe` 與 `.dll` 平放到 `build/bin/`：

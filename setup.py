@@ -8,10 +8,9 @@
   python3 setup.py --backend cuda 跳過後端詢問，直接指定
   python3 setup.py --prebuilt     Windows：下載官方預編譯檔，不編譯
 
-啟動時先檢查 Python、執行時工具、GPU 與 CUDA Toolkit。有顯卡且是互動模式時，
-先問總結要用本機 GPU 還是外部 API；NVIDIA 再問要不要 CUDA。還沒有 CUDA Toolkit
-就只印安裝說明，不編譯、也不下載。外部 API 只裝本機 whisper，位址與金鑰寫進
-不進 git 的 config/upstreams.toml。--yes 不會詢問，也不會改成外部 API。
+啟動時先檢查 Python、執行時工具、GPU 與 CUDA Toolkit。有 NVIDIA 且是互動模式時，
+會問要不要用 CUDA。還沒有 CUDA Toolkit 就只印安裝說明，不編譯、也不下載。
+--yes 不會詢問。摘要 API 在 Web UI 的本機設定裡改，這裡不問、也不寫設定檔。
 
 Linux／macOS 不會安裝系統套件，只列出缺少的項目與對應指令。
 Windows 的 windows_setup.bat 會加上 --provision：用 winget 補 ffmpeg、Git、
@@ -27,7 +26,6 @@ import subprocess
 import sys
 import unicodedata
 from pathlib import Path
-from urllib.parse import urlsplit
 
 ROOT = Path(__file__).resolve().parent
 sys.path.insert(0, str(ROOT))
@@ -98,21 +96,6 @@ def ask_yes_no(question, default, ask):
     if not answer:
         return default
     return answer in ("y", "yes", "是")
-
-
-def ask_choice(question, options, default, ask):
-    """印出代號選項。空答案用 default；對不上任何代號就回 None。"""
-    print(question)
-    for key, label in options:
-        mark = "（預設）" if key == default else ""
-        print(f"    {key}  {label}{mark}")
-    answer = (ask("  請選：") or "").strip().lower()
-    if not answer:
-        return default
-    for key, _label in options:
-        if answer == key.lower():
-            return key
-    return None
 
 
 def has_gpu(env):
@@ -214,107 +197,6 @@ def choose_backend(env, ask, forced=None):
             return None, "使用者取消"
         return "cpu", "沒偵測到 GPU"
     return default, f"{env['platform']} 的預設後端"
-
-
-def choose_summary_route(env, ask):
-    """有顯卡時問總結要走本機 GPU 還是外部 API。沒有顯卡維持本機。回傳 local、api 或 None。"""
-    if not has_gpu(env):
-        return "local"
-    names = "；".join(env["gpus"]) if env["gpus"] else env["nvidia"]
-    if env.get("nvidia"):
-        local = "本機顯卡（下一步可選 CUDA 或 Vulkan；語音轉錄仍用本機 whisper）"
-    elif env.get("platform") == "macos":
-        local = "本機顯卡（Metal；語音轉錄仍用本機 whisper）"
-    elif env.get("platform") == "windows":
-        local = "本機顯卡（Vulkan。沒有 Visual Studio 時可下載官方預編譯檔；只有 NVIDIA 能用 CUDA）"
-    else:
-        local = "本機顯卡（Vulkan；語音轉錄仍用本機 whisper）"
-    picked = ask_choice(
-        f"\n  偵測到顯卡：{names}\n  總結要怎麼做？",
-        [("1", local),
-         ("2", "外部模型 API（不裝 llama.cpp、不下載 GGUF；轉錄仍用本機 whisper）")],
-        "1", ask)
-    if picked == "1":
-        return "local"
-    if picked == "2":
-        return "api"
-    print("  認不得這個選項。")
-    return None
-
-
-def _plain_text(value):
-    return isinstance(value, str) and value.strip() and not any(ord(c) < 32 for c in value)
-
-
-def upstream_error(spec):
-    """回傳第一個不符合 config/upstreams.toml 契約的原因；合格就回 None。"""
-    ident = spec.get("id", "")
-    if ident == "local" or not C.UPSTREAM_ID.fullmatch(ident or ""):
-        return "ID 必須是英數開頭，之後可接英數、底線或連字號，最多 64 字，而且不能叫 local"
-    for field, label in (("name", "顯示名稱"), ("base_url", "base_url"), ("model", "模型 ID")):
-        if not _plain_text(spec.get(field, "")):
-            return f"{label} 不能空白，也不能含控制字元"
-    url = urlsplit(spec["base_url"])
-    if (any(c.isspace() for c in spec["base_url"]) or url.scheme not in {"http", "https"}
-            or not url.hostname or url.username or url.password or url.query or url.fragment):
-        return "base_url 必須是 http 或 https，且不能有帳密、query 或 fragment"
-    try:
-        _ = url.port
-    except ValueError:
-        return "base_url 的 port 不合法"
-    if spec.get("api_key") and spec.get("api_key_env"):
-        return "api_key 與 api_key_env 只能留一個"
-    for field in ("api_key", "api_key_env"):
-        if field in spec and not _plain_text(spec[field]):
-            return f"{field} 不能空白，也不能含控制字元"
-    return None
-
-
-def prompt_upstream(ask):
-    """問外部摘要 API。不合格回 None，不把金鑰印回畫面。"""
-    print("  語音轉錄仍在本機。這裡只設定總結用的 OpenAI 相容 API。")
-    print("  寫進 config/upstreams.toml 的內容不進 git。金鑰不會被印出來。")
-    ident = (ask("  上游 ID（英數開頭，例如 lab）：") or "").strip()
-    name = (ask("  顯示名稱：") or "").strip()
-    base_url = (ask("  base_url（需含路徑，通常以 /v1 結尾）：") or "").strip()
-    model = (ask("  模型 ID：") or "").strip()
-    auth = (ask("  認證  1 不需要  2 環境變數名稱（預設）  3 把 key 寫進私有檔 [2] ") or "").strip() or "2"
-    spec = {"id": ident, "name": name, "base_url": base_url, "model": model}
-    if auth == "1":
-        pass
-    elif auth == "3":
-        spec["api_key"] = (ask("  API key：") or "").strip()
-    elif auth == "2":
-        spec["api_key_env"] = (ask("  環境變數名稱（例如 LEC_LAB_API_KEY）：") or "").strip()
-    else:
-        print("  ✖ 認不得的認證選項。")
-        return None
-    error = upstream_error(spec)
-    if error:
-        print(f"  ✖ {error}")
-        return None
-    return spec
-
-
-def save_api_upstream(spec):
-    """寫入私有 upstreams.toml，並把 summary.upstream 記進 local.toml。"""
-    error = upstream_error(spec)
-    if error:
-        raise C.ConfigError(error)
-    existing = C.load_upstreams() if C.UPSTREAMS_FILE.exists() else {}
-    entry = {"name": spec["name"], "base_url": spec["base_url"], "model": spec["model"]}
-    if spec.get("api_key_env"):
-        entry["api_key_env"] = spec["api_key_env"]
-    elif spec.get("api_key"):
-        entry["api_key"] = spec["api_key"]
-    existing[spec["id"]] = entry
-    text = C.dump_toml({"upstreams": existing}, "私有摘要上游（不進 git）；由 setup.py 寫入")
-    C.UPSTREAMS_FILE.parent.mkdir(parents=True, exist_ok=True)
-    tmp = C.UPSTREAMS_FILE.with_suffix(".toml.tmp")
-    tmp.write_text(text, encoding="utf-8")
-    tmp.replace(C.UPSTREAMS_FILE)
-    C.load_upstreams()
-    C.set_local("summary.upstream", spec["id"])
 
 
 def choose_engines(env, ask):
@@ -603,15 +485,15 @@ def wants_full_install(args):
     return bool(args.provision) and not args.dry_run
 
 
-def finish_usable_install(args, env, engines, upstream, ask):
+def finish_usable_install(args, env, engines, ask):
     """引擎就緒之後，補上本機模型與 Web UI，讓啟動檔跑完就能用。"""
-    if upstream is None and engines != ["whisper"]:
+    if engines == ["whisper"]:
+        print("\n  這次不下載 LLM 模型。")
+    else:
         model, why = suggest_model(env)
         print(f"\n  總結模型：{why}")
         if ensure_llm_model(model) != 0:
             return 1
-    elif engines == ["whisper"]:
-        print("\n  這次不下載 LLM 模型。")
     if ensure_ui() != 0:
         return 1
     return maybe_launch_ui(args, ask)
@@ -651,36 +533,19 @@ def run_setup(args, ask):
         print(f"\n✖ lec 需要 Python 3.11 以上（現在是 {env['python']}），請先升級再跑一次。")
         return 1
 
-    upstream = None
-    route = "local"
-    if not args.yes and not args.whisper_only and not args.backend and has_gpu(env):
-        route = choose_summary_route(env, ask)
-        if not route:
-            print("\n已取消。")
-            return 1
-    if route == "api":
-        title("外部摘要 API")
-        upstream = prompt_upstream(ask)
-        if not upstream:
-            print("\n已取消。")
-            return 1
+    title("後端")
+    backend = args.backend
+    if args.yes and not backend:
         backend = "metal" if env["platform"] == "macos" else env["default_backend"]
-        reason = f"外部 API {upstream['id']}：只裝本機 whisper"
-        engines = ["whisper"]
+        reason = "--yes：用偵測到的預設值"
+        if env["nvidia"] and env["cuda"]:
+            backend, reason = "cuda", "--yes：偵測到 NVIDIA GPU 與 CUDA Toolkit"
     else:
-        title("後端")
-        backend = args.backend
-        if args.yes and not backend:
-            backend = "metal" if env["platform"] == "macos" else env["default_backend"]
-            reason = "--yes：用偵測到的預設值"
-            if env["nvidia"] and env["cuda"]:
-                backend, reason = "cuda", "--yes：偵測到 NVIDIA GPU 與 CUDA Toolkit"
-        else:
-            backend, reason = choose_backend(env, ask, forced=backend)
-        if not backend:
-            print("\n已取消。")
-            return 1
-        engines = ["whisper"] if args.whisper_only else ([] if args.yes else choose_engines(env, ask))
+        backend, reason = choose_backend(env, ask, forced=backend)
+    if not backend:
+        print("\n已取消。")
+        return 1
+    engines = ["whisper"] if args.whisper_only else ([] if args.yes else choose_engines(env, ask))
     print(f"  → {backend}（{reason}）")
 
     missing, blocking = missing_tools(backend)
@@ -754,9 +619,6 @@ def run_setup(args, ask):
             for line in model_hint(model):
                 print(line)
             print("  （setup_engines.py 不會自動下載 LLM 模型；用 --import-models 可以搬入既有檔案）")
-    if upstream:
-        print(f"\n  摘要上游 {upstream['id']} 會寫進 config/upstreams.toml，"
-              "並把 summary.upstream 記進 config/local.toml（兩個都不進 git）")
     if args.dry_run:
         if args.provision:
             print("  --provision：正式執行時還會用 winget 補執行環境、下載 LLM 模型、安裝 Web UI。")
@@ -766,13 +628,6 @@ def run_setup(args, ask):
     if not args.yes and not ask_yes_no(question, True, ask):
         print("\n已取消。")
         return 1
-    if upstream:
-        try:
-            save_api_upstream(upstream)
-        except C.ConfigError as exc:
-            print(f"\n✖ 無法記下外部 API：{exc}")
-            return 1
-        print(f"✔ 已記下上游 {upstream['id']}")
 
     result = subprocess.run(command, cwd=str(ROOT))
     if result.returncode != 0:
@@ -780,7 +635,7 @@ def run_setup(args, ask):
         return result.returncode
 
     if wants_full_install(args):
-        code = finish_usable_install(args, env, engines, upstream, ask)
+        code = finish_usable_install(args, env, engines, ask)
         if code != 0:
             return code
 
@@ -788,12 +643,7 @@ def run_setup(args, ask):
     lec = "python lec" if P.IS_WINDOWS else "./lec"
     print(f"  {lec} devices            列出麥克風，再用 --save <編號> 存成預設")
     print(f"  {lec} doctor             檢查整個環境（全部 ✔ 就可以上課了）")
-    if upstream:
-        if upstream.get("api_key_env"):
-            print(f"  先在這個視窗設定環境變數 {upstream['api_key_env']}，再啟動 lec。")
-        print(f"  {lec} run 課名 --upstream {upstream['id']}")
-    else:
-        print(f"  {lec} run 課名 --file samples/test8min.ogg    用內建樣本跑一次完整流程")
+    print(f"  {lec} run 課名 --file samples/test8min.ogg    用內建樣本跑一次完整流程")
     return 0
 
 
