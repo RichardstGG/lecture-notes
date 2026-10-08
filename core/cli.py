@@ -1,5 +1,6 @@
 """lec 指令列介面。UI 也透過這些指令操作（不直接 import core）。"""
 import argparse
+import contextlib
 import json
 import os
 import re
@@ -233,6 +234,46 @@ def cmd_meetings(args):
     return 0
 
 
+def cmd_meeting_run(args):
+    from .session import MeetingRun, MeetingRunError
+    output = sys.stdout
+
+    def emit(result):
+        if args.json:
+            print(json.dumps(result, ensure_ascii=False), file=output, flush=True)
+        elif result.get('accepted'):
+            print(f"會議 {result['outcome']}：{result['session']}", file=output, flush=True)
+
+    try:
+        if not 1 <= args.speakers <= 30:
+            raise MeetingRunError('input_invalid', '--speakers 必須是 1..30 的整數', 2)
+        if args.file and args.source:
+            raise MeetingRunError('input_invalid', '--file 不可與 --source 同時使用', 2)
+        # Explicit --speakers wins over settings, independent of argument order.
+        cfg = C.load_meeting(args.meeting_id,
+                             sets=[*args.set, f'diarization.num_speakers={args.speakers}'],
+                             source=args.source)
+        if not args.json:
+            print('會議處理中；以 lec status 查看進度、lec stop 停止。詳細日誌保存在 session.log。',
+                  file=sys.stderr)
+        # Engine logs can contain transcript text. Keep them in session.log;
+        # stdout is reserved for a single final response, stderr for safe errors.
+        with open(os.devnull, 'w', encoding='utf-8') as quiet, contextlib.redirect_stdout(quiet):
+            result = MeetingRun(cfg, args.file, on_force=emit).run()
+        emit(result)
+        return 130 if result['outcome'] == 'aborted' else 0
+    except (C.ConfigError, MeetingRunError, OSError) as exc:
+        if isinstance(exc, C.ConfigError):
+            code, message, exit_code = 'input_invalid', str(exc), 2
+        elif isinstance(exc, MeetingRunError):
+            code, message, exit_code = exc.code, str(exc), exc.exit_code
+        else:
+            code, message, exit_code = 'write_failed', '無法操作工作檔案；請檢查磁碟空間與權限', 1
+        emit({'schema_version': 1, 'accepted': False, 'error': {'code': code, 'message': message}})
+        print(f'{code}：{message}', file=sys.stderr)
+        return exit_code
+
+
 def cmd_courses(args):
     files = sorted(C.COURSES_DIR.glob("*.toml"))
     if args.json:
@@ -367,8 +408,9 @@ def cmd_stop(args):
     if session and session.is_dir():
         name = STOP_FORCE_FILE if args.force else STOP_FILE
         (session / name).write_text("", encoding="utf-8")
-        print(f"✔ 已寫入停止要求（{session / name}）"
-              + ("，會立即結束" if args.force else "，會轉完剩餘段落、補做最後一段總結；最多 1 秒內反應"))
+        detail = ("，正在要求停止會議工作；來源會在校驗後保存" if cur.get('work_type') == 'meeting'
+                  else "，會轉完剩餘段落、補做最後一段總結；最多 1 秒內反應")
+        print(f"✔ 已寫入停止要求（{session / name}）" + ("，會立即結束" if args.force else detail))
     else:
         die("工作仍在啟動或輸出資料夾不可用；尚未送出停止要求，請稍後重試 lec stop")
     return 0
@@ -447,7 +489,18 @@ def cmd_capture_capabilities(args):
 
 
 def main(argv=None):
-    ap = argparse.ArgumentParser(prog="lec", description="課堂筆記系統",
+    argv = list(sys.argv[1:] if argv is None else argv)
+    meeting_json = argv[:2] == ['meeting', 'run'] and '--json' in argv
+
+    class Parser(argparse.ArgumentParser):
+        def error(self, message):
+            if meeting_json:
+                print(json.dumps({'schema_version': 1, 'accepted': False,
+                                  'error': {'code': 'input_invalid', 'message': message}}, ensure_ascii=False))
+                self.exit(2, f'{self.prog}: {message}\n')
+            super().error(message)
+
+    ap = Parser(prog="lec", description="課堂筆記系統",
                                  formatter_class=argparse.RawDescriptionHelpFormatter, epilog=EPILOG)
     ap.add_argument("--start-ui", action="store_true", help="啟動本機 Web UI service")
     ap.add_argument("--port", type=_ui_port, metavar="PORT",
@@ -488,6 +541,17 @@ def main(argv=None):
     p = sub.add_parser("meetings", help="列出會議設定（實驗中，不啟動錄音）")
     p.add_argument("--json", action="store_true")
     p.set_defaults(func=cmd_meetings)
+
+    p = sub.add_parser('meeting', help='會議工作（實驗中）')
+    meeting = p.add_subparsers(dest='meeting_command', required=True)
+    p = meeting.add_parser('run', help='單來源錄音或匯入，保留來源與原逐字稿')
+    p.add_argument('meeting_id', help='meetings/<id>.toml 的 id')
+    p.add_argument('--speakers', required=True, type=int, help='預計參與人數（1..30）')
+    p.add_argument('--file', help='匯入音檔，先複製到 session')
+    p.add_argument('--source', help='單一錄音來源或別名')
+    p.add_argument('--set', action='append', default=[], metavar='section.key=value')
+    p.add_argument('--json', action='store_true')
+    p.set_defaults(func=cmd_meeting_run)
 
     p = sub.add_parser("courses", help="列出課程設定檔")
     p.add_argument("--json", action="store_true")
