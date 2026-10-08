@@ -9,7 +9,7 @@ from typing import Any
 
 from pydantic import ValidationError
 
-from .schemas import TermCandidatesResponse
+from .schemas import CaptureCapabilitiesResponse, TermCandidatesResponse
 
 
 @dataclass
@@ -89,6 +89,15 @@ class LecClient:
         except json.JSONDecodeError as exc:
             raise LecCommandError(
                 "cli_invalid_json", "lec returned an invalid JSON response",
+            ) from exc
+
+    async def capture_capabilities(self):
+        result = await self.run_json("capture-capabilities", "--json")
+        try:
+            return CaptureCapabilitiesResponse.model_validate(result).model_dump()
+        except ValidationError as exc:
+            raise LecCommandError(
+                "cli_invalid_response", "lec capture capabilities returned an invalid response",
             ) from exc
 
     async def status(self):

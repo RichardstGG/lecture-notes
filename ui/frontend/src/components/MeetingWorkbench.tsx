@@ -1,5 +1,6 @@
-import { useState } from "react";
-import type { RuntimeStatus, SessionSummary } from "../types";
+import { useEffect, useState } from "react";
+import { api } from "../api";
+import type { CaptureCapabilities, RuntimeStatus, SessionSummary } from "../types";
 import { formatDuration } from "../utils";
 import { SharePanel } from "./SharePanel";
 import { MeetingSessionPanel } from "./MeetingSessionPanel";
@@ -26,6 +27,17 @@ interface Props {
 }
 
 export function MeetingWorkbench({ active = true, runtime, sessions = [] }: Props) {
+  const [captureMode, setCaptureMode] = useState("single");
+  const [capabilities, setCapabilities] = useState<CaptureCapabilities | null>(null);
+  const [capabilityError, setCapabilityError] = useState(false);
+  useEffect(() => {
+    if (!active) return;
+    let cancelled = false;
+    api.captureCapabilities().then((value) => {
+      if (!cancelled) { setCapabilities(value); setCapabilityError(false); }
+    }).catch(() => { if (!cancelled) { setCapabilities(null); setCapabilityError(true); } });
+    return () => { cancelled = true; };
+  }, [active]);
   const [name, setName] = useState("");
   const [speakers, setSpeakers] = useState(10);
   const [stage, setStage] = useState<PreviewStage>("ready");
@@ -53,8 +65,22 @@ export function MeetingWorkbench({ active = true, runtime, sessions = [] }: Prop
       <div className="meeting-fields">
         <label><span>會議名稱</span><input value={name} onChange={(event) => setName(event.target.value)} placeholder="例如：系統設計討論" /></label>
         <label><span>預計參與人數（必填）</span><input type="number" min="1" max="30" required value={speakers} onChange={(event) => setSpeakers(Number(event.target.value))} /></label>
-        <label><span>來源</span><select disabled><option>現場錄音 / 匯入音檔（待串接）</option></select></label>
+        <label><span>錄音來源模式（預覽）</span><select value={captureMode} onChange={(event) => setCaptureMode(event.target.value)}>
+          <option value="single">單一來源</option><option value="dual">系統輸出＋麥克風</option>
+        </select></label>
       </div>
+      {captureMode === "dual" && <div>
+        <p className="meeting-help" role="status">{capabilityError ? "無法查詢雙音源能力；錄音保持停用" : capabilities?.dual.message || "正在查詢雙音源能力；錄音保持停用"}</p>
+        <div className="meeting-fields">
+          <label><span>系統輸出裝置</span><select disabled><option>尚未提供可驗證的 monitor 清單</option></select></label>
+          <label><span>麥克風裝置</span><select disabled><option>尚未提供雙音源裝置驗證</option></select></label>
+        </div>
+        <ul aria-label="各路音訊狀態">
+          <li>系統輸出：未開始 · 音量未知</li>
+          <li>麥克風：未開始 · 音量未知</li>
+        </ul>
+        <p className="meeting-help">第一版規劃 Linux PulseAudio 相容服務（含 PipeWire），請使用耳機。指定輸出的音訊可能包含其他程式；會議 app 的靜音不會關閉本程式的麥克風錄音。來源標記不代表人物身分，也不保證重疊發言完整轉錄。</p>
+      </div>}
       <button className="button primary" disabled title="會議 CLI 尚未實作">開始錄音（待串接）</button>
       {isBusy && <p className="meeting-help">目前已有工作進行中；兩個工作台共用單一工作限制。</p>}
     </section>

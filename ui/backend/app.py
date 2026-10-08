@@ -14,7 +14,8 @@ from .cli_client import LecClient, LecCommandError
 from .course_store import CourseStore, CourseStoreError
 from .process_control import (ControlError, LecProcessLauncher,
                               ProcessController)
-from .schemas import (ApiErrorResponse, AudioUploadResponse, CourseCreateRequest,
+from .schemas import (ApiErrorResponse, AudioUploadResponse, CaptureCapabilitiesResponse,
+                      CourseCreateRequest,
                       CourseDetail,
                       CourseSummary, CourseUpdateRequest,
                       CourseVocabularyUpdateRequest, DeviceInventoryResponse,
@@ -335,6 +336,10 @@ def create_app(
         check_local_settings_control(request)
         response.headers["Cache-Control"] = "no-store"
         return request.app.state.upstream_store.delete(upstream_id)
+
+    @app.get("/api/v1/capture-capabilities", response_model=CaptureCapabilitiesResponse)
+    async def capture_capabilities(request: Request):
+        return await request.app.state.lec_client.capture_capabilities()
 
     @app.get(
         "/api/v1/devices", response_model=DeviceInventoryResponse,

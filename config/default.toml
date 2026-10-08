@@ -27,6 +27,9 @@ backend = "auto"              # auto = 依作業系統（Linux pulse、macOS avf
 source = "default"            # default = 系統預設麥克風；或 [audio.sources.*] 的名稱、pulse 來源全名
                               # 用 lec devices 列出可用來源，lec devices --save <編號> 存到 local.toml
 keep_recording = true         # 保留整堂錄音（ogg/opus 32k，3 小時約 45MB）
+capture_mode = "single"      # single 保留既有行為；dual 契約已驗證、錄音入口尚未開放
+system_source = ""            # dual：指定輸出裝置的完整 Pulse monitor 來源名稱
+microphone_source = ""        # dual：指定麥克風的完整 Pulse 來源名稱（不接受別名/編號/default）
 sources = {}                  # 音源短名稱表，請在 local.toml 定義（見下方範例）
 
 # 可在 local.toml 為常用來源取短名稱，例如：

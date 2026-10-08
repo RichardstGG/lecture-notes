@@ -1,5 +1,7 @@
 # 雙工作台正式契約（規格 v1，尚未實作）
 
+2026-10-06 雙音源增量：已實作設定驗證、能力查詢與安全阻擋，錄音仍未開放；引擎介面、來源 schema 2 與硬體驗收皆明標提案／未測試。詳見 [雙音源契約與 CROSS_AGENT_REQUEST](meeting-workbench-dual-audio.md)。
+
 本文件是後續實作的目標契約，不表示會議 CLI、錄音 API 或引擎目前已提供這些功能。決策依據為 2026-10-04 Claude Code 的 `CROSS_AGENT_REQUEST` 及使用者回覆「以此請求作為正式依據」。選定 sherpa-onnx 1.13.8、pyannote segmentation 3.0 ONNX、3D-Speaker CAMPPlus 中文英文 ONNX；辨識品質尚待乾淨會議錄音驗證。目前前端保留 mock 錄音／辨識預覽，真實會議歷史與雙稿讀取使用既有 session API，不接真引擎。
 
 ## 範圍與既有行為

@@ -22,6 +22,26 @@ class LecClientTests(unittest.IsolatedAsyncioTestCase):
         self.script.write_text(textwrap.dedent(body), encoding="utf-8")
         return LecClient((sys.executable, self.script), self.root, timeout=1)
 
+    async def test_capture_capabilities_fixed_command_and_schema(self):
+        client = self.write_script("""
+            import json, sys
+            assert sys.argv[1:] == ["capture-capabilities", "--json"]
+            print(json.dumps({"schema_version": 1,
+                "single": {"available": True, "reason_code": None, "message": "single"},
+                "dual": {"available": False, "reason_code": "engine_not_integrated", "message": "pending"}}))
+        """)
+        self.assertFalse((await client.capture_capabilities())["dual"]["available"])
+
+    async def test_capture_capabilities_rejects_missing_or_coerced_gate(self):
+        import json
+        valid = {"schema_version": 1,
+                 "single": {"available": True, "reason_code": None, "message": "single"},
+                 "dual": {"available": "true", "reason_code": None, "message": "bad boolean"}}
+        for value in ('{}', json.dumps(valid)):
+            client = self.write_script("print(" + repr(value) + ")")
+            with self.assertRaises(LecCommandError):
+                await client.capture_capabilities()
+
     async def test_status_runs_json_command_and_preserves_unicode(self):
         client = self.write_script("""
             import json, sys

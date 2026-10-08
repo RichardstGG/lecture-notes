@@ -282,7 +282,39 @@ class Config:
             "name": key, "remote": True, "model_id": spec["model"],
             "api_key": token, "disable_thinking": False}
 
+    def capture_plan(self):
+        """Validate capture selection without probing or opening any device.
+
+        Dual IDs are canonical Pulse source names, never aliases or list indexes.
+        Device existence and monitor role must still be verified by the engine.
+        """
+        mode = self.get("audio.capture_mode", "single")
+        if mode not in ("single", "dual"):
+            raise ConfigError("audio.capture_mode 必須是 single 或 dual")
+        if mode == "single":
+            return {"mode": "single", "tracks": []}
+        if self.get("audio.backend", "auto") not in ("auto", "pulse"):
+            raise ConfigError("雙音源僅規劃支援 Linux PulseAudio 相容服務")
+        aliases = self.get("audio.sources", {})
+        if not isinstance(aliases, dict):
+            raise ConfigError("audio.sources 必須保留為音源別名表")
+        tracks = []
+        for role, key in (("system", "system_source"), ("microphone", "microphone_source")):
+            value = self.get("audio." + key)
+            if (not isinstance(value, str) or not value or value != value.strip()
+                    or value in ("default", "auto") or value.isdecimal()
+                    or not re.fullmatch(r"[A-Za-z0-9_.:-]+", value)):
+                raise ConfigError(f"audio.{key} 必須指定完整 Pulse 來源名稱，不可用預設來源或編號")
+            if value in aliases:
+                raise ConfigError(f"audio.{key} 不接受 audio.sources 別名；請使用完整來源名稱")
+            tracks.append({"id": role, "role": role, "device_id": value})
+        if tracks[0]["device_id"] == tracks[1]["device_id"]:
+            raise ConfigError("雙音源必須使用不同來源")
+        return {"mode": "dual", "tracks": tracks}
+
     def audio_source(self):
+        if self.capture_plan()["mode"] == "dual":
+            raise ConfigError("capture_unavailable：雙音源引擎尚未整合，不可降級為單來源")
         src = self.data["audio"]["source"]
         entry = self.data["audio"].get("sources", {}).get(src)
         return entry["pulse"] if entry else src
@@ -323,6 +355,10 @@ class Config:
 
     def validate(self):
         errs = []
+        try:
+            self.capture_plan()
+        except ConfigError as exc:
+            errs.append(str(exc))
         upstream = self.get("summary.upstream", "local")
         if not isinstance(upstream, str) or not UPSTREAM_ID.fullmatch(upstream):
             errs.append("summary.upstream 必須是有效的已儲存上游 ID")

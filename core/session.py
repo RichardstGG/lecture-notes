@@ -4,6 +4,7 @@ import re
 import shutil
 import signal
 import subprocess
+import sys
 import threading
 import time
 from datetime import datetime
@@ -16,6 +17,20 @@ from .status import RunLock, Status
 from .summarize import Summarizer
 from .transcribe import Transcriber
 from .util import atomic_write, die, log, read_json, safe_name
+
+
+def capture_capabilities():
+    """Product integration gate, not a hardware probe. Never opens a microphone."""
+    linux = sys.platform.startswith("linux")
+    return {
+        "schema_version": 1,
+        "single": {"available": True, "reason_code": None,
+                   "message": "既有單來源流程；裝置可用性須另行檢查"},
+        "dual": {"available": False,
+                 "reason_code": "engine_not_integrated" if linux else "unsupported_platform",
+                 "message": ("雙音源引擎與會議流程尚未整合" if linux else
+                             "此平台尚不提供雙音源錄音；第一版限 Linux PulseAudio 相容服務")},
+    }
 
 
 def make_session_dir(cfg):
@@ -181,6 +196,10 @@ class LectureRun(_Base):
 
     def run(self):
         cfg = self.cfg
+        # Reject before acquiring the shared lock, creating files or starting engines.
+        # File input must not silently discard a requested dual capture either.
+        if cfg.capture_plan()["mode"] == "dual":
+            die("capture_unavailable：" + capture_capabilities()["dual"]["message"])
         if self.input_file and not self.input_file.is_file():
             die(f"找不到檔案：{self.input_file}")
         for cmd in ("ffmpeg", "curl"):

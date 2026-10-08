@@ -1,5 +1,5 @@
 """Versioned HTTP response models for the UI backend."""
-from typing import Any
+from typing import Any, Literal
 
 from pydantic import BaseModel, ConfigDict, Field
 
@@ -344,3 +344,15 @@ class SharingNetwork(BaseModel):
     interface: str | None = None
     advertise_host: str | None = None
     error: str | None = None
+
+
+class CaptureCapability(BaseModel):
+    available: bool = Field(strict=True)
+    reason_code: str | None
+    message: str
+
+
+class CaptureCapabilitiesResponse(BaseModel):
+    schema_version: Literal[1]
+    single: CaptureCapability
+    dual: CaptureCapability
