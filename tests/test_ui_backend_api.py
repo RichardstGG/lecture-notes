@@ -187,8 +187,8 @@ class BackendApiTests(unittest.IsolatedAsyncioTestCase):
             "started_at": "2026-09-18T10:00:00+08:00",
             "updated_at": "2026-09-18T10:05:00+08:00",
         }), encoding="utf-8")
-        (session / "transcript.md").write_text("first\n", encoding="utf-8")
-        (session / "notes.md").write_text("note\n", encoding="utf-8")
+        (session / "transcript.md").write_text("first\n", encoding="utf-8", newline="\n")
+        (session / "notes.md").write_text("note\n", encoding="utf-8", newline="\n")
         return session
 
     async def request(self, method, path, **kwargs):
@@ -705,7 +705,7 @@ class BackendApiTests(unittest.IsolatedAsyncioTestCase):
         )
         snapshot = await anext(stream)
         self.assertTrue(snapshot.startswith("event: snapshot\n"))
-        with open(session / "transcript.md", "a", encoding="utf-8") as output:
+        with open(session / "transcript.md", "a", encoding="utf-8", newline="\n") as output:
             output.write("second\n")
 
         event = await anext(stream)
@@ -723,7 +723,7 @@ class BackendApiTests(unittest.IsolatedAsyncioTestCase):
             session.name, 0.001,
         )
         await anext(stream)
-        (session / "notes.md").write_text("rebuilt\n", encoding="utf-8")
+        (session / "notes.md").write_text("rebuilt\n", encoding="utf-8", newline="\n")
 
         event = await anext(stream)
         await stream.aclose()
@@ -745,7 +745,7 @@ class BackendApiTests(unittest.IsolatedAsyncioTestCase):
         await anext(stream)
         generation = session / "diarization" / "first"
         generation.mkdir(parents=True)
-        (generation / "transcript.speakers.md").write_text("S01: 你好\n", encoding="utf-8")
+        (generation / "transcript.speakers.md").write_text("S01: 你好\n", encoding="utf-8", newline="\n")
         (session / "diarization.current.json").write_text(json.dumps({
             "schema_version": 1, "generation": "first",
             "speaker_transcript": "diarization/first/transcript.speakers.md",
@@ -758,7 +758,7 @@ class BackendApiTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(data["content"], "S01: 你好\n")
         next_generation = session / "diarization" / "second"
         next_generation.mkdir()
-        (next_generation / "transcript.speakers.md").write_text("S02: 再見\n", encoding="utf-8")
+        (next_generation / "transcript.speakers.md").write_text("S02: 再見\n", encoding="utf-8", newline="\n")
         (session / "diarization.current.json").write_text(json.dumps({
             "schema_version": 1, "generation": "second",
             "speaker_transcript": "diarization/second/transcript.speakers.md",
@@ -774,7 +774,7 @@ class BackendApiTests(unittest.IsolatedAsyncioTestCase):
         session = self.make_session()
         sessions = self.app.state.sessions
         initial = sessions.get(session.name)
-        (session / "transcript.md").write_text("first\nsecond\n", encoding="utf-8")
+        (session / "transcript.md").write_text("first\nsecond\n", encoding="utf-8", newline="\n")
         current = sessions.get(session.name)
         stream = _session_events(
             DisconnectAfter(allowed_calls=3), sessions, session.name, 0.001,
