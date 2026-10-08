@@ -1,6 +1,8 @@
 # 雙工作台正式契約（規格 v1，分階段實作）
 
-2026-10-08 設定與資料層：已加入獨立會議設定載入／驗證、`lec meetings --json`、`lec config --work-type meeting`、work type 快照及排他輸出目錄函式。status／run 仍 schema 1；錄音、辨識編排與 API 控制尚未實作。詳見 [已實作範圍、CLI schema 與相容性](meeting-workbench-config.md)。
+2026-10-08 鎖與狀態層：status／run writer 已升 schema 2，events 維持 schema 1；所有工作共用持有至結束的原子 OS 鎖，舊檔不回寫。會議錄音與辨識編排尚未接線。詳見 [單工作鎖與狀態相容性](meeting-workbench-lock-status.md)。
+
+2026-10-08 設定與資料層：已加入獨立會議設定載入／驗證、`lec meetings --json`、`lec config --work-type meeting`、work type 快照及排他輸出目錄函式。此設定里程碑未接錄音、辨識編排與 API 控制。詳見 [已實作範圍、CLI schema 與相容性](meeting-workbench-config.md)。
 
 2026-10-06 雙音源增量：已實作設定驗證、能力查詢與安全阻擋，錄音仍未開放；引擎介面、來源 schema 2 與硬體驗收皆明標提案／未測試。詳見 [雙音源契約與 CROSS_AGENT_REQUEST](meeting-workbench-dual-audio.md)。
 
@@ -9,7 +11,7 @@
 ## 範圍與既有行為
 
 - `lecture` 保留現有課堂錄音、匯入、轉錄、摘要、筆記、設定及歷史；`meeting` 只提供錄音、原逐字稿、會後帶代號逐字稿。沒有摘要、決議、待辦、跨會議身分配對。代號僅在單一 session 內有效。
-- 目前 `lec run` 以 `course` 啟動，`mode=live|file`；`status.json`、`events.jsonl`、`run.json` 均為 schema 1。現有 phase 為 `starting/loading/recording/transcribing/summarizing/finishing/done/failed/aborted`。`transcript.md`、`transcript.srt` 由轉錄器產生；即時錄音只在 `audio.keep_recording=true` 時保存 `recording_HHMMSS.ogg`。UI 的 `Phase` 型別已有 `string` fallback。
+- 目前 `lec run` 以 `course` 啟動，`mode=live|file`；`status.json`、`run.json` writer 為 schema 2，`events.jsonl` 維持 schema 1，reader 相容 schema 1。現有 phase 為 `starting/loading/recording/transcribing/summarizing/finishing/done/failed/aborted`。`transcript.md`、`transcript.srt` 由轉錄器產生；即時錄音只在 `audio.keep_recording=true` 時保存 `recording_HHMMSS.ogg`。UI 的 `Phase` 型別已有 `string` fallback。
 - 本契約的 `work_type` 是工作類型；現有 `mode` 保留輸入或操作模式，不改義。讀取舊 `run.json`、`status.json`、session 清單或 `config.used.toml` 缺少 `work_type` 時，正規化為 `lecture`；不回寫舊檔。未知非空 `work_type` 不可猜測為會議，UI 顯示「未知類型」並禁止專屬操作。新檔明寫 `work_type`。
 
 ## 設定、路徑與來源保存
