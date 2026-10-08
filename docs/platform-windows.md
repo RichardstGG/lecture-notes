@@ -88,6 +88,32 @@ opencc 一直等到 20 秒逾時，`opencc_convert()` 只好回傳沒轉換的�
 - `spawn_kwargs()` 用 `CREATE_NEW_PROCESS_GROUP`，讓 whisper-server /
   llama-server 不會被终端機的 Ctrl+C 直接波及。
 
+## 原子寫檔與暫時性的存取拒絕（診斷實測，2026-10）
+
+`status.json`、`capture.json`、`config.used.toml` 等都經 `core/util.py::atomic_write()`：先寫暫存檔，再
+`os.replace()` 蓋過目標。Windows 上若目標檔**正被別的行程開著**（UI 輪詢 `status.json`、Obsidian、防毒掃描），
+`os.replace()` 會暫時失敗，因為 Python 的 `open()` 不帶 `FILE_SHARE_DELETE`，讀取者一開著，覆蓋就被拒絕。
+在本機 Windows 診斷中，`tests.test_ui_session_store...test_get_survives_atomic_write_churn` 實測拋出
+`PermissionError(errno=13, winerror=5)`。
+
+為什麼這不是無關緊要：`Status.flush()` 失敗只會漏掉一次心跳，但 `capture.json` 的**最終寫入**（`status: complete`）
+若剛好撞上，`verify_capture()` 會把一份完整的錄音判成 `incomplete`、不可當重跑來源。
+
+**現在的行為：**`_replace_with_retry()` 只對 **Windows 上、`winerror` 為 5／32／33 的 `PermissionError`**
+做有限度的退避重試（共 8 次嘗試，退避總計約 0.6 秒）。
+
+- 重試用盡仍失敗，丟出的是**原本的例外**（保留 `errno`／`winerror`），並照舊清掉暫存檔、不動目標檔。
+- 每次嘗試都是完整的 `os.replace()`，所以原子性不變：讀者只會看到舊檔或新檔，不會讀到半個檔。
+- POSIX 上的 `PermissionError`、磁碟滿、找不到路徑等其他錯誤**完全不重試**。
+
+**已知的取捨：**Windows 對「目標被開著」常回 `ERROR_ACCESS_DENIED`（5），與真正的權限問題無法區分。
+所以真正的權限錯誤在 Windows 上會多等約 0.6 秒才失敗；可觀測性不變（最後仍丟出同一個例外）。
+這比靜默吞掉或無限等待都好，而且只發生在本來就會失敗的情況。
+
+**驗證狀態：**行為是在 Linux 上以「注入帶 `winerror` 的 `PermissionError`」模擬並測試的（真的 `os.replace`
+仍然執行）。**尚未在真 Windows 上確認重試真的能讓上述 churn 測試通過**；退避時間 0.6 秒是否足夠也只是
+合理推估，沒有實測讀取者佔用檔案的時間分布。
+
 ## 狀態資料夾與執行檔搜尋
 
 - `default_state_dir()` 用 `%LOCALAPPDATA%\lecture-notes`；沒設定這個環境變數
