@@ -1,84 +1,47 @@
 # 課堂筆記系統（lec）
 
-課堂錄音 → whisper.cpp 即時逐字稿 → 每 5 分鐘分段總結 → Obsidian Markdown。預設全部在本機執行，也可選擇已儲存的相容 API 上游進行摘要。
+把課堂錄音變成 Obsidian 筆記：錄音 →（whisper.cpp）即時逐字稿 →（Qwen3-8B）每 5 分鐘分段總結 → Markdown。
+預設全部在本機執行，不上雲；總結也可以改用你自己設定的 OpenAI 相容 API。
+一堂課最長 3 小時，一天最多 8 小時。
 
 Repo：<https://github.com/RichardstGG/lecture-notes>
 
-## 摘要上游：本地 GPU 或已儲存 API
+## 目前狀態
 
-預設 `[summary] upstream = "local"` 保留既有 llama-server／本機模型流程。
-UI「本機設定 → 摘要 API 上游」可新增、完整覆寫或刪除私有上游；課堂與歷史紀錄的「摘要上游」選單可選本地 GPU 或已儲存的 API。錄音、音檔轉錄後摘要、補做／重做皆使用所選上游。
-API 模式不檢查本機 GGUF、不啟停本機或遠端 LLM 行程；語音轉錄仍使用本機 whisper。
-目前只提供課程摘要，會議工作台仍為預覽、沒有會議摘要流水線；未來會議可共用此連線層。
+| 功能 | 狀態 |
+|---|---|
+| 課堂錄音／處理音檔 → 逐字稿 → 筆記（CLI `lec`） | 可用，Linux 已實測 |
+| Web UI 課堂工作台（錄音、音檔、課程設定、歷史、補做） | 可用 |
+| 內網唯讀分享、術語候選、摘要 API 上游 | 可用（API 上游以 mock 測試驗證，部署模型的品質與效能需另測） |
+| 會議工作台 | **開發中**：設定與資料層、會後發言者辨識引擎、Linux 雙音源錄音引擎、UI 唯讀預覽都已合併；還不能從 CLI／UI 開始錄會議，也沒有會議摘要。見「會議功能」 |
+| 打包成應用程式 | 規劃中 |
 
-建立 **`config/upstreams.toml`**（已加入 `.gitignore`；不要把此內容放進課程檔或 `local.toml`）：
+版本里程碑：**V1.0** 課程紀錄與初版 UI（已完成）→ **V2.0** 會議紀錄與會議工作台 UI（開發中）→ **V3.0** 打包成應用程式。
+每個已合併 PR 對應的版本號見 [CHANGELOG.md](CHANGELOG.md)。
 
-```toml
-[upstreams.lab]
-name = "內網 30B GPU"
-base_url = "http://192.0.2.10:8000/v1"  # 文件示例位址，請換成實際伺服器
-model = "your-deployed-model-id"
-api_key_env = "LEC_LAB_API_KEY"         # 無認證時省略
+## 快速開始
 
-[upstreams.backup]
-name = "備用 GPU"
-base_url = "https://gpu.example.invalid/api/v1"
-model = "another-model-id"
-# api_key = "REPLACE_ME"               # 或在此私有檔儲存 Bearer key
-```
-
-- 表格名稱是穩定 ID，允許英數開頭、後接英數／底線／連字號，最多 64 字元；`local` 保留。
-- `name` 是可公開的選單名稱。`base_url` 必須含 API 路徑（通常 `/v1`），程式只追加 `/chat/completions`；不允許 URL 帳密、query 或 fragment。
-- `model` 是該服務部署的模型 ID；`api_key` 與 `api_key_env` 二擇一或皆省略。環境變數須存在於啟動 UI／CLI 的行程環境。
-- 選單只顯示 ID、名稱、類型與認證模式。URL、模型 ID、認證值及環境變數名稱不會進入 UI 清單、session 設定快照或請求錯誤紀錄。名稱與 ID 請勿放密鑰。
-- 設定頁的連線欄位為只寫：重新開啟或覆寫既有上游時，不會從後端讀回 URL、模型 ID、API key 或環境變數名稱，必須重新輸入完整連線設定。私有檔以原子替換寫入，支援的平台會限制為目前使用者可讀寫。
-- UI 重新整理後會重讀設定；選單不代表已驗證連線可達。更換或刪除 ID 後，舊 session 補做時請選擇有效 ID。
-- 請求使用標準 Chat Completions 的 `model/messages/temperature/top_p/max_tokens`，不傳本機引擎的 `cache_prompt`、`chat_template_kwargs`，也不做遠端暖機。上游明確以 HTTP 400 拒絕 JSON schema 時，改用一般輸出後解析 JSON。
-- API 上游會收到逐字稿、課程 prompt、術語與前段主題。外部連線不跟隨重新導向，也不使用環境 proxy；HTTPS 使用系統信任的憑證。
-
-可在 `config/local.toml` 或課程設定的 `[summary]` 儲存 `upstream = "lab"`，只保存 ID。
-也可單次覆寫（`--upstream` 優先於 `--set summary.upstream=...`）：
-
-```bash
-./lec run 課名 --upstream lab
-./lec run 課名 --file lecture.ogg --upstream lab
-./lec summarize outputs/課程資料夾 --upstream lab
-./lec summarize outputs/課程資料夾 --redo 00:05:00 --upstream backup
-./lec summarize outputs/課程資料夾 --redo all --upstream local
-```
-
-`--model` 仍只選本機模型；API 的模型由私有上游設定決定。未指定上游時遵循既有設定合併順序。
-補做預設優先讀目前課程設定，課程不存在才讀 `config.used.toml`；該快照僅保存上游 ID，連線資料一律讀目前私有檔。
-「只轉錄」不讀取上游認證、不發摘要請求。
-
-五分鐘是逐字稿分段；下一節出現、且達到最少字數才送摘要，並非每逢整五分鐘立刻請求。
-`request_timeout=240`、`retries=2`、`final_wait=180` 的預設值維持不變：一次請求最多等 240 秒、最多重試兩次；即時錄音結束後整體收尾最多等 180 秒，可能先於請求逾時。
-正常停止錄音先完成轉錄收尾；在摘要階段停止或超過 `final_wait`，API 模式會中止本地等待且不寫入遲到的回覆。
-**這不會停止遠端伺服器的推論**；背景連線可能持續到讀取逾時或 CLI 結束。
-音檔與離線摘要不套用 `final_wait`，每段遵循請求逾時及重試設定。`stop`／`stop_force` 檔案機制保持不變。
-
-HTTP 401/403 不重試；連線、逾時或格式錯誤會記錄去敏感資訊的失敗原因。
-已記錄的失敗段落沿用既有語意，需 `--redo <時間>` 或 UI 重做；沒有寫入的中止段落可直接補做。
-轉錄成功但摘要失敗仍保留既有 `done`／退出碼 0 語意，請查看 `errors`、`last_error` 與筆記中的失敗標記。
-
-API v1／schema 1 保留，新增可選欄位：
-
-- `lec models --json`／`GET /api/v1/models`：`summary_upstreams = {selected, options: [{id, name, kind}]}`，`kind` 為 `local|api`。
-- `lec courses --json` 增加 `upstream`；`POST /api/v1/runs` 及 `POST /api/v1/sessions/{id}/summarize` 可傳 `upstream` ID。既有 `redo=all|hh:mm:ss` 不變。
-- `status.json` 增加 `summary_upstream`，遠端 `summary_connection` 為 `ready`（尚未請求）、`ok` 或 `failed`；本機 `servers.llama` 在 API 模式維持 `not_started`。`summary_model` 與筆記 `model` 在 API 模式記錄上游 ID。
-- 補做／重做現在也更新 session 狀態和摘要進度，phase 名稱維持既有契約。
-
-此連線層以 mock HTTP／mock 引擎測試驗證；部署上游的模型相容性、摘要品質與 GPU 效能需另做實測。
+1. 取得程式並安裝（細節見「安裝」）：
+   - 全新 Windows：clone 後雙擊 `windows_setup.bat`，它會補齊 Python、ffmpeg、引擎、模型與 Web UI。
+   - Linux／macOS：先裝系統套件，再 `python3 setup.py`，然後下載 LLM 模型。
+2. 用內附樣本驗證整條流程：`lec run 測試課 --file samples/test8min.ogg`
+3. 建立自己的課程：`lec new 計算機概論 --from example`
+4. 上課：`lec run 計算機概論`（Ctrl+C 結束），或用 `lec --start-ui` 開 Web UI。
+5. 環境有問題先跑 `lec doctor`。
 
 ## 平台支援
 
 | 平台 | 錄音 | GPU 後端 | 狀態 |
 |---|---|---|---|
 | Linux（PulseAudio / PipeWire） | pulse | Vulkan | 已實測（Debian 13、Intel Arc 140V） |
-| macOS | avfoundation | Metal | 程式已支援，實測中 |
-| Windows | dshow | Vulkan（可改 CUDA） | 程式已支援，實測中 |
+| macOS | avfoundation | Metal | 實驗中，實測中 |
+| Windows | dshow | Vulkan（可改 CUDA） | 實驗中，實測中 |
 
-共同需求：Python 3.11+、ffmpeg、git、cmake，以及 C++ 編譯環境。
+共同需求：Python 3.11+、ffmpeg、git、cmake，以及 C++ 編譯環境（Windows 沒有編譯環境時可用預編譯檔，見「安裝」）。
+Web UI 另需 Node.js 22.22+。
+
+Linux 為正式支援；macOS、Windows 仍是 beta，大部分行為只有 mock 與靜態驗證，在真機驗證前不要當成「已支援」。
+各平台細節與已知限制：[Linux](docs/platform-linux.md)、[macOS](docs/platform-macos.md)、[Windows](docs/platform-windows.md)。
 
 ## 安裝
 
@@ -273,6 +236,44 @@ lec run 測試課 --file samples/test8min.ogg   # 轉錄 → 總結，跑完看 
 lec new 計算機概論 --from example
 ```
 
+### Windows 預編譯檔（不想裝編譯環境時）
+
+沒有 Visual Studio 或 Vulkan SDK 時，在 repo 資料夾執行：
+
+```bat
+python setup_engines.py --prebuilt
+```
+
+`python setup.py` 若偵測到缺的是編譯工具，也會改走這條路。它會下載並核對 SHA-256：
+
+- whisper.cpp v1.9.0 的 `whisper-bin-x64.zip`（CPU。官方沒有 Windows Vulkan 版，而且 v1.9.1 之後沒有再發布 Windows 執行檔）
+- llama.cpp b11067 的 `llama-b11067-bin-win-vulkan-x64.zip`
+
+執行檔會放進 `whisper.cpp/build/bin/` 與 `llama.cpp/build/bin/`。這兩個版本跟 `engines.lock` 的原始碼 commit 不同；要完全同一版請改裝編譯環境，不要加 `--prebuilt`。CUDA 與純 CPU 的 llama 預編譯檔還沒有自動下載。
+
+也可以自己從下面的位置下載，把執行檔與 DLL 放進上面兩個 `build/bin/`，`lec doctor` 就能找到：
+
+- <https://github.com/ggml-org/llama.cpp/releases>：`llama-<版本>-bin-win-vulkan-x64.zip`（或 CUDA 版）
+- <https://github.com/ggml-org/whisper.cpp/releases/tag/v1.9.0>：`whisper-bin-x64.zip`（CPU）或 `whisper-cublas-12.4.0-bin-x64.zip`（NVIDIA）
+
+### 引擎版本與 `setup_engines.py` 選項
+
+| 指令 | 說明 |
+|---|---|
+| `setup_engines.py` | checkout `engines.lock` 的版本並編譯；同版本已編好就略過 |
+| `setup_engines.py whisper` | 只取得／編譯 whisper.cpp 並下載 Whisper 模型，不處理 llama.cpp |
+| `setup_engines.py --update` | 升級到最新版，編譯成功後寫回 `engines.lock`（測試沒問題再 commit） |
+| `setup_engines.py --rebuild` | 版本或後端不變，強制重新編譯 |
+| `setup_engines.py --lock` | 不編譯，把目前的版本記進 `engines.lock` |
+| `setup_engines.py --backend vulkan\|cuda\|metal\|cpu` | 指定後端（預設依平台） |
+| `setup_engines.py --import-models <資料夾>` | 從其他位置搬入已下載的模型 |
+| `setup_engines.py --generator Ninja` | 指定 cmake generator（Windows 想用 Ninja 而非預設判斷的 Visual Studio 時；不指定就維持原本行為） |
+
+以 `BUILD_SHARED_LIBS=OFF` 靜態連結，整個專案資料夾搬到哪裡都能執行。
+基準測試：`./bench_llm.sh [逐字稿.md] [第幾段]`（bash 腳本，Linux / macOS 可用），結果在 `outputs/_llm-bench/`。
+
+`--file` 可用任何 ffmpeg 能解碼的檔案：mp3、m4a/aac、wav、flac、ogg/opus、wma、webm，以及 mp4/mkv/mov 等影片（自動取音軌）。
+
 ## 升級舊版安裝
 
 舊版使用者先取得升級腳本一次：
@@ -298,6 +299,9 @@ python3 upgrade.py --whisper-only
 腳本只接受 fast-forward Git 更新；若 tracked 檔案有未提交修改或仍有課程正在執行
 會先停止，不會覆寫受 `.gitignore` 保護的課程設定、local config、模型、錄音或
 輸出。其他選項可用 `python3 upgrade.py --help` 查看。
+
+預設也會安裝會議「會後發言者辨識」需要的依賴與模型（約 50MB，裝進專案 `.venv` 與 `models/`）；
+只用課堂功能的話可加 `--skip-diarization` 略過。說明見 [docs/diarize-install.md](docs/diarize-install.md)。
 
 ## Web UI
 
@@ -327,6 +331,14 @@ lec --start-ui                           # Windows：python lec --start-ui
 然後開啟 <http://127.0.0.1:8765>。若要改 port：
 `lec --start-ui --port 9876`。原本的
 `python -m ui.backend [--port PORT]` 仍保留給開發與除錯使用。
+
+### 頁面
+
+- **課堂**：處理控制、逐字稿／課堂筆記／術語候選、歷史紀錄、內網分享、課程設定。
+- **會議**（實驗中）：目前只能讀取既有會議場次的逐字稿與辨識進度，「開始一場會議」只是預覽、錄音按鈕停用。見「會議功能」。
+- **本機設定**：麥克風、裝置診斷、摘要 API 上游。
+
+各區塊網址與導覽細節見 [ui/WORKBENCH.md](ui/WORKBENCH.md)。
 
 ### UI 操作
 
@@ -364,6 +376,8 @@ lec --start-ui                           # Windows：python lec --start-ui
 直到手動關閉分享。重新開啟會產生新連結，舊連結失效。分享服務監聽獨立內網埠，
 主控服務仍只在本機。詳細限制與 API 契約見 [內網唯讀分享](ui/SHARING.md)。
 
+### 開發模式
+
 更新 frontend 程式後要重新執行 `npm run build`。開發模式可分兩個 terminal：
 
 ```bash
@@ -378,67 +392,6 @@ npm run dev
 開發頁面在 <http://127.0.0.1:5173>，Vite 會把 `/api` proxy 到 port `8765`。
 完整 backend API 與環境變數見 `docs/ui-backend.md`。
 
-### Windows 預編譯檔（不想裝編譯環境時）
-
-沒有 Visual Studio 或 Vulkan SDK 時，在 repo 資料夾執行：
-
-```bat
-python setup_engines.py --prebuilt
-```
-
-`python setup.py` 若偵測到缺的是編譯工具，也會改走這條路。它會下載並核對 SHA-256：
-
-- whisper.cpp v1.9.0 的 `whisper-bin-x64.zip`（CPU。官方沒有 Windows Vulkan 版，而且 v1.9.1 之後沒有再發布 Windows 執行檔）
-- llama.cpp b11067 的 `llama-b11067-bin-win-vulkan-x64.zip`
-
-執行檔會放進 `whisper.cpp/build/bin/` 與 `llama.cpp/build/bin/`。這兩個版本跟 `engines.lock` 的原始碼 commit 不同；要完全同一版請改裝編譯環境，不要加 `--prebuilt`。CUDA 與純 CPU 的 llama 預編譯檔還沒有自動下載。
-
-也可以自己從下面的位置下載，把執行檔與 DLL 放進上面兩個 `build/bin/`，`lec doctor` 就能找到：
-
-- <https://github.com/ggml-org/llama.cpp/releases>：`llama-<版本>-bin-win-vulkan-x64.zip`（或 CUDA 版）
-- <https://github.com/ggml-org/whisper.cpp/releases/tag/v1.9.0>：`whisper-bin-x64.zip`（CPU）或 `whisper-cublas-12.4.0-bin-x64.zip`（NVIDIA）
-
-### 目錄結構
-
-```
-~/lecture-notes/
-├─ lec, core/, prompts/          程式
-├─ ui/backend/, ui/frontend/     本機 FastAPI service 與 React UI
-├─ setup.py                      互動式安裝（偵測環境、告知缺少的套件）
-├─ linux_setup.sh / mac_setup.command    setup.py 的平台入口
-├─ windows_setup.bat                     全新 Windows：準備 Python 並 setup.py --provision
-├─ setup_engines.py              取得與編譯引擎
-├─ upgrade.py                    更新既有安裝並重新編譯
-├─ samples/                      8 分鐘範例音檔、講稿與參考輸出
-├─ tools/make_sample.py          重新產生範例音檔（一般使用者用不到）
-├─ config/default.toml           全域預設（進 git）
-├─ config/local.toml             這台電腦專屬：麥克風、路徑…（不進 git，範例 local.example.toml）
-├─ courses/<課名>.toml            你的課程設定（不進 git）
-├─ courses/examples/             課程設定範例（進 git）
-├─ engines.lock                  已測試的 whisper.cpp / llama.cpp 版本（進 git）
-├─ whisper.cpp/  llama.cpp/      由 setup_engines.py 取得與編譯（不進 git）
-├─ models/                       LLM 模型 .gguf（不進 git）
-└─ outputs/<課名>_<YYYYMMDD>/     每堂課的輸出（不進 git）
-```
-
-### whisper.cpp / llama.cpp 版本
-
-| 指令 | 說明 |
-|---|---|
-| `setup_engines.py` | checkout `engines.lock` 的版本並編譯；同版本已編好就略過 |
-| `setup_engines.py whisper` | 只取得／編譯 whisper.cpp 並下載 Whisper 模型，不處理 llama.cpp |
-| `setup_engines.py --update` | 升級到最新版，編譯成功後寫回 `engines.lock`（測試沒問題再 commit） |
-| `setup_engines.py --rebuild` | 版本或後端不變，強制重新編譯 |
-| `setup_engines.py --lock` | 不編譯，把目前的版本記進 `engines.lock` |
-| `setup_engines.py --backend vulkan\|cuda\|metal\|cpu` | 指定後端（預設依平台） |
-| `setup_engines.py --import-models <資料夾>` | 從其他位置搬入已下載的模型 |
-| `setup_engines.py --generator Ninja` | 指定 cmake generator（Windows 想用 Ninja 而非預設判斷的 Visual Studio 時；不指定就維持原本行為） |
-
-以 `BUILD_SHARED_LIBS=OFF` 靜態連結，整個專案資料夾搬到哪裡都能執行。
-基準測試：`./bench_llm.sh [逐字稿.md] [第幾段]`（bash 腳本，Linux / macOS 可用），結果在 `outputs/_llm-bench/`。
-
-`--file` 可用任何 ffmpeg 能解碼的檔案：mp3、m4a/aac、wav、flac、ogg/opus、wma、webm，以及 mp4/mkv/mov 等影片（自動取音軌）。
-
 ## 指令
 
 | 指令 | 說明 |
@@ -448,14 +401,19 @@ python setup_engines.py --prebuilt
 | `lec run 課名 --transcribe-only` | 只轉錄，不啟動總結模型（等同 `--set summary.enabled=false`） |
 | `lec run 課名 --model qwen3-4b --source mic2` | 臨時換模型、錄音來源 |
 | `lec run 課名 --set vad.sensitivity=3` | 臨時覆寫任一設定（可重複） |
+| `lec run 課名 --upstream lab` | 本次總結改用已儲存的 API 上游（見「摘要上游」） |
 | `lec summarize <資料夾>` | 補做尚未完成的總結 |
 | `lec summarize <資料夾> --redo 00:05:02` | 重做某一段（`--redo all` 全部重做，舊檔備份為 .bak） |
-| `lec config 課名` | 印出合併後的設定 |
+| `lec terms <資料夾> [--json]` | 列出筆記中尚未定義的術語候選（UI 的「術語候選」分頁用同一份資料，見 [docs/term-candidates.md](docs/term-candidates.md)） |
+| `lec config 課名` | 印出合併後的設定（`--work-type meeting` 看會議設定） |
 | `lec courses` / `lec new 課名 [--from 範例]` | 列出 / 建立課程設定檔 |
 | `lec models [課名] [--json]` | 列出 summary／Whisper 模型設定與本機檔案狀態 |
 | `lec devices [--test N] [--save N]` | 列出 / 測試 / 設定麥克風 |
 | `lec doctor [課名] [--mic]` | 檢查環境（回報問題請附上輸出，`--json` 給 UI） |
 | `lec status` / `lec stop` | 查看 / 停止目前的執行（`--json`、`--force`） |
+| `lec --start-ui [--port N]` | 啟動本機 Web UI（見「Web UI」） |
+| `lec meetings [--json]` | 列出 `meetings/*.toml` 的會議設定（實驗中，不錄音） |
+| `lec capture-capabilities [--json]` | 查詢雙音源錄音的整合狀態（實驗中，不開啟任何裝置） |
 
 停止方式（Ctrl+C 與 `lec stop` 等效，三個平台相同）：
 - 錄音中一次：停止錄音，轉完剩餘段落，再補做最後一段總結（最多等 `summary.final_wait` 秒）。
@@ -487,7 +445,75 @@ extra_instructions = "本課程著重網路概念，重點請保留協定名稱�
 
 `lec summarize` 預設使用**目前**的課程設定檔（改完 prompt 可直接重做）；找不到才用資料夾內的 `config.used.toml`。
 
-## 輸出（outputs/<課名>_<YYYYMMDD>/，同一天同課名再錄會加 _HHMM）
+## 摘要上游：本地 GPU 或已儲存 API
+
+預設 `[summary] upstream = "local"` 保留既有 llama-server／本機模型流程。
+UI「本機設定 → 摘要 API 上游」可新增、完整覆寫或刪除私有上游；課堂與歷史紀錄的「摘要上游」選單可選本地 GPU 或已儲存的 API。錄音、音檔轉錄後摘要、補做／重做皆使用所選上游。
+API 模式不檢查本機 GGUF、不啟停本機或遠端 LLM 行程；語音轉錄仍使用本機 whisper。
+目前只提供課程摘要，會議工作台仍為預覽、沒有會議摘要流水線；未來會議可共用此連線層。
+
+建立 **`config/upstreams.toml`**（已加入 `.gitignore`；不要把此內容放進課程檔或 `local.toml`）：
+
+```toml
+[upstreams.lab]
+name = "內網 30B GPU"
+base_url = "http://192.0.2.10:8000/v1"  # 文件示例位址，請換成實際伺服器
+model = "your-deployed-model-id"
+api_key_env = "LEC_LAB_API_KEY"         # 無認證時省略
+
+[upstreams.backup]
+name = "備用 GPU"
+base_url = "https://gpu.example.invalid/api/v1"
+model = "another-model-id"
+# api_key = "REPLACE_ME"               # 或在此私有檔儲存 Bearer key
+```
+
+- 表格名稱是穩定 ID，允許英數開頭、後接英數／底線／連字號，最多 64 字元；`local` 保留。
+- `name` 是可公開的選單名稱。`base_url` 必須含 API 路徑（通常 `/v1`），程式只追加 `/chat/completions`；不允許 URL 帳密、query 或 fragment。
+- `model` 是該服務部署的模型 ID；`api_key` 與 `api_key_env` 二擇一或皆省略。環境變數須存在於啟動 UI／CLI 的行程環境。
+- 選單只顯示 ID、名稱、類型與認證模式。URL、模型 ID、認證值及環境變數名稱不會進入 UI 清單、session 設定快照或請求錯誤紀錄。名稱與 ID 請勿放密鑰。
+- 設定頁的連線欄位為只寫：重新開啟或覆寫既有上游時，不會從後端讀回 URL、模型 ID、API key 或環境變數名稱，必須重新輸入完整連線設定。私有檔以原子替換寫入，支援的平台會限制為目前使用者可讀寫。
+- UI 重新整理後會重讀設定；選單不代表已驗證連線可達。更換或刪除 ID 後，舊 session 補做時請選擇有效 ID。
+- 請求使用標準 Chat Completions 的 `model/messages/temperature/top_p/max_tokens`，不傳本機引擎的 `cache_prompt`、`chat_template_kwargs`，也不做遠端暖機。上游明確以 HTTP 400 拒絕 JSON schema 時，改用一般輸出後解析 JSON。
+- API 上游會收到逐字稿、課程 prompt、術語與前段主題。外部連線不跟隨重新導向，也不使用環境 proxy；HTTPS 使用系統信任的憑證。
+
+可在 `config/local.toml` 或課程設定的 `[summary]` 儲存 `upstream = "lab"`，只保存 ID。
+也可單次覆寫（`--upstream` 優先於 `--set summary.upstream=...`）：
+
+```bash
+./lec run 課名 --upstream lab
+./lec run 課名 --file lecture.ogg --upstream lab
+./lec summarize outputs/課程資料夾 --upstream lab
+./lec summarize outputs/課程資料夾 --redo 00:05:00 --upstream backup
+./lec summarize outputs/課程資料夾 --redo all --upstream local
+```
+
+`--model` 仍只選本機模型；API 的模型由私有上游設定決定。未指定上游時遵循既有設定合併順序。
+補做預設優先讀目前課程設定，課程不存在才讀 `config.used.toml`；該快照僅保存上游 ID，連線資料一律讀目前私有檔。
+「只轉錄」不讀取上游認證、不發摘要請求。
+
+五分鐘是逐字稿分段；下一節出現、且達到最少字數才送摘要，並非每逢整五分鐘立刻請求。
+`request_timeout=240`、`retries=2`、`final_wait=180` 的預設值維持不變：一次請求最多等 240 秒、最多重試兩次；即時錄音結束後整體收尾最多等 180 秒，可能先於請求逾時。
+正常停止錄音先完成轉錄收尾；在摘要階段停止或超過 `final_wait`，API 模式會中止本地等待且不寫入遲到的回覆。
+**這不會停止遠端伺服器的推論**；背景連線可能持續到讀取逾時或 CLI 結束。
+音檔與離線摘要不套用 `final_wait`，每段遵循請求逾時及重試設定。`stop`／`stop_force` 檔案機制保持不變。
+
+HTTP 401/403 不重試；連線、逾時或格式錯誤會記錄去敏感資訊的失敗原因。
+已記錄的失敗段落沿用既有語意，需 `--redo <時間>` 或 UI 重做；沒有寫入的中止段落可直接補做。
+轉錄成功但摘要失敗仍保留既有 `done`／退出碼 0 語意，請查看 `errors`、`last_error` 與筆記中的失敗標記。
+
+API v1／schema 1 保留，新增可選欄位：
+
+- `lec models --json`／`GET /api/v1/models`：`summary_upstreams = {selected, options: [{id, name, kind}]}`，`kind` 為 `local|api`。
+- `lec courses --json` 增加 `upstream`；`POST /api/v1/runs` 及 `POST /api/v1/sessions/{id}/summarize` 可傳 `upstream` ID。既有 `redo=all|hh:mm:ss` 不變。
+- `status.json` 增加 `summary_upstream`，遠端 `summary_connection` 為 `ready`（尚未請求）、`ok` 或 `failed`；本機 `servers.llama` 在 API 模式維持 `not_started`。`summary_model` 與筆記 `model` 在 API 模式記錄上游 ID。
+- 補做／重做現在也更新 session 狀態和摘要進度，phase 名稱維持既有契約。
+
+此連線層以 mock HTTP／mock 引擎測試驗證；部署上游的模型相容性、摘要品質與 GPU 效能需另做實測。
+
+## 輸出
+
+位置：`outputs/<課名>_<YYYYMMDD>/`，同一天同課名再錄會加 `_HHMM`；可用 `paths.session_name` 改成分層。
 
 | 檔案 | 內容 |
 |---|---|
@@ -511,6 +537,26 @@ extra_instructions = "本課程著重網路概念，重點請保留協定名稱�
    - 「老師強調」的原句要在逐字稿中找得到（相似度 ≥ `summary.quote_match`），否則刪除，並換成逐字稿原文、標上時間。
    - 術語要出現在逐字稿中，否則依 `summary.unverified_terms` 標 ⚠ / 刪除。
 
+## 會議功能（開發中，V2.0）
+
+會議工作台要做的是：同時錄「系統輸出＋麥克風」兩個來源，會後分辨發言者並產生帶代號的逐字稿。
+**目前只有底層元件合併進來，整條流程還沒接起來**；沒有 `lec meeting run`，UI 也不能開始錄會議。
+
+| 元件 | 現況 | 文件 |
+|---|---|---|
+| 會議設定與資料層 | `meetings/*.toml`、`lec meetings`、`lec config --work-type meeting`；不錄音 | [docs/meeting-workbench-config.md](docs/meeting-workbench-config.md) |
+| 會後發言者辨識 `core/diarize.py` | 引擎層完成（sherpa-onnx，子行程執行）；**尚未接 CLI／UI／狀態檔，準確度未驗證** | [docs/diarize-install.md](docs/diarize-install.md)、[評分器](docs/diarize-evaluation.md) |
+| 雙音源錄音 `core/capture.py` | 僅 Linux（PulseAudio／PipeWire）；**硬體驗收未做**。macOS／Windows 不支援 | [docs/platform-dual-capture.md](docs/platform-dual-capture.md) |
+| 設定與能力查詢 | `[audio] capture_mode = "dual"` 的驗證與 `lec capture-capabilities`；`lec run` 遇到 dual 會明確拒絕 | [docs/meeting-workbench-dual-audio.md](docs/meeting-workbench-dual-audio.md) |
+| UI 會議頁 | 讀取既有會議場次與辨識進度；開始錄音停用 | [ui/WORKBENCH.md](ui/WORKBENCH.md) |
+
+契約與實作順序：[docs/meeting-workbench-contract.md](docs/meeting-workbench-contract.md)（規劃 schema 2、`diarizing` phase；**尚未實作**，
+目前出貨的 `status.json`／`events.jsonl`／`run.json` 仍是 schema 1，phase 沒有 `diarizing`）、
+[docs/meeting-workbench-implementation.md](docs/meeting-workbench-implementation.md)。
+
+兩個獨立的驗收工具（不經過 `lec`）：`tools/dual_capture_check.py`（雙音源硬體驗收，錄音時會真的收錄所選裝置）、
+`tools/score_diarization.py`（拿人工標註替發言者辨識評分，不訂通過門檻）。
+
 ## 給 UI 的介面（UI 不 import core）
 
 - **設定**：讀寫 `courses/*.toml`、`config/local.toml`；`lec courses --json` 列出課程；`lec config 課名` 看合併結果；`lec devices --json` 列出麥克風；`lec doctor --json` 環境檢查。
@@ -527,21 +573,66 @@ extra_instructions = "本課程著重網路概念，重點請保留協定名稱�
   `phase`：starting → loading → recording / transcribing → summarizing → finishing → done（或 failed / aborted）。
 - **事件**：`<資料夾>/events.jsonl`（phase、summary、error、stop_requested）。
 
-## 模組
+## 專案結構
 
 ```
-lec                 CLI 入口
-core/cli.py         子指令
-core/config.py      設定載入、合併、驗證、輸出
-core/session.py     一次 run / summarize 的流程、訊號處理、收尾
-core/servers.py     whisper-server / llama-server 啟動、沿用、關閉
-core/transcribe.py  VAD 切段＋即時轉錄（原 live_transcribe.py）
-core/summarize.py   分段總結、驗證、notes.md
-core/status.py      status.json / events.jsonl / 執行鎖
-core/devices.py     錄音來源列表與音量測試
-core/doctor.py      環境檢查
-core/platform.py    平台差異（錄音後端、防休眠、狀態資料夾、行程管理）
+~/lecture-notes/
+├─ lec, core/, prompts/          程式
+├─ ui/backend/, ui/frontend/     本機 FastAPI service 與 React UI
+├─ setup.py                      互動式安裝（偵測環境、告知缺少的套件）
+├─ linux_setup.sh / mac_setup.command    setup.py 的平台入口
+├─ windows_setup.bat                     全新 Windows：準備 Python 並 setup.py --provision
+├─ setup_engines.py              取得與編譯引擎（含發言者辨識模型）
+├─ upgrade.py                    更新既有安裝並重新編譯
+├─ requirements-diarize.txt      發言者辨識的 pip 依賴（裝進 .venv）
+├─ samples/                      8 分鐘範例音檔、講稿與參考輸出
+├─ tools/                        make_sample（重產範例）、dual_capture_check、score_diarization、windows_runner
+├─ docs/                         平台備忘、契約與各功能說明
+├─ CHANGELOG.md                  各 PR 對應的版本歷史
+├─ config/default.toml           全域預設（進 git）
+├─ config/local.toml             這台電腦專屬：麥克風、路徑…（不進 git，範例 local.example.toml）
+├─ config/upstreams.toml         摘要 API 上游（不進 git，可在 UI 設定）
+├─ courses/<課名>.toml            你的課程設定（不進 git）；courses/examples/ 為範例（進 git）
+├─ meetings/examples/            會議設定範例（進 git）
+├─ engines.lock                  已測試的 whisper.cpp / llama.cpp 版本（進 git）
+├─ whisper.cpp/  llama.cpp/      由 setup_engines.py 取得與編譯（不進 git）
+├─ models/                       LLM、Whisper、發言者辨識模型（不進 git）
+└─ outputs/<課名>_<YYYYMMDD>/     每堂課的輸出（不進 git）
 ```
+
+### 模組
+
+```
+lec                    CLI 入口
+core/cli.py            子指令
+core/config.py         設定載入、合併、驗證、輸出（課堂與會議設定分開）
+core/session.py        一次 run / summarize 的流程、訊號處理、收尾
+core/servers.py        whisper-server / llama-server 啟動、沿用、關閉
+core/transcribe.py     VAD 切段＋即時轉錄
+core/summarize.py      分段總結、驗證、notes.md（本機或 API 上游）
+core/terms.py          術語候選
+core/status.py         status.json / events.jsonl / 執行鎖
+core/devices.py        錄音來源列表與音量測試
+core/doctor.py         環境檢查
+core/platform.py       平台差異（錄音後端、防休眠、狀態資料夾、行程管理）
+core/capture.py        會議雙音源同步擷取（Linux，尚未接 CLI）
+core/diarize.py        會後發言者辨識引擎（尚未接 CLI）
+core/diarize_worker.py 發言者辨識的分群子行程
+```
+
+## 文件索引
+
+| 主題 | 文件 |
+|---|---|
+| 平台備忘與驗證手冊 | [Linux](docs/platform-linux.md)、[macOS](docs/platform-macos.md)、[Windows](docs/platform-windows.md) |
+| Windows 測試站 | [docs/windows-test-station.md](docs/windows-test-station.md) |
+| 只轉錄模式 | [docs/transcribe-only.md](docs/transcribe-only.md) |
+| Web UI | [docs/ui-backend.md](docs/ui-backend.md)、[docs/ui-state-contract.md](docs/ui-state-contract.md)、[ui/WORKBENCH.md](ui/WORKBENCH.md)、[ui/SHARING.md](ui/SHARING.md) |
+| 術語候選 | [docs/term-candidates.md](docs/term-candidates.md) |
+| 總結品質評估 | [ui/QUALITY_EVALUATION.md](ui/QUALITY_EVALUATION.md) |
+| 會議工作台 | 見「會議功能」 |
+| 版本歷史 | [CHANGELOG.md](CHANGELOG.md)（更新流程：[docs/changelog-update.md](docs/changelog-update.md)） |
+| 給開發者與 agent | [CLAUDE.md](CLAUDE.md)、[CODEX.md](CODEX.md)、[AGENTS.md](AGENTS.md) |
 
 ## 範例音檔
 
@@ -552,11 +643,13 @@ core/platform.py    平台差異（錄音後端、防休眠、狀態資料夾、
 
 ## 版本歷史
 
-每個合併的 PR 對應一個版本號（V1.0 課程紀錄與初版 UI、V2.0 會議紀錄與會議工作台、V3.0 打包成應用程式），完整列表見 [CHANGELOG.md](CHANGELOG.md)。
+版本號規則與每個已合併 PR 對應的版本見 [CHANGELOG.md](CHANGELOG.md)。
 
 ## 開發
 
+- 測試：`python3 -m unittest`（純標準函式庫）。UI 的測試需要 `ui/backend/requirements.txt` 的 fastapi，沒安裝時 `tests/test_ui_backend_*.py` 會失敗，不代表程式壞掉。
 - 分支：`main`。程式、設定範例、prompts、`samples/` 範例素材與 `engines.lock` 進 git；本機設定、個人課程、原始錄音與 outputs 已由 `.gitignore` 排除。
+- 本專案由 Claude Code、Codex 分工開發，Antigravity 獨立審查，maintainer 最終審查與合併；分工與流程見 [AGENTS.md](AGENTS.md)、[CLAUDE.md](CLAUDE.md)、[CODEX.md](CODEX.md)。
 - 升級引擎：`python3 setup_engines.py --update` → `lec run 課名 --file <錄音>` 與 `./bench_llm.sh` 確認沒問題 → `git commit engines.lock`。
 - 回報問題時附上 `lec doctor --json` 與該堂課的 `session.log`。
 - 授權：MIT（見 LICENSE）。whisper.cpp、llama.cpp 為 MIT，Qwen3 模型為 Apache-2.0，皆在執行時自行取得。
