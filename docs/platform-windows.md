@@ -100,7 +100,7 @@ opencc 一直等到 20 秒逾時，`opencc_convert()` 只好回傳沒轉換的�
   `dir /s whisper-server.exe` 確認實際路徑，再回來調整搜尋順序。
 - `library_dirs()` 找 `*.dll` 加進 `PATH`（Windows 用 `PATH` 找 DLL，不是
   `LD_LIBRARY_PATH`），這是給「下載官方預編譯檔」這種情境用的（見主
-  README「Windows 預編譯檔」一節），預設的靜態編譯流程通常用不到。
+  [windows_setup.md](windows_setup.md)「預編譯檔」一節），預設的靜態編譯流程通常用不到。
 
 ## 官方預編譯檔（沒有 Visual Studio 時）
 
@@ -125,7 +125,7 @@ Intel 內顯不會被問 CUDA。摘要用的外部 API 在 Web UI 設定，啟�
 這兩個版本都不是 `engines.lock` 裡的原始碼 commit。預編譯目錄不是 git checkout，
 所以 `lec doctor` 不會拿它跟 lock 比對版本，只確認執行檔在不在。
 雜湊不符會刪掉下載的檔、拒絕安裝。CUDA / 純 CPU 的 llama 預編譯檔還沒有自動下載，
-仍是 README 說的手動放置，或裝好編譯環境後不要加 `--prebuilt`。
+仍是 [windows_setup.md](windows_setup.md) 說的手動放置，或裝好編譯環境後不要加 `--prebuilt`。
 
 Windows 仍然標成「實驗中」。這條安裝路徑有單元測試，也有下面這一筆檔案模式的實機紀錄。
 麥克風錄音、`lec stop`、UI 還沒在這台機器上重跑，確認前不要把平台改成「已支援」。
@@ -362,7 +362,7 @@ python lec doctor
 
 要看的是 doctor 找不找得到執行檔、GPU 那一行有沒有列出裝置（`library_dirs()` /
 `env_with_libs()` 把 DLL 目錄加進 `PATH` 是否真的生效）。whisper 這包是 CPU，
-GPU 那一行指的是 llama.cpp 的 Vulkan。也可以照 README 自己把 exe 與 DLL 放進
+GPU 那一行指的是 llama.cpp 的 Vulkan。也可以照 [windows_setup.md](windows_setup.md) 自己把 exe 與 DLL 放進
 `whisper.cpp\build\bin\`、`llama.cpp\build\bin\`，不必經過 `--prebuilt`。
 
 ### 一次收集所有輸出

@@ -412,7 +412,7 @@ def report_llama_runtime(binary, import_dir):
         for path in found:
             print(f"✔ {path.stat().st_size / 1e9:.1f} GB  {path}")
     else:
-        print(f"⚠ {models} 裡沒有 .gguf，請依 README 下載 Qwen3-8B-Q4_K_M.gguf")
+        print(f"⚠ {models} 裡沒有 .gguf，請依 docs/<平台>_setup.md 的步驟下載 Qwen3-8B-Q4_K_M.gguf")
 
 
 # ---------------------------------------------------------------- Windows 預編譯檔
@@ -425,7 +425,7 @@ def prebuilt_spec(engine, backend):
     spec = WIN_PREBUILT["llama"].get(backend)
     if not spec:
         die(f"Windows 預編譯檔沒有 {backend} 版的 llama.cpp（目前只有 vulkan）。"
-            "CUDA 或 CPU 版請看 README「Windows 預編譯檔」自己放進 llama.cpp\\build\\bin，"
+            "CUDA 或 CPU 版請看 docs/windows_setup.md「預編譯檔」自己放進 llama.cpp\\build\\bin，"
             "或安裝編譯環境後不要加 --prebuilt。")
     return spec
 
@@ -527,7 +527,7 @@ def install_prebuilt(names, backend, import_dir=None):
     if backend != "vulkan":
         die("--prebuilt 目前只支援 --backend vulkan（Windows 預設）。"
             "whisper 會用官方 CPU 版；llama.cpp 用 Vulkan 版。"
-            "要 CPU 或 CUDA 版請看 README「Windows 預編譯檔」自己放檔，"
+            "要 CPU 或 CUDA 版請看 docs/windows_setup.md「預編譯檔」自己放檔，"
             "或安裝編譯環境後不要加 --prebuilt。")
     specs = [(name, prebuilt_spec(name, backend)) for name in names]
     for name, spec in specs:
@@ -605,7 +605,7 @@ def main(argv=None):
         if backend != "vulkan":
             die("--prebuilt 目前只支援 --backend vulkan（Windows 預設）。"
                 "whisper 會用官方 CPU 版；llama.cpp 用 Vulkan 版。"
-                "要 CPU 或 CUDA 版請看 README「Windows 預編譯檔」自己放檔，"
+                "要 CPU 或 CUDA 版請看 docs/windows_setup.md「預編譯檔」自己放檔，"
                 "或安裝編譯環境後不要加 --prebuilt。")
         code = install_prebuilt(names, backend, args.import_models)
         if want_diarize:

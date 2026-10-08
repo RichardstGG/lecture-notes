@@ -193,7 +193,7 @@ def run(course=None, sets=(), mic=False):
     add(OK if not missing else WARN, "編譯工具",
         f"{where}：齊全" if not missing else
         f"{where}：缺少 {'、'.join(missing)}；已編好引擎或用預編譯檔可忽略，"
-        "要自己編譯請見 README 的安裝步驟")
+        "要自己編譯請見 docs/<平台>_setup.md")
 
     for label, path in (("whisper 模型", Path(cfg.whisper_model_path())),
                         (f"LLM 模型（{cfg['summary']['model']}）", Path(cfg.llm_model()["path"]))):
