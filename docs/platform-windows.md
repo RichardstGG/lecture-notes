@@ -247,6 +247,14 @@ python setup.py --dry-run --yes
 關掉（`pause` 應該讓它停住）、`python` 有沒有被找到、以及 `.bat` 自己印的英文訊息正常
 （那個檔案刻意只用 ASCII，因為 cmd 用主控台 code page 顯示 `.bat`，中文會變亂碼）。
 
+`windows_setup.bat` 會先找 Python 3.11+（沒有就用 winget 裝 Python 3.13），再執行
+`setup.py --provision`。那一步在 Windows 上會用 winget 補 ffmpeg、Git、Node.js 與
+VC++ 2015+ x64，下載建議的 GGUF，安裝 Web UI，並詢問要不要打開
+<http://127.0.0.1:8765>。沒有編譯器時仍走 `--prebuilt`。不會用 winget 裝
+Visual Studio、Vulkan SDK 或 CUDA Toolkit。`--dry-run` 不會真的安裝。
+這條「全新 Windows、clone 後只跑啟動檔」的路徑有單元測試，還沒在一台乾淨的
+Windows 上從頭跑過。
+
 ### 3. 編譯與 build 產物路徑（對應風險項目 4）
 
 互動模式會偵測後端再問你（有 NVIDIA + CUDA 時會問要不要用 CUDA）：

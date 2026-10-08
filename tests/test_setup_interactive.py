@@ -4,8 +4,8 @@
 1. 有顯卡時先問本機 GPU 還是外部摘要 API。沒有顯卡不問。`--yes` 不選 API。
 2. 後端決策表（有沒有 NVIDIA、有沒有 CUDA Toolkit、有沒有 GPU）要選對。
    Vulkan 在 NVIDIA 上也能跑。沒有 Toolkit 時仍可選 CUDA，但只印安裝說明。
-3. 缺少的套件只會被印出來，絕對不會有人幫使用者執行安裝（不碰 sudo / winget）。
-4. `--yes` / `--dry-run` 這些非互動路徑不能停下來等輸入（CI 與 upgrade.py 會用到）。
+3. 缺少的套件預設只會被印出來。`--provision` 在 Windows 才會呼叫 winget，而且不裝編譯器或 CUDA。
+4. `--yes` / `--dry-run` 不能停下來等輸入。沒有 `--provision` 時也不會下載模型、裝 UI 或啟動服務。
 
 有 GPU 的 `run_setup([])` 第一個答案是路線：`"1"` 本機、`"2"` 外部 API。
 `"y"` 不是路線代號，會直接取消。
@@ -601,6 +601,216 @@ class SummaryRouteTests(unittest.TestCase):
             {**base, "base_url": "https://user:pw@example.test/v1"}))
         self.assertIsNotNone(S.upstream_error({**base, "base_url": "ftp://example.test/v1"}))
         self.assertIsNotNone(S.upstream_error({**base, "api_key": "a", "api_key_env": "B"}))
+
+
+class WindowsProvisionTests(unittest.TestCase):
+    """windows_setup.bat 帶 --provision。這裡不呼叫 winget、不下載、不編譯 UI。"""
+
+    def test_runtime_packages_are_the_ones_a_fresh_windows_needs(self):
+        packages = [package for _label, package, _ready in S.WINDOWS_RUNTIME]
+        self.assertEqual(packages, [
+            "Gyan.FFmpeg", "Git.Git", "OpenJS.NodeJS.LTS", "Microsoft.VCRedist.2015+.x64"])
+        self.assertNotIn("LunarG.VulkanSDK", packages)
+        self.assertNotIn("Kitware.CMake", packages)
+
+    def test_node_versions_match_the_frontend_engines_field(self):
+        self.assertTrue(S.node_is_acceptable((22, 22, 2)))
+        self.assertTrue(S.node_is_acceptable((24, 20, 0)))
+        self.assertTrue(S.node_is_acceptable((26, 0, 0)))
+        for version in (None, (), (22, 21, 9), (23, 11, 0), (24, 14, 0), (18, 20, 0)):
+            with self.subTest(version=version):
+                self.assertFalse(S.node_is_acceptable(version))
+
+    def test_node_version_parses_stdout(self):
+        with mock.patch.object(S.shutil, "which", return_value="node"), \
+                mock.patch.object(S.subprocess, "run",
+                                  return_value=mock.Mock(stdout="24.20.0\n", returncode=0)):
+            self.assertEqual(S.node_version(), (24, 20, 0))
+
+    def test_vc_redist_is_not_required_off_windows(self):
+        with mock.patch.object(S.os, "name", "posix"):
+            self.assertTrue(S.vc_redist_x64_installed())
+
+    def test_declining_winget_installs_nothing(self):
+        with mock.patch.object(S, "missing_runtime_packages",
+                               return_value=[("ffmpeg", "Gyan.FFmpeg")]), \
+                mock.patch.object(S.shutil, "which", return_value="winget"), \
+                mock.patch.object(S.subprocess, "run") as run, \
+                redirect_stdout(io.StringIO()):
+            ready = S.install_missing_runtime(S.parse_args(["--provision"]), answers("n"))
+        self.assertFalse(ready)
+        run.assert_not_called()
+
+    def test_yes_installs_the_missing_package_without_asking(self):
+        pending = [[("ffmpeg", "Gyan.FFmpeg")], []]
+
+        def boom(_prompt=""):
+            raise AssertionError("非互動模式不該詢問")
+
+        with mock.patch.object(S, "missing_runtime_packages", side_effect=lambda: pending.pop(0)), \
+                mock.patch.object(S.shutil, "which", return_value="winget"), \
+                mock.patch.object(S, "refresh_windows_path"), \
+                mock.patch.object(S.subprocess, "run",
+                                  return_value=mock.Mock(returncode=0)) as run, \
+                redirect_stdout(io.StringIO()):
+            ready = S.install_missing_runtime(S.parse_args(["--provision", "--yes"]), boom)
+        self.assertTrue(ready)
+        command = run.call_args[0][0]
+        self.assertEqual(command[:4], ["winget", "install", "--id", "Gyan.FFmpeg"])
+        self.assertIn("--disable-interactivity", command)
+
+    def test_missing_winget_does_not_pretend_success(self):
+        with mock.patch.object(S, "missing_runtime_packages",
+                               return_value=[("Node.js", "OpenJS.NodeJS.LTS")]), \
+                mock.patch.object(S.shutil, "which", return_value=None), \
+                mock.patch.object(S.subprocess, "run") as run, \
+                redirect_stdout(io.StringIO()):
+            ready = S.install_missing_runtime(S.parse_args(["--provision", "--yes"]), answers())
+        self.assertFalse(ready)
+        run.assert_not_called()
+
+    def test_existing_model_is_not_downloaded_again(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            dest = root / "models" / S.MODEL_FILES[S.MODEL_8B]
+            dest.parent.mkdir()
+            dest.write_bytes(b"already")
+            with mock.patch.object(S, "ROOT", root), \
+                    mock.patch.object(S.subprocess, "run") as run, \
+                    redirect_stdout(io.StringIO()):
+                code = S.ensure_llm_model(S.MODEL_8B)
+        self.assertEqual(code, 0)
+        run.assert_not_called()
+
+    def test_model_download_renames_the_part_only_after_curl_succeeds(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+
+            def fake_curl(command, **_kwargs):
+                Path(command[command.index("-o") + 1]).write_bytes(b"gguf")
+                return mock.Mock(returncode=0)
+
+            with mock.patch.object(S, "ROOT", root), \
+                    mock.patch.object(S.shutil, "which", return_value="curl.exe"), \
+                    mock.patch.object(S.subprocess, "run", side_effect=fake_curl) as run, \
+                    redirect_stdout(io.StringIO()):
+                code = S.ensure_llm_model(S.MODEL_8B)
+            dest = root / "models" / S.MODEL_FILES[S.MODEL_8B]
+            self.assertEqual(code, 0)
+            self.assertEqual(dest.read_bytes(), b"gguf")
+            self.assertFalse(dest.with_name(dest.name + ".part").exists())
+            self.assertIn("-C", run.call_args[0][0])
+
+    def test_failed_model_download_leaves_no_finished_file(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            with mock.patch.object(S, "ROOT", root), \
+                    mock.patch.object(S.shutil, "which", return_value="curl.exe"), \
+                    mock.patch.object(S.subprocess, "run",
+                                      return_value=mock.Mock(returncode=1)), \
+                    redirect_stdout(io.StringIO()):
+                code = S.ensure_llm_model(S.MODEL_4B)
+            dest = root / "models" / S.MODEL_FILES[S.MODEL_4B]
+            self.assertEqual(code, 1)
+            self.assertFalse(dest.exists())
+
+    def test_small_memory_model_is_recorded_only_in_local_toml(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            local = Path(tmp) / "local.toml"
+            with mock.patch.object(S.C, "LOCAL_FILE", local), \
+                    redirect_stdout(io.StringIO()):
+                S.remember_smaller_model(S.MODEL_8B)
+                self.assertFalse(local.exists())
+                S.remember_smaller_model(S.MODEL_4B)
+            text = local.read_text(encoding="utf-8")
+        self.assertIn('model = "qwen3-4b"', text)
+        self.assertNotIn("api_key", text)
+
+    def test_finish_skips_the_gguf_for_whisper_only_or_an_external_api(self):
+        args = S.parse_args(["--provision", "--yes"])
+        with mock.patch.object(S, "ensure_llm_model") as model, \
+                mock.patch.object(S, "ensure_ui", return_value=0), \
+                mock.patch.object(S, "maybe_launch_ui", return_value=0), \
+                redirect_stdout(io.StringIO()):
+            code = S.finish_usable_install(args, env(), ["whisper"], {"id": "lab"}, answers())
+        self.assertEqual(code, 0)
+        model.assert_not_called()
+
+    def test_finish_downloads_the_local_model_and_installs_the_ui(self):
+        args = S.parse_args(["--provision", "--yes"])
+        with mock.patch.object(S, "ensure_llm_model", return_value=0) as model, \
+                mock.patch.object(S, "ensure_ui", return_value=0) as ui, \
+                mock.patch.object(S, "maybe_launch_ui", return_value=0) as launch, \
+                redirect_stdout(io.StringIO()):
+            code = S.finish_usable_install(args, env(memory_gb=32), [], None, answers())
+        self.assertEqual(code, 0)
+        self.assertEqual(model.call_args[0][0], S.MODEL_8B)
+        ui.assert_called_once()
+        launch.assert_called_once()
+
+    def test_yes_prints_the_ui_command_without_starting_it(self):
+        with mock.patch.object(S.subprocess, "run") as run, redirect_stdout(io.StringIO()) as out:
+            code = S.maybe_launch_ui(S.parse_args(["--provision", "--yes"]), answers("y"))
+        self.assertEqual(code, 0)
+        run.assert_not_called()
+        self.assertIn("--start-ui", out.getvalue())
+
+    def test_windows_provision_runs_runtime_engines_then_finish(self):
+        order = []
+
+        def runtime(*_args, **_kwargs):
+            order.append("runtime")
+            return True
+
+        def engines(*_args, **_kwargs):
+            order.append("engines")
+            return mock.Mock(returncode=0)
+
+        def finish(*_args, **_kwargs):
+            order.append("finish")
+            return 0
+
+        def boom(_prompt=""):
+            raise AssertionError("非互動模式不該詢問")
+
+        with mock.patch.object(S, "detect", return_value=windows_env()), \
+                mock.patch.object(S, "missing_tools", return_value=([], [])), \
+                mock.patch.object(S, "install_missing_runtime", side_effect=runtime), \
+                mock.patch.object(S, "finish_usable_install", side_effect=finish), \
+                mock.patch.object(S.subprocess, "run", side_effect=engines), \
+                redirect_stdout(io.StringIO()):
+            code = S.run_setup(S.parse_args(["--provision", "--yes"]), boom)
+        self.assertEqual(code, 0)
+        self.assertEqual(order, ["runtime", "engines", "finish"])
+
+    def test_linux_provision_does_not_call_winget(self):
+        def engines(*_args, **_kwargs):
+            return mock.Mock(returncode=0)
+
+        with mock.patch.object(S, "detect", return_value=env()), \
+                mock.patch.object(S, "missing_tools", return_value=([], [])), \
+                mock.patch.object(S, "install_missing_runtime",
+                                  side_effect=AssertionError("Linux 不該呼叫 winget")), \
+                mock.patch.object(S, "finish_usable_install", return_value=0) as finish, \
+                mock.patch.object(S.subprocess, "run", side_effect=engines), \
+                redirect_stdout(io.StringIO()):
+            code = S.run_setup(S.parse_args(["--provision", "--yes"]), answers())
+        self.assertEqual(code, 0)
+        finish.assert_called_once()
+
+    def test_yes_without_provision_stops_after_the_engines(self):
+        def forbidden(*_args, **_kwargs):
+            raise AssertionError("沒有 --provision 不該裝模型或 UI")
+
+        with mock.patch.object(S, "detect", return_value=windows_env()), \
+                mock.patch.object(S, "missing_tools", return_value=([], [])), \
+                mock.patch.object(S, "install_missing_runtime", side_effect=forbidden), \
+                mock.patch.object(S, "finish_usable_install", side_effect=forbidden), \
+                mock.patch.object(S.subprocess, "run",
+                                  return_value=mock.Mock(returncode=0)), \
+                redirect_stdout(io.StringIO()):
+            code = S.run_setup(S.parse_args(["--yes"]), answers())
+        self.assertEqual(code, 0)
 
 
 class AskYesNoTests(unittest.TestCase):

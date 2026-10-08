@@ -13,7 +13,10 @@
 就只印安裝說明，不編譯、也不下載。外部 API 只裝本機 whisper，位址與金鑰寫進
 不進 git 的 config/upstreams.toml。--yes 不會詢問，也不會改成外部 API。
 
-**這支腳本不會安裝任何系統套件**，只會告訴你缺哪些、以及這台機器對應的安裝指令。
+Linux／macOS 不會安裝系統套件，只列出缺少的項目與對應指令。
+Windows 的 windows_setup.bat 會加上 --provision：用 winget 補 ffmpeg、Git、
+Node.js 與 VC++ 執行庫，下載 LLM 模型，裝好 Web UI，並可立刻啟動。
+不會用 winget 安裝 Visual Studio、Vulkan SDK 或 CUDA Toolkit。
 已經裝好、要更新到新版請用 upgrade.py。
 Windows 沒有 Visual Studio 時，--yes 會改走 --prebuilt，不下載編譯工具。
 """
@@ -394,6 +397,226 @@ def report_missing(keys, blocking, manager):
         print("  （沒偵測到支援的套件管理器，上面只列出缺少的東西）")
 
 
+# Windows 啟動檔才會安裝的執行期套件。編譯器、Vulkan SDK、CUDA 不在這裡。
+WINDOWS_RUNTIME = (
+    ("ffmpeg", "Gyan.FFmpeg", lambda: bool(shutil.which("ffmpeg"))),
+    ("git", "Git.Git", lambda: bool(shutil.which("git"))),
+    ("Node.js", "OpenJS.NodeJS.LTS", lambda: node_is_acceptable(node_version())),
+    ("VC++ 2015+", "Microsoft.VCRedist.2015+.x64", lambda: vc_redist_x64_installed()),
+)
+
+
+def node_version():
+    """回傳 node 的版本 tuple；找不到或問不到就回 None。"""
+    node = shutil.which("node")
+    if not node:
+        return None
+    try:
+        result = subprocess.run(
+            [node, "-p", "process.versions.node"], capture_output=True, text=True,
+            encoding="utf-8", errors="replace", timeout=20)
+    except (OSError, subprocess.TimeoutExpired):
+        return None
+    parts = []
+    for piece in (result.stdout or "").strip().split("."):
+        if not piece.isdigit():
+            break
+        parts.append(int(piece))
+    return tuple(parts) or None
+
+
+def node_is_acceptable(version):
+    """對齊 ui/frontend 的 engines：22.22+、24.15+，或 26 以上。"""
+    if not version:
+        return False
+    if version >= (26, 0):
+        return True
+    if version >= (24, 15):
+        return True
+    return (22, 22) <= version < (23, 0)
+
+
+def vc_redist_x64_installed():
+    """預編譯的 .exe 需要 VC++ 2015–2022 x64 執行庫。非 Windows 視為不需要。"""
+    if os.name != "nt":
+        return True
+    import winreg
+    keys = (
+        (winreg.HKEY_LOCAL_MACHINE, r"SOFTWARE\Microsoft\VisualStudio\14.0\VC\Runtimes\X64"),
+        (winreg.HKEY_LOCAL_MACHINE, r"SOFTWARE\WOW6432Node\Microsoft\VisualStudio\14.0\VC\Runtimes\X64"),
+    )
+    for root, sub in keys:
+        try:
+            with winreg.OpenKey(root, sub) as key:
+                installed, _typ = winreg.QueryValueEx(key, "Installed")
+        except OSError:
+            continue
+        if installed:
+            return True
+    return False
+
+
+def refresh_windows_path():
+    """winget 寫進登錄檔的 PATH 不會自動進這個行程。把使用者與系統 Path 拼回來。"""
+    if os.name != "nt":
+        return
+    import winreg
+
+    def read(root, sub):
+        try:
+            with winreg.OpenKey(root, sub) as key:
+                value, _typ = winreg.QueryValueEx(key, "Path")
+        except OSError:
+            return ""
+        return os.path.expandvars(str(value))
+
+    user = read(winreg.HKEY_CURRENT_USER, r"Environment")
+    machine = read(winreg.HKEY_LOCAL_MACHINE,
+                   r"SYSTEM\CurrentControlSet\Control\Session Manager\Environment")
+    current = os.environ.get("PATH", "")
+    os.environ["PATH"] = os.pathsep.join(part for part in (user, machine, current) if part)
+
+
+def missing_runtime_packages():
+    return [(label, package) for label, package, ready in WINDOWS_RUNTIME if not ready()]
+
+
+def winget_install(package):
+    command = ["winget", "install", "--id", package, "-e",
+               "--accept-package-agreements", "--accept-source-agreements",
+               "--disable-interactivity"]
+    print("  $ " + " ".join(command), flush=True)
+    result = subprocess.run(command)
+    refresh_windows_path()
+    return result.returncode
+
+
+def install_missing_runtime(args, ask):
+    """用 winget 補 Windows 執行環境。呼叫端負責限定平台。回傳有沒有補齊。"""
+    missing = missing_runtime_packages()
+    if not missing:
+        print("✔ Windows 執行環境齊全（ffmpeg、Git、Node.js、VC++）。")
+        return True
+    print("\n  還缺：" + "、".join(f"{label}（{package}）" for label, package in missing))
+    if not args.yes and not ask_yes_no("要用 winget 安裝這些執行環境嗎？", True, ask):
+        print("  請先安裝上面的項目，再跑一次 windows_setup.bat。")
+        return False
+    if not shutil.which("winget"):
+        print("✖ 找不到 winget，無法自動安裝。請先安裝 App Installer，或手動安裝上面的項目。")
+        return False
+    for _label, package in missing:
+        winget_install(package)
+    still = missing_runtime_packages()
+    if still:
+        print("✖ 安裝後仍然缺少：" + "、".join(label for label, _package in still))
+        print("  新裝的程式可能還不在這個視窗的 PATH。關掉視窗再跑一次 windows_setup.bat。")
+        return False
+    print("✔ 執行環境已補齊")
+    return True
+
+
+def remember_smaller_model(model):
+    """記憶體不夠、又還沒指定模型時，把 4B 記進 local.toml。預設 8B 不用寫。"""
+    if model != MODEL_4B:
+        return
+    data = C.load_toml(C.LOCAL_FILE) if C.LOCAL_FILE.exists() else {}
+    if (data.get("summary") or {}).get("model"):
+        return
+    C.set_local("summary.model", MODEL_4B)
+    print(f"✔ 已把 summary.model 記成 {MODEL_4B}（config/local.toml，不進 git）")
+
+
+def ensure_llm_model(model):
+    """下載建議的 GGUF。已有成品就略過；中斷的部分留在 .part，重跑會續傳。"""
+    dest = ROOT / "models" / MODEL_FILES[model]
+    if dest.is_file() and dest.stat().st_size > 0:
+        print(f"✔ 已有模型 {dest.name}（{dest.stat().st_size / 1e9:.1f} GB）")
+        remember_smaller_model(model)
+        return 0
+    url = model_url(model)
+    print(f"▶ 下載 {dest.name}")
+    print(f"  {url}")
+    dest.parent.mkdir(parents=True, exist_ok=True)
+    if dest.is_file():
+        dest.unlink()
+    part = dest.with_name(dest.name + ".part")
+    curl = shutil.which("curl") or shutil.which("curl.exe")
+    if not curl:
+        print("✖ 找不到 curl，無法下載 LLM 模型。")
+        return 1
+    result = subprocess.run([curl, "-L", "-C", "-", "--fail", "-o", str(part), url])
+    if result.returncode != 0 or not part.is_file() or part.stat().st_size == 0:
+        print("✖ 模型下載失敗。再跑一次 windows_setup.bat 會從中斷的地方續傳。")
+        return 1
+    os.replace(part, dest)
+    print(f"✔ {dest.name}（{dest.stat().st_size / 1e9:.1f} GB）")
+    remember_smaller_model(model)
+    return 0
+
+
+def ensure_ui():
+    """建立 .venv、安裝 backend，並編譯 frontend。已經可用就略過。"""
+    import upgrade
+    refresh_windows_path()
+    dist = ROOT / "ui" / "frontend" / "dist" / "index.html"
+    python = upgrade.venv_python()
+    if python.is_file() and dist.is_file():
+        probe = subprocess.run([str(python), "-c", "import fastapi"], capture_output=True)
+        if probe.returncode == 0:
+            print("✔ Web UI 已安裝")
+            return 0
+    try:
+        upgrade.install_ui()
+    except upgrade.UpgradeError as exc:
+        print(f"✖ {exc}")
+        return 1
+    if not dist.is_file():
+        print("✖ Web UI 編譯結束，但找不到 ui/frontend/dist/index.html")
+        return 1
+    print("✔ Web UI 已安裝")
+    return 0
+
+
+def maybe_launch_ui(args, ask):
+    command = [sys.executable, str(ROOT / "lec"), "--start-ui"]
+    shown = " ".join(command)
+    if args.yes or args.dry_run or not sys.stdin.isatty():
+        print(f"啟動 UI：{shown}")
+        print("  瀏覽器開 http://127.0.0.1:8765")
+        return 0
+    if not ask_yes_no("要現在啟動 Web UI 嗎？瀏覽器開 http://127.0.0.1:8765", True, ask):
+        print(f"  稍後執行：{shown}")
+        return 0
+    print("▶ 這個視窗要留著。關掉它或按 Ctrl+C 只會停 UI，不會刪已安裝的東西。")
+    try:
+        result = subprocess.run(command, cwd=str(ROOT))
+    except KeyboardInterrupt:
+        print("\n已關閉 UI。")
+        return 0
+    if result.returncode in (0, 130) or (result.returncode is not None and result.returncode < 0):
+        print("\n已關閉 UI。")
+        return 0
+    return result.returncode
+
+
+def wants_full_install(args):
+    return bool(args.provision) and not args.dry_run
+
+
+def finish_usable_install(args, env, engines, upstream, ask):
+    """引擎就緒之後，補上本機模型與 Web UI，讓啟動檔跑完就能用。"""
+    if upstream is None and engines != ["whisper"]:
+        model, why = suggest_model(env)
+        print(f"\n  總結模型：{why}")
+        if ensure_llm_model(model) != 0:
+            return 1
+    elif engines == ["whisper"]:
+        print("\n  這次不下載 LLM 模型。")
+    if ensure_ui() != 0:
+        return 1
+    return maybe_launch_ui(args, ask)
+
+
 def build_command(engines, backend, prebuilt=False):
     command = [sys.executable, str(ROOT / "setup_engines.py"), *engines, "--backend", backend]
     if prebuilt:
@@ -473,6 +696,10 @@ def run_setup(args, ask):
             print("  CUDA 請看 README「Windows 預編譯檔」，或拿掉 --prebuilt 自己編譯。")
             return 1
         use_prebuilt = True
+    if wants_full_install(args) and env["platform"] == "windows":
+        if not install_missing_runtime(args, ask):
+            return 1
+        missing, blocking = missing_tools(backend)
     if runtime_blockers(blocking):
         print("\n✖ 先補上標成 ✖ 的東西，再跑一次 python3 setup.py。")
         return 1
@@ -521,13 +748,18 @@ def run_setup(args, ask):
     if not engines:
         model, why = suggest_model(env)
         print(f"\n  總結模型：{why}")
-        for line in model_hint(model):
-            print(line)
-        print("  （setup_engines.py 不會自動下載 LLM 模型；用 --import-models 可以搬入既有檔案）")
+        if wants_full_install(args):
+            print("  引擎裝好後會下載這個 GGUF。")
+        else:
+            for line in model_hint(model):
+                print(line)
+            print("  （setup_engines.py 不會自動下載 LLM 模型；用 --import-models 可以搬入既有檔案）")
     if upstream:
         print(f"\n  摘要上游 {upstream['id']} 會寫進 config/upstreams.toml，"
               "並把 summary.upstream 記進 config/local.toml（兩個都不進 git）")
     if args.dry_run:
+        if args.provision:
+            print("  --provision：正式執行時還會用 winget 補執行環境、下載 LLM 模型、安裝 Web UI。")
         print("\n--dry-run：到這裡為止，沒有真的安裝。")
         return 0
     question = "\n開始下載預編譯檔嗎？" if use_prebuilt else "\n開始編譯嗎？"
@@ -546,6 +778,11 @@ def run_setup(args, ask):
     if result.returncode != 0:
         print("\n✖ setup_engines.py 失敗，訊息在上面。修好後可以直接重跑這支腳本。")
         return result.returncode
+
+    if wants_full_install(args):
+        code = finish_usable_install(args, env, engines, upstream, ask)
+        if code != 0:
+            return code
 
     title("下一步")
     lec = "python lec" if P.IS_WINDOWS else "./lec"
@@ -572,6 +809,8 @@ def parse_args(argv=None):
                         help="只裝 whisper.cpp（不做總結）")
     parser.add_argument("--prebuilt", action="store_true",
                         help="Windows：下載官方預編譯檔，不編譯")
+    parser.add_argument("--provision", action="store_true",
+                        help="補齊執行環境、LLM 模型與 Web UI；windows_setup.bat 會加上")
     return parser.parse_args(argv)
 
 
