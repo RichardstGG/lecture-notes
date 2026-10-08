@@ -550,6 +550,10 @@ core/platform.py    平台差異（錄音後端、防休眠、狀態資料夾、
 跟 lec 實際錄音一樣是單聲道 Opus 語音。
 不是任何真實課程的錄音，著作權屬本專案，可自由散布。詳見 `samples/README.md`。
 
+## 版本歷史
+
+每個合併的 PR 對應一個版本號（V1.0 課程紀錄與初版 UI、V2.0 會議紀錄與會議工作台、V3.0 打包成應用程式），完整列表見 [CHANGELOG.md](CHANGELOG.md)。
+
 ## 開發
 
 - 分支：`main`。程式、設定範例、prompts、`samples/` 範例素材與 `engines.lock` 進 git；本機設定、個人課程、原始錄音與 outputs 已由 `.gitignore` 排除。
