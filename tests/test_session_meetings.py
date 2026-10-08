@@ -19,7 +19,7 @@ class MeetingDirectoryTests(unittest.TestCase):
     def setUp(self):
         self.tmp = tempfile.TemporaryDirectory()
         self.addCleanup(self.tmp.cleanup)
-        self.root = Path(self.tmp.name)
+        self.root = Path(self.tmp.name).resolve()
         self.cfg = Config({'meeting': {'name': '設計/討論'}, 'paths': {
             'output_root': str(self.root / 'outputs'),
             'meeting_output_root': 'meetings',
