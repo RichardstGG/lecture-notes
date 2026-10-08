@@ -14,7 +14,7 @@ import tempfile
 import threading
 import time
 import unittest
-from pathlib import Path
+from pathlib import Path, PureWindowsPath
 
 from . import _pathfix  # noqa: F401
 from . import _capture_fakes as F
@@ -138,6 +138,105 @@ class NormalRunTests(CaptureCase):
         started = self.events.of("capture_started")
         self.assertEqual(len(started), 1)
         self.assertEqual([s["role"] for s in started[0]["sources"]], ["system", "mic"])
+
+
+class PathHelperTests(unittest.TestCase):
+    """capture.json 的路徑格式：與寫入的平台無關，一律是相對 session、以 `/` 分隔。
+    這些是純函式測試，不需要 ffmpeg，Linux 上也能用 PureWindowsPath 驗證 Windows 的行為。"""
+
+    def test_windows_relative_path_is_serialised_with_forward_slashes(self):
+        base = PureWindowsPath(r"C:\Users\USERNA~1\sessions\m1")
+        self.assertEqual(C._rel(base / "tracks" / "mic.ogg", base), "tracks/mic.ogg")
+        self.assertEqual(C._rel(base / "mix.ogg", base), "mix.ogg")
+
+    def test_plain_str_of_a_windows_path_would_have_used_backslashes(self):
+        # 這就是修正前的行為（str(path.relative_to(...))）；留著說明為什麼需要 _rel
+        base = PureWindowsPath(r"C:\s")
+        self.assertEqual(str((base / "tracks" / "mic.ogg").relative_to(base)), r"tracks\mic.ogg")
+
+    def test_legacy_backslash_paths_are_normalised_on_read(self):
+        self.assertEqual(C._portable_rel(r"tracks\mic.ogg"), "tracks/mic.ogg")
+        self.assertEqual(C._portable_rel("tracks/mic.ogg"), "tracks/mic.ogg")
+        self.assertEqual(C._portable_rel("mix.ogg"), "mix.ogg")
+
+    def test_non_string_values_pass_through(self):
+        self.assertIsNone(C._portable_rel(None))
+
+
+class PortableMetadataTests(CaptureCase):
+    EXPECTED = ["mix.ogg", "tracks/mic.ogg", "tracks/system.ogg"]
+
+    def _finished_session(self):
+        cap = self.make()
+        self.run_for(cap, 2)
+        return json.loads((self.tmp / "capture.json").read_text(encoding="utf-8"))
+
+    def _rewrite_with_backslashes(self, status=None):
+        """把 capture.json 改成 Windows 舊版會寫出的樣子。"""
+        path = self.tmp / "capture.json"
+        meta = json.loads(path.read_text(encoding="utf-8"))
+        for src in meta["sources"]:
+            if src.get("track"):
+                src["track"] = src["track"].replace("/", "\\")
+        meta["mix"]["path"] = meta["mix"]["path"].replace("/", "\\")
+        if status:
+            meta["status"] = status
+        path.write_text(json.dumps(meta), encoding="utf-8")
+
+    def test_capture_json_never_contains_backslashes_in_paths(self):
+        meta = self._finished_session()
+        paths = [s["track"] for s in meta["sources"]] + [meta["mix"]["path"]]
+        self.assertEqual(sorted(paths), self.EXPECTED)
+        self.assertFalse(any("\\" in p for p in paths), paths)
+
+    def test_verify_keys_are_posix_paths(self):
+        self._finished_session()
+        self.assertEqual(sorted(C.verify_capture(self.tmp)["usable"]), self.EXPECTED)
+
+    def test_legacy_backslash_capture_json_still_verifies_as_complete(self):
+        self._finished_session()
+        self._rewrite_with_backslashes()
+        v = C.verify_capture(self.tmp)
+        self.assertEqual(v["state"], "complete", v["problems"])
+        self.assertEqual(sorted(v["usable"]), self.EXPECTED, "鍵一律是 POSIX 格式，不是舊檔裡的反斜線")
+        self.assertTrue(all(v["usable"].values()))
+
+    def test_legacy_backslash_paths_still_find_files_when_not_complete(self):
+        # 沒有正常結束的錄音走 playable 分支；舊格式的路徑一樣要找得到檔案
+        self._finished_session()
+        self._rewrite_with_backslashes(status="aborted")
+        v = C.verify_capture(self.tmp)
+        self.assertEqual(v["state"], "incomplete")
+        self.assertEqual(sorted(v["playable"]), self.EXPECTED)
+        self.assertTrue(all(v["playable"].values()), v["playable"])
+        self.assertFalse(any(v["usable"].values()), "沒有封裝紀錄，不可當重跑來源")
+
+    def test_legacy_backslash_in_a_nested_mix_path_is_normalised_too(self):
+        # 混音檔通常在 session 根目錄，沒有分隔符可轉；放進子資料夾才會真的用到 mix 的正規化
+        (self.tmp / "audio").mkdir()
+        self.popen = F.FakePopen({"out.monitor": F.FakeCapture(freq=440), "mic0": F.FakeCapture(freq=880)})
+        cap = C.MultiCapture([SYSTEM, MIC], self.tmp, mix_path=self.tmp / "audio" / "mix.ogg",
+                             backend="pulse", popen=self.popen, binding=None, on_event=self.events,
+                             say=lambda m: None, **FAST)
+        self.run_for(cap, 2)
+        meta = json.loads((self.tmp / "capture.json").read_text(encoding="utf-8"))
+        self.assertEqual(meta["mix"]["path"], "audio/mix.ogg", "寫入端也要是 `/`")
+        self._rewrite_with_backslashes()
+        self.assertEqual(json.loads((self.tmp / "capture.json").read_text(encoding="utf-8"))["mix"]["path"],
+                         "audio\\mix.ogg", "測試前提：確實改成了舊格式")
+        v = C.verify_capture(self.tmp)
+        self.assertEqual(v["state"], "complete", v["problems"])
+        self.assertIn("audio/mix.ogg", v["usable"])
+        self.assertTrue(all(v["usable"].values()))
+
+    def test_a_real_corruption_is_still_reported_with_the_posix_name(self):
+        self._finished_session()
+        (self.tmp / "tracks" / "mic.ogg").write_bytes(b"truncated")
+        self._rewrite_with_backslashes()
+        v = C.verify_capture(self.tmp)
+        self.assertEqual(v["state"], "invalid")
+        self.assertFalse(v["usable"]["tracks/mic.ogg"])
+        self.assertTrue(any("tracks/mic.ogg" in problem for problem in v["problems"]), v["problems"])
 
 
 class SilenceIsNotAFaultTests(CaptureCase):
