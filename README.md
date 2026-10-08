@@ -148,8 +148,12 @@ macOS 內建的 `python3` 通常是 3.9，低於需求的 3.11；上面的 `brew
 
 **2. 編譯引擎並取得 whisper 模型**
 
-不確定該選哪個 GPU 後端的話，用互動式安裝：它會偵測這台機器（GPU、CUDA Toolkit、
-記憶體、磁碟、套件管理器）、問幾個問題，再呼叫 `setup_engines.py`。
+不確定該選哪個 GPU 後端的話，用互動式安裝：它會先做依賴自檢（Python、ffmpeg、
+GPU、CUDA Toolkit、磁碟），再問幾個問題，然後呼叫 `setup_engines.py`。
+有顯示卡時會先問總結要走本機 GPU，還是改用外部模型 API。選 API 只裝本機 whisper.cpp，
+位址與金鑰寫進不進 git 的 `config/upstreams.toml`。NVIDIA 會再問要不要用 CUDA；
+還沒有 CUDA Toolkit 時選 CUDA 只會印出安裝說明，不會編譯或下載。
+`--yes` 不會詢問，也不會改成外部 API。
 **它不會安裝任何系統套件**，只會告訴你缺哪些、以及這台機器對應的安裝指令。
 
 ```bash
