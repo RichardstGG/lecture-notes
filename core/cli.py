@@ -195,11 +195,41 @@ def cmd_terms(args):
 
 
 def cmd_config(args):
-    cfg, _ = _load(args, course_arg=args.course)
+    if getattr(args, "work_type", "lecture") == "meeting":
+        if args.model is not None or args.upstream is not None:
+            print("會議設定不接受摘要 --model/--upstream", file=sys.stderr)
+            return 2
+        try:
+            cfg = C.load_meeting(args.course, sets=args.set, source=args.source)
+        except (C.ConfigError, OSError) as exc:
+            print(str(exc), file=sys.stderr)
+            return 2
+    else:
+        cfg, _ = _load(args, course_arg=args.course)
     for w in cfg.warnings:
         print(f"⚠ {w}", file=sys.stderr)
-    src = cfg.course_file or "（無課程設定檔）"
+    src = cfg.course_file or ("（無會議設定檔）" if cfg.work_type == "meeting" else "（無課程設定檔）")
     sys.stdout.write(C.dump_toml(cfg.data, f"合併後的設定：default.toml + {src}"))
+    return 0
+
+
+def cmd_meetings(args):
+    out = []
+    for path in sorted(C.MEETINGS_DIR.glob("*.toml")):
+        item = {"id": path.stem, "file": str(path), "work_type": "meeting"}
+        try:
+            cfg = C.load_meeting(path.stem)
+            item.update(name=cfg.meeting_name, num_speakers=cfg.get("diarization.num_speakers"))
+        except (C.ConfigError, OSError) as exc:
+            item["error"] = str(exc)
+        out.append(item)
+    if args.json:
+        print(json.dumps({"schema_version": 1, "meetings": out}, ensure_ascii=False, indent=2))
+    elif not out:
+        print("尚無會議設定；請參考 meetings/examples/template.toml（會議功能實驗中）")
+    else:
+        for item in out:
+            print(f"{item['id']}: " + (item.get("error") or item["name"]))
     return 0
 
 
@@ -446,10 +476,15 @@ def main(argv=None):
     p.set_defaults(func=cmd_terms)
 
     p = sub.add_parser("config", help="印出合併後生效的設定")
+    p.add_argument("--work-type", choices=("lecture", "meeting"), default="lecture")
     p.add_argument("course", nargs="?")
     p.add_argument("--source")
     _add_overrides(p)
     p.set_defaults(func=cmd_config)
+
+    p = sub.add_parser("meetings", help="列出會議設定（實驗中，不啟動錄音）")
+    p.add_argument("--json", action="store_true")
+    p.set_defaults(func=cmd_meetings)
 
     p = sub.add_parser("courses", help="列出課程設定檔")
     p.add_argument("--json", action="store_true")

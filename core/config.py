@@ -4,9 +4,10 @@ import json
 import math
 import os
 import re
+import string
 import tomllib
 from datetime import datetime
-from pathlib import Path
+from pathlib import Path, PureWindowsPath
 from urllib.parse import urlsplit
 
 APP_ROOT = Path(__file__).resolve().parent.parent
@@ -14,6 +15,9 @@ DEFAULT_FILE = APP_ROOT / "config" / "default.toml"
 LOCAL_FILE = APP_ROOT / "config" / "local.toml"          # 這台電腦專屬（不進 git）：麥克風、路徑等
 TEMPLATE_FILE = APP_ROOT / "config" / "template.toml"
 COURSES_DIR = APP_ROOT / "courses"
+MEETINGS_DIR = APP_ROOT / "meetings"
+MEETING_SECTIONS = {"meeting", "whisper", "audio", "vad", "transcript", "diarization"}
+
 
 # 這些表格底下可以自由新增項目（模型、音源清單、課程術語）
 OPEN_TABLES = {("models",), ("audio", "sources"), ("whisper", "models"),
@@ -71,6 +75,41 @@ CHOICES = {
 
 class ConfigError(Exception):
     pass
+
+
+def normalize_work_type(value):
+    """Read legacy metadata without treating unknown nonempty types as meetings."""
+    if value is None or value == "":
+        return "lecture"
+    return value if isinstance(value, str) else "unknown"
+
+
+def meeting_path(meeting_id):
+    """Meeting IDs are portable filenames, never external TOML paths."""
+    reserved = {"CON", "PRN", "AUX", "NUL",
+                *(f"COM{i}" for i in range(1, 10)), *(f"LPT{i}" for i in range(1, 10))}
+    if (not isinstance(meeting_id, str) or not meeting_id or len(meeting_id) > 100
+            or len(meeting_id.encode("utf-8")) > 200
+            or meeting_id != meeting_id.strip() or meeting_id.startswith((".", "-"))
+            or meeting_id.endswith(".") or re.search(r'[\x00-\x1f\x7f<>:"/\\|?*]', meeting_id)
+            or meeting_id.split(".", 1)[0].upper() in reserved):
+        raise ConfigError("meeting id 必須是可攜檔名，不可包含路徑、保留字或控制字元")
+    path = MEETINGS_DIR / f"{meeting_id}.toml"
+    if MEETINGS_DIR.is_symlink() or path.is_symlink():
+        raise ConfigError("會議設定不可使用符號連結")
+    return path
+
+
+def meeting_output_parts(value):
+    """Validate relative output roots consistently on POSIX and Windows."""
+    if (not isinstance(value, str) or not value or PureWindowsPath(value).drive
+            or value.startswith(("/", "\\"))):
+        raise ConfigError("paths.meeting_output_root 必須是無 .. 的相對路徑")
+    parts = re.split(r"[/\\]", value)
+    from .util import safe_name
+    if any(part in ("", ".", "..") or safe_name(part) != part for part in parts):
+        raise ConfigError("paths.meeting_output_root 必須是可攜的非空相對路徑，且不可含 ..")
+    return parts
 
 
 def load_toml(path):
@@ -242,6 +281,51 @@ class Config:
         return p if p.is_absolute() else (APP_ROOT / p)
 
     @property
+    def work_type(self):
+        return normalize_work_type(self.get("work.type"))
+
+    @property
+    def meeting_name(self):
+        return self.get("meeting.name", "")
+
+    def diarization_options(self, *, require_speakers=False):
+        """Validate the public settings contract, without importing/probing engines."""
+        value = self.get("diarization.num_speakers", 0)
+        minimum = 1 if require_speakers else 0
+        if type(value) is not int or not minimum <= value <= 30:
+            raise ConfigError(f"diarization.num_speakers 必須是 {minimum}..30 的整數；0 僅表示尚未指定")
+        result = {"requested_speakers": value}
+        for key in ("cluster_threshold", "segmentation_window_shift"):
+            value = self.get("diarization." + key)
+            if (type(value) not in (int, float) or not math.isfinite(value) or value <= 0
+                    or (key == "cluster_threshold" and value > 1)):
+                raise ConfigError(f"diarization.{key} 必須是有限正數" +
+                                  ("且 <= 1" if key == "cluster_threshold" else ""))
+            result[key] = value
+        for key in ("segmentation_model", "embedding_model"):
+            value = self.get("diarization." + key)
+            if not isinstance(value, str) or not value.strip() or "\x00" in value:
+                raise ConfigError(f"diarization.{key} 必須是非空模型路徑")
+            result[key] = self.path(value)
+        return result
+
+    def meeting_directory_name(self, now):
+        from .util import safe_name
+        template = self.get("paths.meeting_session_name")
+        try:
+            if not isinstance(template, str) or not template.strip():
+                raise ValueError("empty template")
+            for _, field, _, conversion in string.Formatter().parse(template):
+                if field is not None and (field not in ("meeting", "date") or conversion):
+                    raise ValueError("unknown field")
+            name = template.format(meeting=safe_name(self.meeting_name), date=now)
+            if not name.strip() or "/" in name or "\\" in name:
+                raise ValueError("must produce one directory name")
+        except (ValueError, KeyError, IndexError, TypeError, AttributeError):
+            raise ConfigError("paths.meeting_session_name 格式錯誤（可用 {meeting}、{date:%Y%m%d_%H%M%S}，不可分層）") from None
+        return safe_name(name)
+
+    @property
     def course_name(self):
         return self.data["course"]["name"]
 
@@ -359,51 +443,65 @@ class Config:
             self.capture_plan()
         except ConfigError as exc:
             errs.append(str(exc))
-        upstream = self.get("summary.upstream", "local")
-        if not isinstance(upstream, str) or not UPSTREAM_ID.fullmatch(upstream):
-            errs.append("summary.upstream 必須是有效的已儲存上游 ID")
-        for (sec, key), allowed in CHOICES.items():
-            v = self.data.get(sec, {}).get(key)
-            if v not in allowed:
-                errs.append(f"{sec}.{key} = {v!r} 不合法（可用：{', '.join(sorted(allowed))}）")
-        if upstream == "local" and self.data["summary"]["model"] not in self.data.get("models", {}):
-            errs.append(f"summary.model = {self.data['summary']['model']!r} 未在 [models.*] 定義"
-                        f"（可用：{', '.join(self.data.get('models', {}))}）")
-        if upstream != "local":
-            for key in ("request_timeout", "final_wait"):
-                value = self.get("summary." + key)
-                if (type(value) not in (int, float) or not math.isfinite(value) or value <= 0):
-                    errs.append(f"summary.{key} 必須是有限正數")
-            retries = self.get("summary.retries")
-            if type(retries) is not int or retries < 0:
-                errs.append("summary.retries 必須是非負整數")
+        if self.work_type != "meeting":
+            upstream = self.get("summary.upstream", "local")
+            if not isinstance(upstream, str) or not UPSTREAM_ID.fullmatch(upstream):
+                errs.append("summary.upstream 必須是有效的已儲存上游 ID")
+            for (sec, key), allowed in CHOICES.items():
+                v = self.data.get(sec, {}).get(key)
+                if v not in allowed:
+                    errs.append(f"{sec}.{key} = {v!r} 不合法（可用：{', '.join(sorted(allowed))}）")
+            if upstream == "local" and self.data["summary"]["model"] not in self.data.get("models", {}):
+                errs.append(f"summary.model = {self.data['summary']['model']!r} 未在 [models.*] 定義"
+                            f"（可用：{', '.join(self.data.get('models', {}))}）")
+            if upstream != "local":
+                for key in ("request_timeout", "final_wait"):
+                    value = self.get("summary." + key)
+                    if (type(value) not in (int, float) or not math.isfinite(value) or value <= 0):
+                        errs.append(f"summary.{key} 必須是有限正數")
+                retries = self.get("summary.retries")
+                if type(retries) is not int or retries < 0:
+                    errs.append("summary.retries 必須是非負整數")
         if self.data["whisper"]["model"] not in self.data["whisper"].get("models", {}):
             errs.append(f"whisper.model = {self.data['whisper']['model']!r} 未在 [whisper.models.*] 定義")
-        glossary = self.data.get("summary", {}).get("glossary", {})
-        ignored = self.data.get("summary", {}).get("ignored_terms", [])
-        if not isinstance(ignored, list) or not all(isinstance(term, str) and term.strip() for term in ignored):
-            errs.append("summary.ignored_terms 應為非空字串陣列")
-        if not isinstance(glossary, dict):
-            errs.append("summary.glossary 應為 TOML 表格")
+        if self.work_type == "meeting":
+            try:
+                self.diarization_options()
+                meeting_output_parts(self.get("paths.meeting_output_root"))
+                self.meeting_directory_name(datetime.now())
+                if not isinstance(self.meeting_name, str) or not self.meeting_name.strip():
+                    raise ConfigError("meeting.name 必須是非空字串")
+            except ConfigError as exc:
+                errs.append(str(exc))
         else:
-            for term, value in glossary.items():
-                valid = isinstance(value, str)
-                if isinstance(value, dict):
-                    means = value.get("means", "")
-                    aka = value.get("aka", [])
-                    valid = (isinstance(means, str) and isinstance(aka, list)
-                             and all(isinstance(alias, str) for alias in aka))
-                if not valid:
-                    errs.append(
-                        f'summary.glossary.{term} 應為字串或 '
-                        '{ means = "…", aka = ["…"] }'
-                    )
+            glossary = self.data.get("summary", {}).get("glossary", {})
+            ignored = self.data.get("summary", {}).get("ignored_terms", [])
+            if not isinstance(ignored, list) or not all(isinstance(term, str) and term.strip() for term in ignored):
+                errs.append("summary.ignored_terms 應為非空字串陣列")
+            if not isinstance(glossary, dict):
+                errs.append("summary.glossary 應為 TOML 表格")
+            else:
+                for term, value in glossary.items():
+                    valid = isinstance(value, str)
+                    if isinstance(value, dict):
+                        means = value.get("means", "")
+                        aka = value.get("aka", [])
+                        valid = (isinstance(means, str) and isinstance(aka, list)
+                                 and all(isinstance(alias, str) for alias in aka))
+                    if not valid:
+                        errs.append(
+                            f'summary.glossary.{term} 應為字串或 '
+                            '{ means = "…", aka = ["…"] }'
+                        )
         if len(self.whisper_prompt()) > 200:
             self.warnings.append("whisper prompt＋術語超過 200 字，可能超出 whisper 的 prompt 上限而被截斷")
         return errs
 
     def dump(self):
-        return dump_toml(self.data, f"lec 實際使用的設定（{datetime.now():%Y-%m-%d %H:%M:%S}）")
+        data = copy.deepcopy(self.data)
+        work = data.get("work")
+        data["work"] = {**(work if isinstance(work, dict) else {}), "type": self.work_type}
+        return dump_toml(data, f"lec 實際使用的設定（{datetime.now():%Y-%m-%d %H:%M:%S}）")
 
 
 def load(course_arg=None, sets=(), model=None, source=None, create_missing=False,
@@ -457,3 +555,55 @@ def load(course_arg=None, sets=(), model=None, source=None, create_missing=False
     if errs:
         raise ConfigError("設定錯誤：\n  " + "\n  ".join(errs))
     return cfg, created
+
+
+def load_meeting(meeting_id=None, *, sets=(), source=None):
+    """default -> local -> meetings/<id>.toml -> CLI; never loads courses."""
+    default = load_toml(DEFAULT_FILE)
+    data = copy.deepcopy(default)
+    warnings = []
+    if LOCAL_FILE.exists():
+        over = load_toml(LOCAL_FILE)
+        warnings += [f"local.toml：未知的設定項目 {k}" for k in _unknown_keys(default, over)]
+        data = deep_merge(data, over)
+    path = meeting_path(meeting_id) if meeting_id is not None else None
+    if path is not None:
+        if not path.is_file():
+            raise ConfigError(f"找不到會議設定：{meeting_id}")
+        over = load_toml(path)
+        if set(over) - MEETING_SECTIONS:
+            raise ConfigError("會議設定只允許 meeting、whisper、audio、vad、transcript、diarization")
+        unknown = _unknown_keys(default, over)
+        if unknown:
+            raise ConfigError("會議設定含未知鍵：" + ", ".join(unknown))
+        data = deep_merge(data, over)
+    for expr in sets:
+        over = parse_set(expr)
+        if set(over) & {"course", "work"}:
+            raise ConfigError("會議覆寫不可改變 course 或 work 類型")
+        unknown = _unknown_keys(default, over)
+        if unknown:
+            raise ConfigError("會議覆寫含未知鍵：" + ", ".join(unknown))
+        data = deep_merge(data, over)
+    # Reject malformed table/scalar shapes before accessing nested settings.
+    for section in MEETING_SECTIONS | {"paths", "system"}:
+        if not isinstance(data.get(section), dict):
+            raise ConfigError(f"{section} 必須是 TOML 表格")
+    name = data["meeting"].get("name")
+    if not isinstance(name, str):
+        raise ConfigError("meeting.name 必須是字串")
+    data["meeting"]["name"] = name.strip() or meeting_id or "未命名會議"
+    data["work"] = {"type": "meeting"}
+    # Summary is irrelevant even if local/course defaults point at absent models.
+    summary = data.get("summary")
+    data["summary"] = {**(summary if isinstance(summary, dict) else {}), "enabled": False}
+    if source is not None:
+        data["audio"]["source"] = source
+    cfg = Config(data, path, warnings)
+    try:
+        errors = cfg.validate()
+    except (TypeError, KeyError, AttributeError, ValueError):
+        raise ConfigError("會議設定欄位型別錯誤，請檢查 whisper/audio/vad/transcript 設定") from None
+    if errors:
+        raise ConfigError("設定錯誤：\n  " + "\n  ".join(errors))
+    return cfg

@@ -6,12 +6,20 @@
 # 每次執行的最終設定會存到 <輸出資料夾>/config.used.toml。
 # 路徑可用 ~；相對路徑以 app 根目錄（lec 所在資料夾）為基準。
 
+[work]
+type = "lecture"              # 舊 config.used.toml 缺值仍視為 lecture
+
+[meeting]
+name = ""                     # 會議設定空白時用 meetings/<id>.toml 的 id
+
 [course]
 name = ""                     # 空白 = 用設定檔檔名
 
 [paths]
 output_root = "outputs"       # 相對路徑 = app 根目錄下
 session_name = "{course}_{date:%Y%m%d}"   # 每堂課的子資料夾名稱；可用 / 分層，例如 "{course}/{date:%Y%m%d}"；同名已存在時自動加 _HHMM
+meeting_output_root = "meetings"  # 相對 output_root，不可含 ..
+meeting_session_name = "{meeting}_{date:%Y%m%d_%H%M%S}"
 state_dir = "auto"            # 執行鎖與 server 紀錄；auto = 各平台標準位置（Linux ~/.local/state/lecture-notes）
 whisper_dir = "whisper.cpp"   # 內含 build/bin/whisper-server
 llama_dir = "llama.cpp"       # 內含 build/bin/llama-server
@@ -108,3 +116,11 @@ ignored_terms = []            # 術語候選中永久忽略的字詞（依課程
 # 術語對照表：正式寫法 = "說明"，或 = { means = "說明", aka = ["逐字稿可能出現的錯誤寫法"] }
 # 只在課程檔定義；供總結時認詞與填 asr_original 用，不會寫進筆記內容
 [summary.glossary]
+
+# 會後發言者辨識（實驗中；此處只驗證設定，不啟動引擎）
+[diarization]
+segmentation_model = "models/sherpa-onnx-pyannote-segmentation-3-0.onnx"
+embedding_model = "models/3dspeaker_speech_campplus_sv_zh_en_16k-common_advanced.onnx"
+num_speakers = 0              # 尚未指定；執行辨識時必須提供 1..30
+cluster_threshold = 0.5      # (0, 1]
+segmentation_window_shift = 0.1  # 秒，有限正數

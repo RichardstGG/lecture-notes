@@ -1,0 +1,3 @@
+# 個人會議設定不進 Git；範例保留在 examples/
+/*.toml
+/*.toml.tmp
