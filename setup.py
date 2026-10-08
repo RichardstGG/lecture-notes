@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""第一次安裝用的互動式設定：偵測這台機器 → 問幾個問題 → 呼叫 setup_engines.py 編譯。
+"""第一次安裝用的互動式設定：依賴自檢 → 問幾個問題 → 呼叫 setup_engines.py。
 
 用法：
   python3 setup.py                互動模式（Windows 用 python setup.py）
@@ -7,6 +7,11 @@
   python3 setup.py --dry-run      只顯示會做什麼，不真的編譯
   python3 setup.py --backend cuda 跳過後端詢問，直接指定
   python3 setup.py --prebuilt     Windows：下載官方預編譯檔，不編譯
+
+啟動時先檢查 Python、執行時工具、GPU 與 CUDA Toolkit。有顯卡且是互動模式時，
+先問總結要用本機 GPU 還是外部 API；NVIDIA 再問要不要 CUDA。還沒有 CUDA Toolkit
+就只印安裝說明，不編譯、也不下載。外部 API 只裝本機 whisper，位址與金鑰寫進
+不進 git 的 config/upstreams.toml。--yes 不會詢問，也不會改成外部 API。
 
 **這支腳本不會安裝任何系統套件**，只會告訴你缺哪些、以及這台機器對應的安裝指令。
 已經裝好、要更新到新版請用 upgrade.py。
@@ -19,9 +24,11 @@ import subprocess
 import sys
 import unicodedata
 from pathlib import Path
+from urllib.parse import urlsplit
 
 ROOT = Path(__file__).resolve().parent
 sys.path.insert(0, str(ROOT))
+from core import config as C                                     # noqa: E402
 from core import platform as P                                   # noqa: E402
 
 P.force_utf8()
@@ -90,6 +97,31 @@ def ask_yes_no(question, default, ask):
     return answer in ("y", "yes", "是")
 
 
+def ask_choice(question, options, default, ask):
+    """印出代號選項。空答案用 default；對不上任何代號就回 None。"""
+    print(question)
+    for key, label in options:
+        mark = "（預設）" if key == default else ""
+        print(f"    {key}  {label}{mark}")
+    answer = (ask("  請選：") or "").strip().lower()
+    if not answer:
+        return default
+    for key, _label in options:
+        if answer == key.lower():
+            return key
+    return None
+
+
+def has_gpu(env):
+    return bool(env.get("gpus") or env.get("nvidia"))
+
+
+def _mark(ok, required):
+    if ok:
+        return "✔"
+    return "✖" if required else "⚠"
+
+
 def detect():
     """把 setup 需要知道的環境資訊收成一個 dict（純讀取，不動任何東西）。"""
     return {
@@ -121,6 +153,37 @@ def show_environment(env):
         print(f"  {pad(name, 14)}{value}")
 
 
+def report_dependencies(env):
+    """啟動時的依賴自檢。只印結果，不安裝、也不在這裡中止。"""
+    title("依賴自檢")
+    py_ok = sys.version_info >= (3, 11)
+    py_note = env["python"] if py_ok else f"{env['python']}（需要 3.11 以上）"
+    print(f"  {_mark(py_ok, True)} Python  {py_note}")
+    for key, (label, required, why) in RUNTIME_TOOLS.items():
+        if key == "pactl" and env["platform"] != "linux":
+            continue
+        found = shutil.which(key)
+        compile_only = key in COMPILE_ONLY_KEYS
+        note = found or f"找不到（{why}）"
+        if not found and compile_only:
+            note += "；只編譯原始碼時需要，Windows 預編譯檔可略過"
+        # 編譯工具缺了仍可改走預編譯檔，自檢用警告；ffmpeg 這種執行期依賴才算失敗。
+        print(f"  {_mark(bool(found), required and not compile_only)} {label}  {note}")
+    if env.get("gpus"):
+        gpu = "；".join(env["gpus"])
+    else:
+        gpu = "沒偵測到"
+    print(f"  {_mark(has_gpu(env), False)} GPU  {gpu}")
+    if env.get("nvidia"):
+        cuda = env.get("cuda")
+        print(f"  {_mark(bool(cuda), False)} CUDA Toolkit  "
+              + (cuda or "沒有（可改用 Vulkan，或先安裝 CUDA Toolkit 再選 CUDA）"))
+    elif has_gpu(env):
+        print("  ⚠ CUDA  這張卡不是 NVIDIA，本機後端不會用 CUDA")
+    else:
+        print("  ⚠ CUDA  沒有 NVIDIA GPU")
+
+
 def choose_backend(env, ask, forced=None):
     """回傳 (後端, 為什麼)。Vulkan 在 NVIDIA 上也能跑，所以 CUDA 是「要不要更快」的選擇。"""
     if forced:
@@ -136,8 +199,11 @@ def choose_backend(env, ask, forced=None):
         return "vulkan", "有 CUDA 但你選擇 Vulkan"
     if env["nvidia"]:
         print(f"  偵測到 {env['nvidia']}，但沒有 CUDA Toolkit（nvcc）。")
-        print("  先用 Vulkan（NVIDIA 也支援）；之後裝好 CUDA Toolkit 可以再跑一次這支腳本。")
-        return "vulkan", "有 NVIDIA GPU 但沒有 CUDA Toolkit"
+        print("  選 CUDA 的話這次不會編譯，只會印出安裝說明；裝好 Toolkit 後再跑一次。")
+        print("  選否就改用 Vulkan（NVIDIA 也支援）。")
+        if ask_yes_no("仍要使用 CUDA 後端嗎？", False, ask):
+            return "cuda", "你選擇 CUDA，但還沒有 CUDA Toolkit"
+        return "vulkan", "有 NVIDIA GPU 但沒有 CUDA Toolkit，改用 Vulkan"
     if not env["gpus"]:
         print("  沒偵測到 GPU。只用 CPU 的話 whisper large-v3-turbo 會非常慢")
         print("  （Intel Arc 140V 是 6–7 倍即時速度，CPU 通常慢上好幾倍）。")
@@ -145,6 +211,107 @@ def choose_backend(env, ask, forced=None):
             return None, "使用者取消"
         return "cpu", "沒偵測到 GPU"
     return default, f"{env['platform']} 的預設後端"
+
+
+def choose_summary_route(env, ask):
+    """有顯卡時問總結要走本機 GPU 還是外部 API。沒有顯卡維持本機。回傳 local、api 或 None。"""
+    if not has_gpu(env):
+        return "local"
+    names = "；".join(env["gpus"]) if env["gpus"] else env["nvidia"]
+    if env.get("nvidia"):
+        local = "本機顯卡（下一步可選 CUDA 或 Vulkan；語音轉錄仍用本機 whisper）"
+    elif env.get("platform") == "macos":
+        local = "本機顯卡（Metal；語音轉錄仍用本機 whisper）"
+    elif env.get("platform") == "windows":
+        local = "本機顯卡（Vulkan。沒有 Visual Studio 時可下載官方預編譯檔；只有 NVIDIA 能用 CUDA）"
+    else:
+        local = "本機顯卡（Vulkan；語音轉錄仍用本機 whisper）"
+    picked = ask_choice(
+        f"\n  偵測到顯卡：{names}\n  總結要怎麼做？",
+        [("1", local),
+         ("2", "外部模型 API（不裝 llama.cpp、不下載 GGUF；轉錄仍用本機 whisper）")],
+        "1", ask)
+    if picked == "1":
+        return "local"
+    if picked == "2":
+        return "api"
+    print("  認不得這個選項。")
+    return None
+
+
+def _plain_text(value):
+    return isinstance(value, str) and value.strip() and not any(ord(c) < 32 for c in value)
+
+
+def upstream_error(spec):
+    """回傳第一個不符合 config/upstreams.toml 契約的原因；合格就回 None。"""
+    ident = spec.get("id", "")
+    if ident == "local" or not C.UPSTREAM_ID.fullmatch(ident or ""):
+        return "ID 必須是英數開頭，之後可接英數、底線或連字號，最多 64 字，而且不能叫 local"
+    for field, label in (("name", "顯示名稱"), ("base_url", "base_url"), ("model", "模型 ID")):
+        if not _plain_text(spec.get(field, "")):
+            return f"{label} 不能空白，也不能含控制字元"
+    url = urlsplit(spec["base_url"])
+    if (any(c.isspace() for c in spec["base_url"]) or url.scheme not in {"http", "https"}
+            or not url.hostname or url.username or url.password or url.query or url.fragment):
+        return "base_url 必須是 http 或 https，且不能有帳密、query 或 fragment"
+    try:
+        _ = url.port
+    except ValueError:
+        return "base_url 的 port 不合法"
+    if spec.get("api_key") and spec.get("api_key_env"):
+        return "api_key 與 api_key_env 只能留一個"
+    for field in ("api_key", "api_key_env"):
+        if field in spec and not _plain_text(spec[field]):
+            return f"{field} 不能空白，也不能含控制字元"
+    return None
+
+
+def prompt_upstream(ask):
+    """問外部摘要 API。不合格回 None，不把金鑰印回畫面。"""
+    print("  語音轉錄仍在本機。這裡只設定總結用的 OpenAI 相容 API。")
+    print("  寫進 config/upstreams.toml 的內容不進 git。金鑰不會被印出來。")
+    ident = (ask("  上游 ID（英數開頭，例如 lab）：") or "").strip()
+    name = (ask("  顯示名稱：") or "").strip()
+    base_url = (ask("  base_url（需含路徑，通常以 /v1 結尾）：") or "").strip()
+    model = (ask("  模型 ID：") or "").strip()
+    auth = (ask("  認證  1 不需要  2 環境變數名稱（預設）  3 把 key 寫進私有檔 [2] ") or "").strip() or "2"
+    spec = {"id": ident, "name": name, "base_url": base_url, "model": model}
+    if auth == "1":
+        pass
+    elif auth == "3":
+        spec["api_key"] = (ask("  API key：") or "").strip()
+    elif auth == "2":
+        spec["api_key_env"] = (ask("  環境變數名稱（例如 LEC_LAB_API_KEY）：") or "").strip()
+    else:
+        print("  ✖ 認不得的認證選項。")
+        return None
+    error = upstream_error(spec)
+    if error:
+        print(f"  ✖ {error}")
+        return None
+    return spec
+
+
+def save_api_upstream(spec):
+    """寫入私有 upstreams.toml，並把 summary.upstream 記進 local.toml。"""
+    error = upstream_error(spec)
+    if error:
+        raise C.ConfigError(error)
+    existing = C.load_upstreams() if C.UPSTREAMS_FILE.exists() else {}
+    entry = {"name": spec["name"], "base_url": spec["base_url"], "model": spec["model"]}
+    if spec.get("api_key_env"):
+        entry["api_key_env"] = spec["api_key_env"]
+    elif spec.get("api_key"):
+        entry["api_key"] = spec["api_key"]
+    existing[spec["id"]] = entry
+    text = C.dump_toml({"upstreams": existing}, "私有摘要上游（不進 git）；由 setup.py 寫入")
+    C.UPSTREAMS_FILE.parent.mkdir(parents=True, exist_ok=True)
+    tmp = C.UPSTREAMS_FILE.with_suffix(".toml.tmp")
+    tmp.write_text(text, encoding="utf-8")
+    tmp.replace(C.UPSTREAMS_FILE)
+    C.load_upstreams()
+    C.set_local("summary.upstream", spec["id"])
 
 
 def choose_engines(env, ask):
@@ -255,26 +422,43 @@ def model_hint(model):
 def run_setup(args, ask):
     env = detect()
     show_environment(env)
+    report_dependencies(env)
 
     if sys.version_info < (3, 11):
         print(f"\n✖ lec 需要 Python 3.11 以上（現在是 {env['python']}），請先升級再跑一次。")
         return 1
 
-    title("後端")
-    backend = args.backend
-    if args.yes and not backend:
+    upstream = None
+    route = "local"
+    if not args.yes and not args.whisper_only and not args.backend and has_gpu(env):
+        route = choose_summary_route(env, ask)
+        if not route:
+            print("\n已取消。")
+            return 1
+    if route == "api":
+        title("外部摘要 API")
+        upstream = prompt_upstream(ask)
+        if not upstream:
+            print("\n已取消。")
+            return 1
         backend = "metal" if env["platform"] == "macos" else env["default_backend"]
-        reason = "--yes：用偵測到的預設值"
-        if env["nvidia"] and env["cuda"]:
-            backend, reason = "cuda", "--yes：偵測到 NVIDIA GPU 與 CUDA Toolkit"
+        reason = f"外部 API {upstream['id']}：只裝本機 whisper"
+        engines = ["whisper"]
     else:
-        backend, reason = choose_backend(env, ask, forced=backend)
-    if not backend:
-        print("\n已取消。")
-        return 1
+        title("後端")
+        backend = args.backend
+        if args.yes and not backend:
+            backend = "metal" if env["platform"] == "macos" else env["default_backend"]
+            reason = "--yes：用偵測到的預設值"
+            if env["nvidia"] and env["cuda"]:
+                backend, reason = "cuda", "--yes：偵測到 NVIDIA GPU 與 CUDA Toolkit"
+        else:
+            backend, reason = choose_backend(env, ask, forced=backend)
+        if not backend:
+            print("\n已取消。")
+            return 1
+        engines = ["whisper"] if args.whisper_only else ([] if args.yes else choose_engines(env, ask))
     print(f"  → {backend}（{reason}）")
-
-    engines = ["whisper"] if args.whisper_only else ([] if args.yes else choose_engines(env, ask))
 
     missing, blocking = missing_tools(backend)
     report_missing(missing, blocking, env["package_manager"])
@@ -292,10 +476,21 @@ def run_setup(args, ask):
     if runtime_blockers(blocking):
         print("\n✖ 先補上標成 ✖ 的東西，再跑一次 python3 setup.py。")
         return 1
+    if backend == "cuda" and not env.get("cuda"):
+        print("\n✖ 還沒有 CUDA Toolkit（nvcc）。這次不會編譯，也不會下載。")
+        if "nvcc" not in missing:
+            print("  安裝說明（不會自動安裝）：")
+            for line in install_lines(["nvcc"], env["package_manager"]):
+                print(line)
+        print("  裝好 Toolkit 後再跑一次；或重新執行，改選 Vulkan。")
+        return 1
     if blocking and not use_prebuilt:
         if env["platform"] == "windows" and backend == "vulkan":
             print("\n  沒有編譯環境時，可以改下載官方預編譯檔（不需要 Visual Studio 或 Vulkan SDK）。")
-            print("  whisper.cpp 官方 Windows 版是 CPU；llama.cpp 這個包是 Vulkan，會用到顯示卡。")
+            if engines == ["whisper"]:
+                print("  這次只裝 whisper.cpp。官方 Windows 版是 CPU。")
+            else:
+                print("  whisper.cpp 官方 Windows 版是 CPU；llama.cpp 這個包是 Vulkan，會用到顯示卡。")
             if args.yes:
                 use_prebuilt = True
                 print("  → --yes：改用官方預編譯檔")
@@ -308,9 +503,10 @@ def run_setup(args, ask):
             print("\n✖ 先補上標成 ✖ 的東西，再跑一次 python3 setup.py。")
             return 1
 
+    needed = 4 if engines == ["whisper"] else NEEDED_DISK_GB
     free = env["free_disk_gb"]
-    if free and free < NEEDED_DISK_GB:
-        print(f"\n⚠ 可用磁碟只有 {free:.0f} GB，引擎與模型大約需要 {NEEDED_DISK_GB} GB。")
+    if free and free < needed:
+        print(f"\n⚠ 可用磁碟只有 {free:.0f} GB，這次大約需要 {needed} GB。")
         if not args.yes and not ask_yes_no("仍要繼續嗎？", False, ask):
             print("\n已取消。")
             return 1
@@ -328,6 +524,9 @@ def run_setup(args, ask):
         for line in model_hint(model):
             print(line)
         print("  （setup_engines.py 不會自動下載 LLM 模型；用 --import-models 可以搬入既有檔案）")
+    if upstream:
+        print(f"\n  摘要上游 {upstream['id']} 會寫進 config/upstreams.toml，"
+              "並把 summary.upstream 記進 config/local.toml（兩個都不進 git）")
     if args.dry_run:
         print("\n--dry-run：到這裡為止，沒有真的安裝。")
         return 0
@@ -335,6 +534,13 @@ def run_setup(args, ask):
     if not args.yes and not ask_yes_no(question, True, ask):
         print("\n已取消。")
         return 1
+    if upstream:
+        try:
+            save_api_upstream(upstream)
+        except C.ConfigError as exc:
+            print(f"\n✖ 無法記下外部 API：{exc}")
+            return 1
+        print(f"✔ 已記下上游 {upstream['id']}")
 
     result = subprocess.run(command, cwd=str(ROOT))
     if result.returncode != 0:
@@ -345,7 +551,12 @@ def run_setup(args, ask):
     lec = "python lec" if P.IS_WINDOWS else "./lec"
     print(f"  {lec} devices            列出麥克風，再用 --save <編號> 存成預設")
     print(f"  {lec} doctor             檢查整個環境（全部 ✔ 就可以上課了）")
-    print(f"  {lec} run 課名 --file samples/test8min.ogg    用內建樣本跑一次完整流程")
+    if upstream:
+        if upstream.get("api_key_env"):
+            print(f"  先在這個視窗設定環境變數 {upstream['api_key_env']}，再啟動 lec。")
+        print(f"  {lec} run 課名 --upstream {upstream['id']}")
+    else:
+        print(f"  {lec} run 課名 --file samples/test8min.ogg    用內建樣本跑一次完整流程")
     return 0
 
 

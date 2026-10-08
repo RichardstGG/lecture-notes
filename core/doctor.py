@@ -53,8 +53,10 @@ def git_head(d):
         return None
 
 
-def summary_mode_detail(summary_on, model):
+def summary_mode_detail(summary_on, model, upstream="local"):
     """「總結」一行的說明文字。"""
+    if summary_on and upstream not in (None, "", "local"):
+        return f"開啟（外部 API 上游 {upstream}；語音轉錄仍用本機 whisper）"
     if summary_on:
         return f"開啟（模型 {model}）"
     return ("關閉：只轉錄，不會啟動 llama.cpp"
@@ -68,15 +70,19 @@ def _engine_setup_hint():
     return "python3 setup_engines.py"
 
 
-def missing_engine_item(name, key, binary, summary_on):
+def missing_engine_item(name, key, binary, summary_on, upstream="local"):
     """找不到引擎執行檔時的 (status, name, detail)。
 
     只轉錄模式（summary.enabled = false）不會啟動 llama-server，
-    所以缺 llama.cpp 只算警告，不算錯誤；whisper.cpp 一律是必要的。
+    外部 API 上游也不使用本機 llama.cpp。這兩種情況缺 llama 只算警告。
+    whisper.cpp 一律是必要的。
     """
     if key == "LLAMA_REF" and not summary_on:
         return (WARN, name,
                 f"找不到 {binary}（只轉錄模式不需要；要總結時執行 setup_engines.py llama）")
+    if key == "LLAMA_REF" and upstream not in (None, "", "local"):
+        return (WARN, name,
+                f"找不到 {binary}（總結使用外部 API 上游 {upstream}，不需要本機 llama.cpp）")
     return (FAIL, name, f"找不到 {binary}（執行 {_engine_setup_hint()}）")
 
 
@@ -114,7 +120,20 @@ def run(course=None, sets=(), mic=False):
 
     # ---- 總結模式
     summary_on = bool(cfg["summary"]["enabled"])
-    add(OK, "總結", summary_mode_detail(summary_on, cfg["summary"]["model"]))
+    upstream = cfg.get("summary.upstream", "local") or "local"
+    local_llm = summary_on and upstream == "local"
+    add(OK, "總結", summary_mode_detail(summary_on, cfg["summary"]["model"], upstream))
+    if summary_on and upstream != "local":
+        try:
+            specs = C.load_upstreams()
+        except C.ConfigError as exc:
+            add(FAIL, "摘要上游", str(exc))
+        else:
+            spec = specs.get(upstream)
+            if spec:
+                add(OK, "摘要上游", f"{upstream}（{spec['name']}）")
+            else:
+                add(FAIL, "摘要上游", f"config/upstreams.toml 沒有 {upstream}")
 
     # ---- 引擎與模型
     lock = read_lock(C.APP_ROOT / "engines.lock")
@@ -122,7 +141,7 @@ def run(course=None, sets=(), mic=False):
     for srv, key, d in ((w, "WHISPER_REF", w.whisper_dir), (l, "LLAMA_REF", l.llama_dir)):
         b = Path(srv.binary())
         if not os.access(b, os.X_OK):
-            add(*missing_engine_item(srv.name, key, b, summary_on))
+            add(*missing_engine_item(srv.name, key, b, summary_on, upstream))
             continue
         head, want = git_head(d), lock.get(key)
         if want and head and head != want:
@@ -150,8 +169,10 @@ def run(course=None, sets=(), mic=False):
                         (f"LLM 模型（{cfg['summary']['model']}）", Path(cfg.llm_model()["path"]))):
         if path.is_file():
             add(OK, label, f"{path.name}（{path.stat().st_size / 1e9:.1f} GB）")
-        elif label.startswith("whisper") or summary_on:
+        elif label.startswith("whisper") or local_llm:
             add(FAIL, label, f"找不到 {path}")
+        elif upstream not in (None, "", "local"):
+            add(WARN, label, f"找不到 {path}（外部 API 不需要本機 GGUF）")
         else:
             add(WARN, label, f"找不到 {path}（只轉錄模式不需要）")
 
@@ -166,7 +187,7 @@ def run(course=None, sets=(), mic=False):
             add(WARN, "GPU", f"無法執行 --list-devices：{e}")
 
     # ---- port（只轉錄時不會啟動 llama-server，不用檢查它的 port）
-    for srv in ((w, l) if summary_on else (w,)):
+    for srv in ((w, l) if local_llm else (w,)):
         st, _ = http_get(srv.url + srv.health_path, timeout=2)
         add(OK if st is None else WARN, f"port {srv.port}",
             "空閒" if st is None else f"已有程式在使用（可能是先前的 {srv.name}；lec 會嘗試沿用）")

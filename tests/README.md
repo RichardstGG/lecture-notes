@@ -26,13 +26,13 @@ python3 -m unittest tests.test_platform_parsers -v
 | `test_platform_engine.py` | 引擎執行檔搜尋（Visual Studio Release/Debug 佈局等）、動態函式庫搜尋路徑 |
 | `test_platform_build_tools.py` | 編譯工具鏈偵測：`find_msvc()`（vswhere）、`cxx_compiler()`、`missing_build_tools()` 在三個平台與各後端的判斷 |
 | `test_platform_hardware.py` | 環境偵測：NVIDIA／CUDA、GPU 名稱、記憶體、磁碟空間、套件管理器 |
-| `test_setup_interactive.py` | `setup.py` 的後端決策表（含 CUDA 詢問）、缺套件回報「只印不裝」、`--yes`／`--dry-run` 非互動路徑 |
+| `test_setup_interactive.py` | `setup.py` 的依賴自檢、有顯卡時本機 GPU／外部 API 選擇、後端決策表（含沒有 Toolkit 時的 CUDA 詢問）、缺套件回報「只印不裝」、`--yes`／`--dry-run` 非互動路徑 |
 | `test_setup_engines.py` | `setup_engines.py` 的後端／generator 選擇、`engines.lock` 讀寫、git／cmake 檢查與「編譯工具判斷委派給 `core/platform.py`」、`--generator` 參數傳遞 |
 | `test_upgrade.py` | `upgrade.py` 的 fast-forward 更新保護、引擎參數、virtualenv 與 frontend build orchestration |
 | `test_session_paths.py` | 輸出資料夾命名、分層、同名後綴與 traversal 防護 |
 | `test_devices_permission_hint.py` | 麥克風權限錯誤訊息（啟發式，非窮舉） |
 | `test_devices_sources.py` | 來源解析（`devices.resolve()` 與執行期 `resolve_source()` 的差別）、音量判斷門檻、列不出裝置時的提示 |
-| `test_doctor_helpers.py` | `core/doctor.py` 的小工具函式，以及只轉錄模式（`summary.enabled = false`）下的檢查結果 |
+| `test_doctor_helpers.py` | `core/doctor.py` 的小工具函式，以及只轉錄、外部摘要 API 下不把缺少的 llama／GGUF 當成失敗 |
 | `test_doctor_platform.py` | `lec doctor` 的平台分支（實測／實驗中措辭、平台專屬指令、錄音後端）與「編譯工具」項目 |
 | `test_cli_transcribe_only.py` | `lec run --transcribe-only` 的設定覆寫與 help contract |
 | `test_cli_models.py` | `lec models` 的人類可讀輸出與 versioned JSON model discovery contract |
