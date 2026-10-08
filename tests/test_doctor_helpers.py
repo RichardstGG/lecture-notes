@@ -44,15 +44,25 @@ class GitHeadTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as d:
             self.assertIsNone(DOC.git_head(d))
 
+    def test_ignores_parent_repository(self):
+        # 預編譯目錄放在這個 checkout 裡、自己沒有 .git。git -C 會走到上層 repo。
+        repo = Path(__file__).resolve().parents[1]
+        with tempfile.TemporaryDirectory(dir=repo) as d:
+            self.assertIsNone(DOC.git_head(d))
+
     def test_returns_none_on_timeout(self):
-        with mock.patch.object(DOC.subprocess, "run",
-                                side_effect=DOC.subprocess.TimeoutExpired(cmd="git", timeout=5)):
-            self.assertIsNone(DOC.git_head("/tmp"))
+        with tempfile.TemporaryDirectory() as d:
+            (Path(d) / ".git").mkdir()
+            with mock.patch.object(DOC.subprocess, "run",
+                                    side_effect=DOC.subprocess.TimeoutExpired(cmd="git", timeout=5)):
+                self.assertIsNone(DOC.git_head(d))
 
     def test_returns_stripped_sha(self):
-        fake = mock.Mock(stdout="abcdef1234567890\n")
-        with mock.patch.object(DOC.subprocess, "run", return_value=fake):
-            self.assertEqual(DOC.git_head("/tmp"), "abcdef1234567890")
+        with tempfile.TemporaryDirectory() as d:
+            (Path(d) / ".git").mkdir()
+            fake = mock.Mock(stdout="abcdef1234567890\n")
+            with mock.patch.object(DOC.subprocess, "run", return_value=fake):
+                self.assertEqual(DOC.git_head(d), "abcdef1234567890")
 
 
 class SummaryModeTests(unittest.TestCase):

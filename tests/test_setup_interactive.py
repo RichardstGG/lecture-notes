@@ -311,6 +311,95 @@ class InteractiveFlowTests(unittest.TestCase):
         run.assert_not_called()
 
 
+def windows_env():
+    return env(platform="windows", describe="Windows 11（windows）", arch="AMD64",
+               package_manager="winget", default_backend="vulkan",
+               gpus=["Intel(R) Iris(R) Xe Graphics"])
+
+
+class WindowsPrebuiltChoiceTests(unittest.TestCase):
+    """沒有 Visual Studio 的 Windows 改下載官方預編譯檔；其他平台維持原本的中止。"""
+
+    def test_yes_without_a_compiler_selects_prebuilt_and_dry_run_does_not_download(self):
+        out = io.StringIO()
+        with mock.patch.object(S, "detect", return_value=windows_env()), \
+                mock.patch.object(S, "missing_tools",
+                                  return_value=(["msvc", "vulkan_sdk"], ["msvc", "vulkan_sdk"])), \
+                mock.patch.object(S.subprocess, "run") as run, \
+                redirect_stdout(out):
+            code = S.run_setup(S.parse_args(["--yes", "--dry-run"]), answers())
+        self.assertEqual(code, 0)
+        text = out.getvalue()
+        self.assertIn("--prebuilt", text)
+        self.assertIn("--yes：改用官方預編譯檔", text)
+        run.assert_not_called()
+
+    def test_yes_without_a_compiler_invokes_prebuilt(self):
+        out = io.StringIO()
+        with mock.patch.object(S, "detect", return_value=windows_env()), \
+                mock.patch.object(S, "missing_tools",
+                                  return_value=(["msvc", "vulkan_sdk"], ["msvc", "vulkan_sdk"])), \
+                mock.patch.object(S.subprocess, "run",
+                                  return_value=mock.Mock(returncode=0)) as run, \
+                redirect_stdout(out):
+            code = S.run_setup(S.parse_args(["--yes"]), answers())
+        self.assertEqual(code, 0)
+        command = run.call_args[0][0]
+        self.assertIn("--prebuilt", command)
+        self.assertEqual(command[command.index("--backend") + 1], "vulkan")
+
+    def test_declining_prebuilt_stops_before_any_install(self):
+        out = io.StringIO()
+        with mock.patch.object(S, "detect", return_value=windows_env()), \
+                mock.patch.object(S, "missing_tools",
+                                  return_value=(["msvc"], ["msvc"])), \
+                mock.patch.object(S.subprocess, "run") as run, \
+                redirect_stdout(out):
+            # 問題順序：要不要裝 llama.cpp → 要不要改用預編譯檔
+            code = S.run_setup(S.parse_args([]), answers("y", "n"))
+        self.assertEqual(code, 1)
+        self.assertNotIn("接下來會做的事", out.getvalue())
+        run.assert_not_called()
+
+    def test_linux_missing_compiler_does_not_switch_to_prebuilt(self):
+        out = io.StringIO()
+        with mock.patch.object(S, "detect", return_value=env()), \
+                mock.patch.object(S, "missing_tools", return_value=(["cxx"], ["cxx"])), \
+                mock.patch.object(S.subprocess, "run") as run, \
+                redirect_stdout(out):
+            code = S.run_setup(S.parse_args(["--yes"]), answers())
+        self.assertEqual(code, 1)
+        self.assertNotIn("--prebuilt", out.getvalue())
+        run.assert_not_called()
+
+    def test_missing_ffmpeg_still_blocks_prebuilt(self):
+        out = io.StringIO()
+        with mock.patch.object(S, "detect", return_value=windows_env()), \
+                mock.patch.object(S, "missing_tools",
+                                  return_value=(["ffmpeg", "msvc"], ["ffmpeg", "msvc"])), \
+                mock.patch.object(S.subprocess, "run") as run, \
+                redirect_stdout(out):
+            code = S.run_setup(S.parse_args(["--yes", "--prebuilt"]), answers())
+        self.assertEqual(code, 1)
+        run.assert_not_called()
+
+    def test_explicit_prebuilt_is_windows_vulkan_only(self):
+        out = io.StringIO()
+        with mock.patch.object(S, "detect", return_value=env()), \
+                mock.patch.object(S, "missing_tools", return_value=([], [])), \
+                mock.patch.object(S.subprocess, "run") as run, \
+                redirect_stdout(out):
+            linux = S.run_setup(S.parse_args(["--prebuilt", "--yes"]), answers())
+        self.assertEqual(linux, 1)
+        with mock.patch.object(S, "detect", return_value=windows_env()), \
+                mock.patch.object(S, "missing_tools", return_value=([], [])), \
+                mock.patch.object(S.subprocess, "run") as run, \
+                redirect_stdout(out):
+            cuda = S.run_setup(S.parse_args(["--prebuilt", "--backend", "cuda", "--yes"]), answers())
+        self.assertEqual(cuda, 1)
+        run.assert_not_called()
+
+
 class AskYesNoTests(unittest.TestCase):
     def test_empty_answer_takes_the_default(self):
         self.assertTrue(S.ask_yes_no("?", True, answers("")))

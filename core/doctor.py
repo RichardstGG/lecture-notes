@@ -39,6 +39,13 @@ def read_lock(path):
 
 
 def git_head(d):
+    """這個目錄自己的 HEAD。沒有自己的 .git 就回 None。
+
+    官方預編譯檔放在專案裡時，目錄不是獨立的 checkout。`git -C` 會往上找到
+    lecture-notes 這個 repo，那個 commit 不是引擎版本，不能拿來跟 engines.lock 比。
+    """
+    if not (Path(d) / ".git").exists():
+        return None
     try:
         r = subprocess.run(["git", "-C", str(d), "rev-parse", "HEAD"], capture_output=True, text=True, encoding="utf-8", errors="replace", timeout=5)
         return r.stdout.strip() or None
@@ -54,6 +61,13 @@ def summary_mode_detail(summary_on, model):
             "（summary.enabled = false；之後可在別台電腦用 lec summarize 補做總結）")
 
 
+def _engine_setup_hint():
+    """告訴使用者下一步該執行的安裝指令。Windows 沒有編譯器時走預編譯檔。"""
+    if P.NAME == "windows":
+        return "python setup_engines.py（沒有編譯環境時加上 --prebuilt）"
+    return "python3 setup_engines.py"
+
+
 def missing_engine_item(name, key, binary, summary_on):
     """找不到引擎執行檔時的 (status, name, detail)。
 
@@ -63,7 +77,7 @@ def missing_engine_item(name, key, binary, summary_on):
     if key == "LLAMA_REF" and not summary_on:
         return (WARN, name,
                 f"找不到 {binary}（只轉錄模式不需要；要總結時執行 setup_engines.py llama）")
-    return (FAIL, name, f"找不到 {binary}（執行 python3 setup_engines.py）")
+    return (FAIL, name, f"找不到 {binary}（執行 {_engine_setup_hint()}）")
 
 
 def run(course=None, sets=(), mic=False):

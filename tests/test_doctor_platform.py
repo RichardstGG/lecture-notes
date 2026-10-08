@@ -148,6 +148,18 @@ class DoctorBuildToolsItemTests(unittest.TestCase):
         self.assertEqual(item["status"], DOC.WARN)
         self.assertIn("使用 C++ 的桌面開發", item["detail"])
 
+    def test_windows_missing_engine_mentions_prebuilt(self):
+        with mock.patch.object(P, "NAME", "windows"):
+            status, _name, detail = DOC.missing_engine_item(
+                "whisper-server", "WHISPER_REF", "whisper-server.exe", True)
+        self.assertEqual(status, DOC.FAIL)
+        self.assertIn("--prebuilt", detail)
+        with mock.patch.object(P, "NAME", "linux"):
+            _status, _name, detail = DOC.missing_engine_item(
+                "whisper-server", "WHISPER_REF", "whisper-server", True)
+        self.assertIn("python3 setup_engines.py", detail)
+        self.assertNotIn("--prebuilt", detail)
+
     def test_vswhere_is_only_called_on_windows(self):
         for name, expected in (("linux", False), ("macos", False), ("windows", True)):
             with self.subTest(name=name):

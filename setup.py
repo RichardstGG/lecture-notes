@@ -6,9 +6,11 @@
   python3 setup.py --yes          全部用偵測到的預設值，不問問題
   python3 setup.py --dry-run      只顯示會做什麼，不真的編譯
   python3 setup.py --backend cuda 跳過後端詢問，直接指定
+  python3 setup.py --prebuilt     Windows：下載官方預編譯檔，不編譯
 
 **這支腳本不會安裝任何系統套件**，只會告訴你缺哪些、以及這台機器對應的安裝指令。
 已經裝好、要更新到新版請用 upgrade.py。
+Windows 沒有 Visual Studio 時，--yes 會改走 --prebuilt，不下載編譯工具。
 """
 import argparse
 import os
@@ -53,7 +55,7 @@ PACKAGES = {
                    "note": "或從 https://vulkan.lunarg.com 下載 Vulkan SDK"},
     "msvc": {"note": "安裝 Visual Studio Build Tools 並勾選「使用 C++ 的桌面開發」"
                      "工作負載（https://visualstudio.microsoft.com/downloads/）；"
-                     "不想裝編譯環境可改用官方預編譯檔，見 README「Windows 預編譯檔」"},
+                     "不想裝編譯環境可執行 python setup_engines.py --prebuilt"},
     "nvcc": {"note": "安裝 CUDA Toolkit（https://developer.nvidia.com/cuda-downloads）；"
                      "Windows 要一併勾選 Visual Studio Integration"},
 }
@@ -65,6 +67,8 @@ MODEL_FILES = {MODEL_8B: "Qwen3-8B-Q4_K_M.gguf", MODEL_4B: "Qwen3-4B-Q4_K_M.gguf
 MODEL_URL = "https://huggingface.co/{repo}-GGUF/resolve/main/{name}"
 SMALL_MODEL_MEMORY_GB = 16      # 低於這個記憶體就建議 4B 而不是 8B
 NEEDED_DISK_GB = 15             # 引擎 build + whisper 模型 1.6GB + LLM 約 5GB
+# 缺了這些就不能從原始碼編譯，但 Windows 官方預編譯檔不需要它們。
+COMPILE_ONLY_KEYS = {"git", "cmake", "msvc", "vulkan_sdk", "cxx", "glslc", "libvulkan", "nvcc"}
 
 
 def title(msg):
@@ -223,8 +227,16 @@ def report_missing(keys, blocking, manager):
         print("  （沒偵測到支援的套件管理器，上面只列出缺少的東西）")
 
 
-def build_command(engines, backend):
-    return [sys.executable, str(ROOT / "setup_engines.py"), *engines, "--backend", backend]
+def build_command(engines, backend, prebuilt=False):
+    command = [sys.executable, str(ROOT / "setup_engines.py"), *engines, "--backend", backend]
+    if prebuilt:
+        command.append("--prebuilt")
+    return command
+
+
+def runtime_blockers(blocking):
+    """編譯工具以外、缺了就連預編譯檔都不能用的項目（例如 ffmpeg）。"""
+    return [key for key in blocking if key not in COMPILE_ONLY_KEYS]
 
 
 def model_url(model):
@@ -266,9 +278,35 @@ def run_setup(args, ask):
 
     missing, blocking = missing_tools(backend)
     report_missing(missing, blocking, env["package_manager"])
-    if blocking:
+
+    use_prebuilt = False
+    if args.prebuilt:
+        if env["platform"] != "windows":
+            print("\n✖ --prebuilt 只適用於 Windows。")
+            return 1
+        if backend != "vulkan":
+            print("\n✖ 內建的 Windows 預編譯檔是 Vulkan 版 llama.cpp（whisper 為官方 CPU 版）。")
+            print("  CUDA 請看 README「Windows 預編譯檔」，或拿掉 --prebuilt 自己編譯。")
+            return 1
+        use_prebuilt = True
+    if runtime_blockers(blocking):
         print("\n✖ 先補上標成 ✖ 的東西，再跑一次 python3 setup.py。")
         return 1
+    if blocking and not use_prebuilt:
+        if env["platform"] == "windows" and backend == "vulkan":
+            print("\n  沒有編譯環境時，可以改下載官方預編譯檔（不需要 Visual Studio 或 Vulkan SDK）。")
+            print("  whisper.cpp 官方 Windows 版是 CPU；llama.cpp 這個包是 Vulkan，會用到顯示卡。")
+            if args.yes:
+                use_prebuilt = True
+                print("  → --yes：改用官方預編譯檔")
+            elif ask_yes_no("改用官方 Windows 預編譯檔嗎？", True, ask):
+                use_prebuilt = True
+            else:
+                print("\n✖ 先補上標成 ✖ 的東西，再跑一次 python3 setup.py。")
+                return 1
+        else:
+            print("\n✖ 先補上標成 ✖ 的東西，再跑一次 python3 setup.py。")
+            return 1
 
     free = env["free_disk_gb"]
     if free and free < NEEDED_DISK_GB:
@@ -277,10 +315,13 @@ def run_setup(args, ask):
             print("\n已取消。")
             return 1
 
-    command = build_command(engines, backend)
+    command = build_command(engines, backend, prebuilt=use_prebuilt)
     title("接下來會做的事")
     print("  " + " ".join(command))
-    print("  （依 engines.lock 取得原始碼並編譯，順便下載 whisper 模型約 1.6GB）")
+    if use_prebuilt:
+        print("  （下載官方 Windows 預編譯檔，不編譯；順便下載 whisper 模型約 1.6GB）")
+    else:
+        print("  （依 engines.lock 取得原始碼並編譯，順便下載 whisper 模型約 1.6GB）")
     if not engines:
         model, why = suggest_model(env)
         print(f"\n  總結模型：{why}")
@@ -288,9 +329,10 @@ def run_setup(args, ask):
             print(line)
         print("  （setup_engines.py 不會自動下載 LLM 模型；用 --import-models 可以搬入既有檔案）")
     if args.dry_run:
-        print("\n--dry-run：到這裡為止，沒有編譯。")
+        print("\n--dry-run：到這裡為止，沒有真的安裝。")
         return 0
-    if not args.yes and not ask_yes_no("\n開始編譯嗎？", True, ask):
+    question = "\n開始下載預編譯檔嗎？" if use_prebuilt else "\n開始編譯嗎？"
+    if not args.yes and not ask_yes_no(question, True, ask):
         print("\n已取消。")
         return 1
 
@@ -317,6 +359,8 @@ def parse_args(argv=None):
                         help="跳過後端詢問，直接指定")
     parser.add_argument("--whisper-only", action="store_true",
                         help="只裝 whisper.cpp（不做總結）")
+    parser.add_argument("--prebuilt", action="store_true",
+                        help="Windows：下載官方預編譯檔，不編譯")
     return parser.parse_args(argv)
 
 

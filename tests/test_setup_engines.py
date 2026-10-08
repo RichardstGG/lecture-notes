@@ -3,8 +3,10 @@
 全部用暫存資料夾與 mock 取代真正的 git clone、cmake 編譯與網路下載，
 不需要實際編譯 whisper.cpp / llama.cpp，也不會動到 repo 裡真正的 engines.lock。
 """
+import hashlib
 import tempfile
 import unittest
+import zipfile
 from pathlib import Path
 from unittest import mock
 
@@ -188,6 +190,119 @@ class BuildGeneratorPassthroughTests(unittest.TestCase):
                      rebuild=False, generator="Ninja")
         self.assertEqual(self.calls, [], "版本、後端與 generator 都沒變時不應該重新編譯")
 
+
+
+class WindowsPrebuiltTests(unittest.TestCase):
+    """官方 Windows zip：只取出 exe/dll、核對 SHA-256，而且不是 Windows 就不能走這條路。"""
+
+    def setUp(self):
+        self._tmp = tempfile.TemporaryDirectory()
+        self.addCleanup(self._tmp.cleanup)
+        self.root = Path(self._tmp.name)
+
+    def _zip(self, members):
+        path = self.root / "bundle.zip"
+        with zipfile.ZipFile(path, "w") as bundle:
+            for name, data in members.items():
+                bundle.writestr(name, data)
+        return path
+
+    def test_whisper_prebuilt_is_the_cpu_zip_and_stamp_keeps_backend(self):
+        spec = SE.prebuilt_spec("whisper", "vulkan")
+        self.assertEqual(spec["backend"], "cpu")
+        self.assertIn("v1.9.0/whisper-bin-x64.zip", spec["url"])
+        self.assertEqual(len(spec["sha256"]), 64)
+        engine = self.root / "whisper.cpp"
+        stamp = P.build_stamp_path(engine)
+        stamp.parent.mkdir(parents=True)
+        stamp.write_text(SE.prebuilt_stamp(spec) + "\n", encoding="utf-8")
+        self.assertEqual(P.built_backend(engine), "cpu")
+        self.assertIn("PREBUILT=whisper-bin-x64-v1.9.0", stamp.read_text(encoding="utf-8"))
+
+    def test_llama_prebuilt_is_vulkan_only(self):
+        spec = SE.prebuilt_spec("llama", "vulkan")
+        self.assertEqual(spec["backend"], "vulkan")
+        self.assertIn("b11067", spec["url"])
+        self.assertEqual(len(spec["sha256"]), 64)
+        with self.assertRaises(SystemExit):
+            SE.prebuilt_spec("llama", "cuda")
+
+    def test_extract_flattens_exe_and_dll_only(self):
+        archive = self._zip({
+            "Release/whisper-server.exe": b"exe",
+            "Release/ggml.dll": b"dll",
+            "Release/README.md": b"skip",
+        })
+        dest = self.root / "bin"
+        SE.extract_windows_binaries(archive, dest)
+        self.assertEqual((dest / "whisper-server.exe").read_bytes(), b"exe")
+        self.assertEqual((dest / "ggml.dll").read_bytes(), b"dll")
+        self.assertFalse((dest / "README.md").exists())
+        self.assertFalse((dest / "Release").exists())
+
+    def test_extract_rejects_parent_directory_members(self):
+        archive = self._zip({"../evil.dll": b"pwn", "ok.dll": b"ok"})
+        with self.assertRaises(SystemExit):
+            SE.extract_windows_binaries(archive, self.root / "bin")
+        self.assertFalse((self.root / "evil.dll").exists())
+        self.assertFalse((self.root.parent / "evil.dll").exists())
+
+    def test_extract_rejects_duplicate_basenames(self):
+        archive = self._zip({"a/foo.dll": b"1", "b/foo.dll": b"2"})
+        with self.assertRaises(SystemExit):
+            SE.extract_windows_binaries(archive, self.root / "bin")
+
+    def test_hash_mismatch_deletes_the_partial_download(self):
+        def downloader(_url, dest):
+            Path(dest).write_bytes(b"not the official zip")
+
+        with self.assertRaises(SystemExit):
+            SE.download_verified("https://example.test/x.zip", self.root / "x.zip",
+                                 "a" * 64, "x", downloader)
+        self.assertFalse((self.root / "x.zip").exists())
+        self.assertFalse((self.root / "x.zip.part").exists())
+
+    def test_archive_install_verifies_then_places_the_server(self):
+        archive = self._zip({"bin/llama-server.exe": b"MZ", "bin/ggml-vulkan.dll": b"dll"})
+        digest = hashlib.sha256(archive.read_bytes()).hexdigest()
+        spec = {"id": "llama-test", "backend": "vulkan", "url": "https://example.test/l.zip",
+                "sha256": digest, "server": "llama-server.exe", "note": "test"}
+
+        def downloader(_url, dest):
+            Path(dest).write_bytes(archive.read_bytes())
+
+        server = SE.install_prebuilt_archive(spec, self.root / "build" / "bin", downloader)
+        self.assertEqual(server.read_bytes(), b"MZ")
+        self.assertTrue((self.root / "build" / "bin" / "ggml-vulkan.dll").is_file())
+        self.assertFalse((self.root / "build" / "llama-test.zip").exists())
+
+    def test_prebuilt_refuses_linux_and_does_not_download(self):
+        with mock.patch.object(P, "NAME", "linux"), \
+                mock.patch.object(SE, "download") as download:
+            with self.assertRaises(SystemExit):
+                SE.main(["--prebuilt"])
+        download.assert_not_called()
+
+    def test_prebuilt_refuses_cuda_and_update(self):
+        with mock.patch.object(P, "NAME", "windows"), \
+                mock.patch.object(SE, "install_prebuilt") as install, \
+                mock.patch.object(SE, "download") as download:
+            with self.assertRaises(SystemExit):
+                SE.main(["--prebuilt", "--backend", "cuda"])
+            with self.assertRaises(SystemExit):
+                SE.main(["--prebuilt", "--update"])
+        install.assert_not_called()
+        download.assert_not_called()
+
+    def test_prebuilt_on_windows_skips_the_compiler_check(self):
+        with mock.patch.object(P, "NAME", "windows"), \
+                mock.patch.object(SE, "install_prebuilt", return_value=0) as install, \
+                mock.patch.object(SE, "check_tools") as tools:
+            code = SE.main(["--prebuilt"])
+        self.assertEqual(code, 0)
+        tools.assert_not_called()
+        self.assertEqual(install.call_args[0][0], ["whisper", "llama"])
+        self.assertEqual(install.call_args[0][1], "vulkan")
 
 
 # find_msvc() 與「缺哪些編譯工具」的判斷已搬到 core/platform.py（lec doctor 也用同一份），

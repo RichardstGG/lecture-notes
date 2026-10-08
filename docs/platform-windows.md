@@ -102,6 +102,41 @@ opencc 一直等到 20 秒逾時，`opencc_convert()` 只好回傳沒轉換的�
   `LD_LIBRARY_PATH`），這是給「下載官方預編譯檔」這種情境用的（見主
   README「Windows 預編譯檔」一節），預設的靜態編譯流程通常用不到。
 
+## 官方預編譯檔（沒有 Visual Studio 時）
+
+沒有 MSVC 或 Vulkan SDK 時不要編譯。在 repo 資料夾執行：
+
+```bat
+python setup_engines.py --prebuilt
+```
+
+`python setup.py` 若偵測到缺的都是編譯工具（而且後端是 Vulkan），會改走同一條路。
+它下載官方 zip、核對 SHA-256，再把 `.exe` 與 `.dll` 平放到 `build/bin/`：
+
+- whisper.cpp **v1.9.0** `whisper-bin-x64.zip`（CPU）。v1.9.1 之後的 release 沒有再附
+  Windows 執行檔，所以這包比 `engines.lock` 的原始碼 commit 舊。官方沒有 Windows Vulkan 版。
+- llama.cpp **b11067** `llama-b11067-bin-win-vulkan-x64.zip`。執行時用系統已安裝的
+  Vulkan 驅動，不需要 Vulkan SDK，也不需要 MSVC。
+
+這兩個版本都不是 `engines.lock` 裡的原始碼 commit。預編譯目錄不是 git checkout，
+所以 `lec doctor` 不會拿它跟 lock 比對版本，只確認執行檔在不在。
+雜湊不符會刪掉下載的檔、拒絕安裝。CUDA / 純 CPU 的 llama 預編譯檔還沒有自動下載，
+仍是 README 說的手動放置，或裝好編譯環境後不要加 `--prebuilt`。
+
+Windows 仍然標成「實驗中」。這條安裝路徑有單元測試，也有下面這一筆檔案模式的實機紀錄。
+麥克風錄音、`lec stop`、UI 還沒在這台機器上重跑，確認前不要把平台改成「已支援」。
+
+**實機回報（2026-10-08，Windows 11、Intel Iris Xe、沒有 MSVC、沒有 Vulkan SDK）**：
+`python setup_engines.py --prebuilt` 結束碼 0。whisper-server 是 v1.9.0 CPU，
+llama-server 是 b11067 Vulkan。`lec doctor` 0 個錯誤；警告剩作業系統「實驗中」、
+找不到 opencc，以及「編譯工具」因為 whisper 的 stamp 是 `BACKEND=cpu` 而寫成
+cpu 後端、並提醒缺 MSVC（預編譯可忽略）。GPU 那一行是
+`Vulkan0: Intel(R) Iris(R) Xe Graphics`。
+`python lec run 測試課 --file samples/test8min.ogg` 把 7 分 55 秒樣本轉錄完（0.7x，CPU），
+並用 Qwen3-8B 在 Iris Xe 上寫完第一段筆記（165 秒）。該行程在第二段總結中途被外力中斷，
+不是程式自己失敗；接著 `python lec summarize outputs/測試課_20261008` 補完第二段
+（167 秒），結束碼 0。`status.json` 的 phase 是 `done`，`notes.md` 有兩段。
+
 ## CMake generator／編譯環境
 
 **實機回報（2026-09，Windows + `--backend cuda`）**：`check_tools()` 顯示「工具齊全」，
@@ -306,10 +341,17 @@ Get-Process whisper-server,llama-server,ffmpeg -ErrorAction SilentlyContinue
 
 ### 8. 官方預編譯檔（對應風險項目 6，選用）
 
-只有在你想驗「不裝編譯環境」那條路時才需要：照 README「Windows 預編譯檔」把 exe 與 DLL
-放進 `whisper.cpp\build\bin\`、`llama.cpp\build\bin\`，然後 `python lec doctor`。
+沒有編譯環境時直接：
+
+```powershell
+python setup_engines.py --prebuilt
+python lec doctor
+```
+
 要看的是 doctor 找不找得到執行檔、GPU 那一行有沒有列出裝置（`library_dirs()` /
-`env_with_libs()` 把 DLL 目錄加進 `PATH` 是否真的生效）。
+`env_with_libs()` 把 DLL 目錄加進 `PATH` 是否真的生效）。whisper 這包是 CPU，
+GPU 那一行指的是 llama.cpp 的 Vulkan。也可以照 README 自己把 exe 與 DLL 放進
+`whisper.cpp\build\bin\`、`llama.cpp\build\bin\`，不必經過 `--prebuilt`。
 
 ### 一次收集所有輸出
 
@@ -370,8 +412,9 @@ $global:out | Out-File -FilePath $R -Encoding utf8
    跟實際安裝後的環境變數狀態一致，以及 `lec doctor` 的「編譯工具」那一行在
    一般 PowerShell 與 Developer Command Prompt 下是否都顯示正確
    （只有 CUDA 版實機跑過 `setup_engines.py`，doctor 這一行還沒）。
-6. 官方預編譯檔（README「Windows 預編譯檔」）搭配 `library_dirs()` /
-   `env_with_libs()` 的 DLL 搜尋路徑是否真的能讓 `lec doctor` 找到並成功執行。
+6. 官方預編譯檔搭配 `library_dirs()` / `env_with_libs()`：2026-10-08 這台 Iris Xe
+   已經用 `--prebuilt` 跑過 `lec doctor` 與 `lec run --file`（見上面的實機回報）。
+   還沒覆蓋的是 CUDA／純 CPU 的 llama zip，以及麥克風錄音。
 7. 用 `Alternative name`（`@device_cm_{…}\wave_{…}`）當 `-i audio=<id>` 能不能實際開啟
    裝置錄音；目前只確認過用顯示名稱可以（見上面「錄音（DirectShow）」）。
 8. `setup.py` 在 Windows 的偵測與互動：`GlobalMemoryStatusEx` 取記憶體、winget 的
