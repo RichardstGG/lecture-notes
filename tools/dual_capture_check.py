@@ -59,7 +59,11 @@ def record(args):
     out = Path(args.out)
     out.mkdir(parents=True, exist_ok=True)
     if not args.yes:
-        input(f"\n將錄音 {args.minutes:g} 分鐘（Ctrl+C 提前結束），輸出到 {out}。按 Enter 開始，Ctrl+C 取消…")
+        try:
+            input(f"\n將錄音 {args.minutes:g} 分鐘（Ctrl+C 提前結束），輸出到 {out}。按 Enter 開始，Ctrl+C 取消…")
+        except (KeyboardInterrupt, EOFError):
+            print("\n已取消，沒有錄音。")
+            return 130
     cap = C.MultiCapture([C.SourceSpec(**s) for s in plan["sources"]], out,
                          mix_path=out / "mix.ogg",
                          on_event=lambda kind, **kv: print(f"  事件 {kind}: " + json.dumps(
