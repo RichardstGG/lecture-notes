@@ -101,7 +101,7 @@ class TestProtocol(Base):
             print(json.dumps({{"type": "result", "duration": 1.0, "turns": []}}), flush=True)
         """)
         self.run_worker(w)
-        seen = json.loads((self.root / "seen.json").read_text())
+        seen = json.loads((self.root / "seen.json").read_text(encoding="utf-8"))
         self.assertEqual(seen["audio"], str(self.audio))
         self.assertEqual(seen["num_speakers"], 2)
         self.assertEqual(seen["threshold"], 0.5)
@@ -200,7 +200,7 @@ class TestCancel(Base):
         with self.assertRaises(D.DiarizationCancelled):
             self.run_worker(w, cancel=cancel, progress=lambda p, t, s: seen.append(p))
         self.assertLess(time.monotonic() - t0, 20, "取消要在數秒內生效，不能等 worker 睡完")
-        pid = int(pidfile.read_text())
+        pid = int(pidfile.read_text(encoding="utf-8"))
         for _ in range(40):
             if not P.pid_alive(pid):
                 break
@@ -220,7 +220,7 @@ class TestCancel(Base):
         with self.assertRaises(D.DiarizationCancelled):
             self.run_worker(w, cancel=lambda: pidfile.exists())
         self.assertLess(time.monotonic() - t0, 20)
-        pid = int(pidfile.read_text())
+        pid = int(pidfile.read_text(encoding="utf-8"))
         for _ in range(40):
             if not P.pid_alive(pid):
                 break
@@ -362,7 +362,7 @@ class TestRealWorkerWithFakeSherpa(Base):
 
     def test_worker_builds_the_sherpa_config_from_the_request(self):
         self.run_real(FAKE_SHERPA_DUMP=str(self.dump))
-        seen = json.loads(self.dump.read_text())
+        seen = json.loads(self.dump.read_text(encoding="utf-8"))
         self.assertEqual(seen["num_clusters"], 2)
         self.assertEqual(seen["threshold"], 0.5)
         self.assertEqual(seen["window_shift"], 0.1)
@@ -413,7 +413,7 @@ class TestRealWorkerWithFakeSherpa(Base):
         with mock.patch.object(D, "find_python", return_value=Path(sys.executable)):
             r = D.diarize_session(req, asr=asr)
         self.assertEqual(r.actual_speakers, 2)
-        js = json.loads((session / r.speakers_json).read_text())
+        js = json.loads((session / r.speakers_json).read_text(encoding="utf-8"))
         self.assertEqual(js["engine"]["version"], "0.0-fake")
         self.assertEqual([s["speaker_id"] for s in js["segments"]], ["S01", "S02"])
         self.assertEqual(list(session.glob(".diarize-staging-*")), [])

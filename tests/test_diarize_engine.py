@@ -243,11 +243,11 @@ class TestCancel(Base):
 
     def test_cancel_preserves_previous_successful_generation(self):
         first = self._good_run()
-        before = (self.session / "diarization.current.json").read_text()
+        before = (self.session / "diarization.current.json").read_text(encoding="utf-8")
         with self.assertRaises(DiarizationCancelled):
             diarize_session(self.req(), cancel=lambda: True,
                             diarizer=fake_diarizer([(0.0, 5.0, 1, 1.0)]), asr=fake_asr())
-        self.assertEqual((self.session / "diarization.current.json").read_text(), before)
+        self.assertEqual((self.session / "diarization.current.json").read_text(encoding="utf-8"), before)
         self.assertTrue((self.session / first.speaker_transcript).is_file())
 
     def test_cancel_leaves_no_staging_dir(self):
@@ -278,11 +278,11 @@ class TestFailure(Base):
     def test_failure_preserves_previous_generation(self):
         first = diarize_session(self.req(), diarizer=fake_diarizer([(0.0, 5.0, 1, 1.0)]),
                                 asr=fake_asr())
-        before = (self.session / "diarization.current.json").read_text()
+        before = (self.session / "diarization.current.json").read_text(encoding="utf-8")
         with self.assertRaises(DiarizationError):
             diarize_session(self.req(), diarizer=fake_diarizer([(0.0, 3.0, 1, 1.0)]),
                             asr=fake_asr(fail_on=0))
-        self.assertEqual((self.session / "diarization.current.json").read_text(), before)
+        self.assertEqual((self.session / "diarization.current.json").read_text(encoding="utf-8"), before)
         self.assertEqual(json.loads(before)["generation"], first.generation)
 
     def test_all_text_filtered_is_empty_result_not_success(self):
@@ -315,7 +315,7 @@ class TestArtifacts(Base):
 
     def test_speakers_json_schema_and_invariants(self):
         r = self.run_ok()
-        js = json.loads((self.session / r.speakers_json).read_text())
+        js = json.loads((self.session / r.speakers_json).read_text(encoding="utf-8"))
         for key in ("schema_version", "source_sha256", "requested_speakers",
                     "actual_speakers", "duration_seconds", "speakers", "segments", "engine"):
             self.assertIn(key, js)
@@ -348,7 +348,7 @@ class TestArtifacts(Base):
 
     def test_manifest_points_at_generation(self):
         r = self.run_ok()
-        man = json.loads((self.session / "diarization.current.json").read_text())
+        man = json.loads((self.session / "diarization.current.json").read_text(encoding="utf-8"))
         self.assertEqual(man["schema_version"], 1)
         self.assertEqual(man["generation"], r.generation)
         self.assertEqual(man["speaker_transcript"], r.speaker_transcript)
@@ -359,11 +359,11 @@ class TestArtifacts(Base):
 
     def test_rerun_creates_new_generation_without_touching_old(self):
         first = self.run_ok()
-        old_md = (self.session / first.speaker_transcript).read_text()
+        old_md = (self.session / first.speaker_transcript).read_text(encoding="utf-8")
         second = self.run_ok(requested_speakers=4)
         self.assertNotEqual(first.generation, second.generation)
-        self.assertEqual((self.session / first.speaker_transcript).read_text(), old_md)
-        man = json.loads((self.session / "diarization.current.json").read_text())
+        self.assertEqual((self.session / first.speaker_transcript).read_text(encoding="utf-8"), old_md)
+        man = json.loads((self.session / "diarization.current.json").read_text(encoding="utf-8"))
         self.assertEqual(man["generation"], second.generation)
         gens = sorted(p.name for p in (self.session / "diarization").iterdir() if p.is_dir())
         self.assertEqual(gens, ["0001", "0002"])
@@ -376,9 +376,9 @@ class TestArtifacts(Base):
     def test_original_transcript_untouched(self):
         orig = self.session / "transcript.md"
         orig.write_text("# 原稿\n不可被改動\n", encoding="utf-8")
-        before = orig.read_text()
+        before = orig.read_text(encoding="utf-8")
         self.run_ok()
-        self.assertEqual(orig.read_text(), before)
+        self.assertEqual(orig.read_text(encoding="utf-8"), before)
 
     def test_short_turns_are_skipped(self):
         asr = fake_asr()
@@ -392,7 +392,7 @@ class TestArtifacts(Base):
         # 第二句的 start 會跟著字數變，這個測試就會掛。
         texts = [[(0.5, 1.0, "短"), (1.0, 3.0, "這一句明顯長很多很多很多")]]
         r = self.run_ok(turns=[(2.0, 8.0, 1, 1.0)], texts=texts)
-        segs = json.loads((self.session / r.speakers_json).read_text())["segments"]
+        segs = json.loads((self.session / r.speakers_json).read_text(encoding="utf-8"))["segments"]
         self.assertEqual(len(segs), 2)
         # turn start 2.0 - pad 0.15 = 1.85；加上 ASR 的 0.5 / 1.0
         self.assertAlmostEqual(segs[0]["start_ms"] / 1000, 1.85 + 0.5, places=2)
@@ -401,13 +401,13 @@ class TestArtifacts(Base):
     def test_segment_end_clamped_into_turn_window(self):
         # ASR 回報超出該段音訊長度的 end，不能原封不動寫出去
         r = self.run_ok(turns=[(1.0, 3.0, 1, 1.0)], texts=[[(0.0, 999.0, "超長")]])
-        segs = json.loads((self.session / r.speakers_json).read_text())["segments"]
+        segs = json.loads((self.session / r.speakers_json).read_text(encoding="utf-8"))["segments"]
         self.assertLessEqual(segs[0]["end_ms"] / 1000, 3.0 + 0.15 + 1e-6)
 
     def test_turn_past_audio_end_is_clamped_to_duration(self):
         # 分群回報的區間超出實際音長，不能去切不存在的音訊
         r = self.run_ok(turns=[(25.0, 40.0, 1, 1.0)], texts=[[(0.0, 999.0, "尾巴")]])
-        segs = json.loads((self.session / r.speakers_json).read_text())["segments"]
+        segs = json.loads((self.session / r.speakers_json).read_text(encoding="utf-8"))["segments"]
         self.assertLessEqual(segs[0]["end_ms"] / 1000, WAV_SECONDS + 1e-6)
 
     def test_speakers_sorted_by_speech_time(self):
@@ -420,7 +420,7 @@ class TestArtifacts(Base):
         texts = [[(0.0, 1.0, "感謝觀看")], [(0.0, 2.0, "這句是真的內容")],
                  [(0.0, 1.0, "以下是繁體中文的會議內容")]]
         r = self.run_ok(texts=texts)
-        md = (self.session / r.speaker_transcript).read_text()
+        md = (self.session / r.speaker_transcript).read_text(encoding="utf-8")
         self.assertIn("這句是真的內容", md)
         self.assertNotIn("感謝觀看", md)
         self.assertNotIn("以下是繁體中文的會議內容", md)
@@ -443,7 +443,7 @@ class TestOpenCC(Base):
         r = diarize_session(self.req(opencc=True),
                             diarizer=fake_diarizer([(0.0, 3.0, 1, 1.0), (4.0, 7.0, 2, 1.0)]),
                             asr=fake_asr(texts_per_call=texts))
-        segs = json.loads((self.session / r.speakers_json).read_text())["segments"]
+        segs = json.loads((self.session / r.speakers_json).read_text(encoding="utf-8"))["segments"]
         self.assertEqual([s["speaker_id"] for s in segs], ["S01", "S02"])
         self.assertNotEqual(segs[0]["text"], "内存与网络", "應已轉成繁體")
 
