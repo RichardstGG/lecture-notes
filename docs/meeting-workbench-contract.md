@@ -1,4 +1,6 @@
-# 雙工作台正式契約（規格 v1，尚未實作）
+# 雙工作台正式契約（規格 v1，分階段實作）
+
+2026-10-08 設定與資料層：已加入獨立會議設定載入／驗證、`lec meetings --json`、`lec config --work-type meeting`、work type 快照及排他輸出目錄函式。status／run 仍 schema 1；錄音、辨識編排與 API 控制尚未實作。詳見 [已實作範圍、CLI schema 與相容性](meeting-workbench-config.md)。
 
 2026-10-06 雙音源增量：已實作設定驗證、能力查詢與安全阻擋，錄音仍未開放；引擎介面、來源 schema 2 與硬體驗收皆明標提案／未測試。詳見 [雙音源契約與 CROSS_AGENT_REQUEST](meeting-workbench-dual-audio.md)。
 
