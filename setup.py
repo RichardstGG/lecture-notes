@@ -1,14 +1,23 @@
 #!/usr/bin/env python3
-"""第一次安裝用的互動式設定：偵測這台機器 → 問幾個問題 → 呼叫 setup_engines.py 編譯。
+"""第一次安裝用的互動式設定：依賴自檢 → 問幾個問題 → 呼叫 setup_engines.py。
 
 用法：
   python3 setup.py                互動模式（Windows 用 python setup.py）
   python3 setup.py --yes          全部用偵測到的預設值，不問問題
   python3 setup.py --dry-run      只顯示會做什麼，不真的編譯
   python3 setup.py --backend cuda 跳過後端詢問，直接指定
+  python3 setup.py --prebuilt     Windows：下載官方預編譯檔，不編譯
 
-**這支腳本不會安裝任何系統套件**，只會告訴你缺哪些、以及這台機器對應的安裝指令。
+啟動時先檢查 Python、執行時工具、GPU 與 CUDA Toolkit。有 NVIDIA 且是互動模式時，
+會問要不要用 CUDA。還沒有 CUDA Toolkit 就只印安裝說明，不編譯、也不下載。
+--yes 不會詢問。摘要 API 在 Web UI 的本機設定裡改，這裡不問、也不寫設定檔。
+
+Linux／macOS 不會安裝系統套件，只列出缺少的項目與對應指令。
+Windows 的 windows_setup.bat 會加上 --provision：用 winget 補 ffmpeg、Git、
+Node.js 與 VC++ 執行庫，下載 LLM 模型，裝好 Web UI，並可立刻啟動。
+不會用 winget 安裝 Visual Studio、Vulkan SDK 或 CUDA Toolkit。
 已經裝好、要更新到新版請用 upgrade.py。
+Windows 沒有 Visual Studio 時，--yes 會改走 --prebuilt，不下載編譯工具。
 """
 import argparse
 import os
@@ -20,6 +29,7 @@ from pathlib import Path
 
 ROOT = Path(__file__).resolve().parent
 sys.path.insert(0, str(ROOT))
+from core import config as C                                     # noqa: E402
 from core import platform as P                                   # noqa: E402
 
 P.force_utf8()
@@ -53,7 +63,7 @@ PACKAGES = {
                    "note": "或從 https://vulkan.lunarg.com 下載 Vulkan SDK"},
     "msvc": {"note": "安裝 Visual Studio Build Tools 並勾選「使用 C++ 的桌面開發」"
                      "工作負載（https://visualstudio.microsoft.com/downloads/）；"
-                     "不想裝編譯環境可改用官方預編譯檔，見 README「Windows 預編譯檔」"},
+                     "不想裝編譯環境可執行 python setup_engines.py --prebuilt"},
     "nvcc": {"note": "安裝 CUDA Toolkit（https://developer.nvidia.com/cuda-downloads）；"
                      "Windows 要一併勾選 Visual Studio Integration"},
 }
@@ -65,6 +75,8 @@ MODEL_FILES = {MODEL_8B: "Qwen3-8B-Q4_K_M.gguf", MODEL_4B: "Qwen3-4B-Q4_K_M.gguf
 MODEL_URL = "https://huggingface.co/{repo}-GGUF/resolve/main/{name}"
 SMALL_MODEL_MEMORY_GB = 16      # 低於這個記憶體就建議 4B 而不是 8B
 NEEDED_DISK_GB = 15             # 引擎 build + whisper 模型 1.6GB + LLM 約 5GB
+# 缺了這些就不能從原始碼編譯，但 Windows 官方預編譯檔不需要它們。
+COMPILE_ONLY_KEYS = {"git", "cmake", "msvc", "vulkan_sdk", "cxx", "glslc", "libvulkan", "nvcc"}
 
 
 def title(msg):
@@ -84,6 +96,16 @@ def ask_yes_no(question, default, ask):
     if not answer:
         return default
     return answer in ("y", "yes", "是")
+
+
+def has_gpu(env):
+    return bool(env.get("gpus") or env.get("nvidia"))
+
+
+def _mark(ok, required):
+    if ok:
+        return "✔"
+    return "✖" if required else "⚠"
 
 
 def detect():
@@ -117,6 +139,37 @@ def show_environment(env):
         print(f"  {pad(name, 14)}{value}")
 
 
+def report_dependencies(env):
+    """啟動時的依賴自檢。只印結果，不安裝、也不在這裡中止。"""
+    title("依賴自檢")
+    py_ok = sys.version_info >= (3, 11)
+    py_note = env["python"] if py_ok else f"{env['python']}（需要 3.11 以上）"
+    print(f"  {_mark(py_ok, True)} Python  {py_note}")
+    for key, (label, required, why) in RUNTIME_TOOLS.items():
+        if key == "pactl" and env["platform"] != "linux":
+            continue
+        found = shutil.which(key)
+        compile_only = key in COMPILE_ONLY_KEYS
+        note = found or f"找不到（{why}）"
+        if not found and compile_only:
+            note += "；只編譯原始碼時需要，Windows 預編譯檔可略過"
+        # 編譯工具缺了仍可改走預編譯檔，自檢用警告；ffmpeg 這種執行期依賴才算失敗。
+        print(f"  {_mark(bool(found), required and not compile_only)} {label}  {note}")
+    if env.get("gpus"):
+        gpu = "；".join(env["gpus"])
+    else:
+        gpu = "沒偵測到"
+    print(f"  {_mark(has_gpu(env), False)} GPU  {gpu}")
+    if env.get("nvidia"):
+        cuda = env.get("cuda")
+        print(f"  {_mark(bool(cuda), False)} CUDA Toolkit  "
+              + (cuda or "沒有（可改用 Vulkan，或先安裝 CUDA Toolkit 再選 CUDA）"))
+    elif has_gpu(env):
+        print("  ⚠ CUDA  這張卡不是 NVIDIA，本機後端不會用 CUDA")
+    else:
+        print("  ⚠ CUDA  沒有 NVIDIA GPU")
+
+
 def choose_backend(env, ask, forced=None):
     """回傳 (後端, 為什麼)。Vulkan 在 NVIDIA 上也能跑，所以 CUDA 是「要不要更快」的選擇。"""
     if forced:
@@ -132,8 +185,11 @@ def choose_backend(env, ask, forced=None):
         return "vulkan", "有 CUDA 但你選擇 Vulkan"
     if env["nvidia"]:
         print(f"  偵測到 {env['nvidia']}，但沒有 CUDA Toolkit（nvcc）。")
-        print("  先用 Vulkan（NVIDIA 也支援）；之後裝好 CUDA Toolkit 可以再跑一次這支腳本。")
-        return "vulkan", "有 NVIDIA GPU 但沒有 CUDA Toolkit"
+        print("  選 CUDA 的話這次不會編譯，只會印出安裝說明；裝好 Toolkit 後再跑一次。")
+        print("  選否就改用 Vulkan（NVIDIA 也支援）。")
+        if ask_yes_no("仍要使用 CUDA 後端嗎？", False, ask):
+            return "cuda", "你選擇 CUDA，但還沒有 CUDA Toolkit"
+        return "vulkan", "有 NVIDIA GPU 但沒有 CUDA Toolkit，改用 Vulkan"
     if not env["gpus"]:
         print("  沒偵測到 GPU。只用 CPU 的話 whisper large-v3-turbo 會非常慢")
         print("  （Intel Arc 140V 是 6–7 倍即時速度，CPU 通常慢上好幾倍）。")
@@ -223,8 +279,236 @@ def report_missing(keys, blocking, manager):
         print("  （沒偵測到支援的套件管理器，上面只列出缺少的東西）")
 
 
-def build_command(engines, backend):
-    return [sys.executable, str(ROOT / "setup_engines.py"), *engines, "--backend", backend]
+# Windows 啟動檔才會安裝的執行期套件。編譯器、Vulkan SDK、CUDA 不在這裡。
+WINDOWS_RUNTIME = (
+    ("ffmpeg", "Gyan.FFmpeg", lambda: bool(shutil.which("ffmpeg"))),
+    ("git", "Git.Git", lambda: bool(shutil.which("git"))),
+    ("Node.js", "OpenJS.NodeJS.LTS", lambda: node_is_acceptable(node_version())),
+    ("VC++ 2015+", "Microsoft.VCRedist.2015+.x64", lambda: vc_redist_x64_installed()),
+)
+
+
+def node_version():
+    """回傳 node 的版本 tuple；找不到或問不到就回 None。"""
+    node = shutil.which("node")
+    if not node:
+        return None
+    try:
+        result = subprocess.run(
+            [node, "-p", "process.versions.node"], capture_output=True, text=True,
+            encoding="utf-8", errors="replace", timeout=20)
+    except (OSError, subprocess.TimeoutExpired):
+        return None
+    parts = []
+    for piece in (result.stdout or "").strip().split("."):
+        if not piece.isdigit():
+            break
+        parts.append(int(piece))
+    return tuple(parts) or None
+
+
+def node_is_acceptable(version):
+    """對齊 ui/frontend 的 engines：22.22+、24.15+，或 26 以上。"""
+    if not version:
+        return False
+    if version >= (26, 0):
+        return True
+    if version >= (24, 15):
+        return True
+    return (22, 22) <= version < (23, 0)
+
+
+def vc_redist_x64_installed():
+    """預編譯的 .exe 需要 VC++ 2015–2022 x64 執行庫。非 Windows 視為不需要。"""
+    if os.name != "nt":
+        return True
+    import winreg
+    keys = (
+        (winreg.HKEY_LOCAL_MACHINE, r"SOFTWARE\Microsoft\VisualStudio\14.0\VC\Runtimes\X64"),
+        (winreg.HKEY_LOCAL_MACHINE, r"SOFTWARE\WOW6432Node\Microsoft\VisualStudio\14.0\VC\Runtimes\X64"),
+    )
+    for root, sub in keys:
+        try:
+            with winreg.OpenKey(root, sub) as key:
+                installed, _typ = winreg.QueryValueEx(key, "Installed")
+        except OSError:
+            continue
+        if installed:
+            return True
+    return False
+
+
+def refresh_windows_path():
+    """winget 寫進登錄檔的 PATH 不會自動進這個行程。把使用者與系統 Path 拼回來。"""
+    if os.name != "nt":
+        return
+    import winreg
+
+    def read(root, sub):
+        try:
+            with winreg.OpenKey(root, sub) as key:
+                value, _typ = winreg.QueryValueEx(key, "Path")
+        except OSError:
+            return ""
+        return os.path.expandvars(str(value))
+
+    user = read(winreg.HKEY_CURRENT_USER, r"Environment")
+    machine = read(winreg.HKEY_LOCAL_MACHINE,
+                   r"SYSTEM\CurrentControlSet\Control\Session Manager\Environment")
+    current = os.environ.get("PATH", "")
+    os.environ["PATH"] = os.pathsep.join(part for part in (user, machine, current) if part)
+
+
+def missing_runtime_packages():
+    return [(label, package) for label, package, ready in WINDOWS_RUNTIME if not ready()]
+
+
+def winget_install(package):
+    command = ["winget", "install", "--id", package, "-e",
+               "--accept-package-agreements", "--accept-source-agreements",
+               "--disable-interactivity"]
+    print("  $ " + " ".join(command), flush=True)
+    result = subprocess.run(command)
+    refresh_windows_path()
+    return result.returncode
+
+
+def install_missing_runtime(args, ask):
+    """用 winget 補 Windows 執行環境。呼叫端負責限定平台。回傳有沒有補齊。"""
+    missing = missing_runtime_packages()
+    if not missing:
+        print("✔ Windows 執行環境齊全（ffmpeg、Git、Node.js、VC++）。")
+        return True
+    print("\n  還缺：" + "、".join(f"{label}（{package}）" for label, package in missing))
+    if not args.yes and not ask_yes_no("要用 winget 安裝這些執行環境嗎？", True, ask):
+        print("  請先安裝上面的項目，再跑一次 windows_setup.bat。")
+        return False
+    if not shutil.which("winget"):
+        print("✖ 找不到 winget，無法自動安裝。請先安裝 App Installer，或手動安裝上面的項目。")
+        return False
+    for _label, package in missing:
+        winget_install(package)
+    still = missing_runtime_packages()
+    if still:
+        print("✖ 安裝後仍然缺少：" + "、".join(label for label, _package in still))
+        print("  新裝的程式可能還不在這個視窗的 PATH。關掉視窗再跑一次 windows_setup.bat。")
+        return False
+    print("✔ 執行環境已補齊")
+    return True
+
+
+def remember_smaller_model(model):
+    """記憶體不夠、又還沒指定模型時，把 4B 記進 local.toml。預設 8B 不用寫。"""
+    if model != MODEL_4B:
+        return
+    data = C.load_toml(C.LOCAL_FILE) if C.LOCAL_FILE.exists() else {}
+    if (data.get("summary") or {}).get("model"):
+        return
+    C.set_local("summary.model", MODEL_4B)
+    print(f"✔ 已把 summary.model 記成 {MODEL_4B}（config/local.toml，不進 git）")
+
+
+def ensure_llm_model(model):
+    """下載建議的 GGUF。已有成品就略過；中斷的部分留在 .part，重跑會續傳。"""
+    dest = ROOT / "models" / MODEL_FILES[model]
+    if dest.is_file() and dest.stat().st_size > 0:
+        print(f"✔ 已有模型 {dest.name}（{dest.stat().st_size / 1e9:.1f} GB）")
+        remember_smaller_model(model)
+        return 0
+    url = model_url(model)
+    print(f"▶ 下載 {dest.name}")
+    print(f"  {url}")
+    dest.parent.mkdir(parents=True, exist_ok=True)
+    if dest.is_file():
+        dest.unlink()
+    part = dest.with_name(dest.name + ".part")
+    curl = shutil.which("curl") or shutil.which("curl.exe")
+    if not curl:
+        print("✖ 找不到 curl，無法下載 LLM 模型。")
+        return 1
+    result = subprocess.run([curl, "-L", "-C", "-", "--fail", "-o", str(part), url])
+    if result.returncode != 0 or not part.is_file() or part.stat().st_size == 0:
+        print("✖ 模型下載失敗。再跑一次 windows_setup.bat 會從中斷的地方續傳。")
+        return 1
+    os.replace(part, dest)
+    print(f"✔ {dest.name}（{dest.stat().st_size / 1e9:.1f} GB）")
+    remember_smaller_model(model)
+    return 0
+
+
+def ensure_ui():
+    """建立 .venv、安裝 backend，並編譯 frontend。已經可用就略過。"""
+    import upgrade
+    refresh_windows_path()
+    dist = ROOT / "ui" / "frontend" / "dist" / "index.html"
+    python = upgrade.venv_python()
+    if python.is_file() and dist.is_file():
+        probe = subprocess.run([str(python), "-c", "import fastapi"], capture_output=True)
+        if probe.returncode == 0:
+            print("✔ Web UI 已安裝")
+            return 0
+    try:
+        upgrade.install_ui()
+    except upgrade.UpgradeError as exc:
+        print(f"✖ {exc}")
+        return 1
+    if not dist.is_file():
+        print("✖ Web UI 編譯結束，但找不到 ui/frontend/dist/index.html")
+        return 1
+    print("✔ Web UI 已安裝")
+    return 0
+
+
+def maybe_launch_ui(args, ask):
+    command = [sys.executable, str(ROOT / "lec"), "--start-ui"]
+    shown = " ".join(command)
+    if args.yes or args.dry_run or not sys.stdin.isatty():
+        print(f"啟動 UI：{shown}")
+        print("  瀏覽器開 http://127.0.0.1:8765")
+        return 0
+    if not ask_yes_no("要現在啟動 Web UI 嗎？瀏覽器開 http://127.0.0.1:8765", True, ask):
+        print(f"  稍後執行：{shown}")
+        return 0
+    print("▶ 這個視窗要留著。關掉它或按 Ctrl+C 只會停 UI，不會刪已安裝的東西。")
+    try:
+        result = subprocess.run(command, cwd=str(ROOT))
+    except KeyboardInterrupt:
+        print("\n已關閉 UI。")
+        return 0
+    if result.returncode in (0, 130) or (result.returncode is not None and result.returncode < 0):
+        print("\n已關閉 UI。")
+        return 0
+    return result.returncode
+
+
+def wants_full_install(args):
+    return bool(args.provision) and not args.dry_run
+
+
+def finish_usable_install(args, env, engines, ask):
+    """引擎就緒之後，補上本機模型與 Web UI，讓啟動檔跑完就能用。"""
+    if engines == ["whisper"]:
+        print("\n  這次不下載 LLM 模型。")
+    else:
+        model, why = suggest_model(env)
+        print(f"\n  總結模型：{why}")
+        if ensure_llm_model(model) != 0:
+            return 1
+    if ensure_ui() != 0:
+        return 1
+    return maybe_launch_ui(args, ask)
+
+
+def build_command(engines, backend, prebuilt=False):
+    command = [sys.executable, str(ROOT / "setup_engines.py"), *engines, "--backend", backend]
+    if prebuilt:
+        command.append("--prebuilt")
+    return command
+
+
+def runtime_blockers(blocking):
+    """編譯工具以外、缺了就連預編譯檔都不能用的項目（例如 ffmpeg）。"""
+    return [key for key in blocking if key not in COMPILE_ONLY_KEYS]
 
 
 def model_url(model):
@@ -243,6 +527,7 @@ def model_hint(model):
 def run_setup(args, ask):
     env = detect()
     show_environment(env)
+    report_dependencies(env)
 
     if sys.version_info < (3, 11):
         print(f"\n✖ lec 需要 Python 3.11 以上（現在是 {env['python']}），請先升級再跑一次。")
@@ -260,37 +545,87 @@ def run_setup(args, ask):
     if not backend:
         print("\n已取消。")
         return 1
-    print(f"  → {backend}（{reason}）")
-
     engines = ["whisper"] if args.whisper_only else ([] if args.yes else choose_engines(env, ask))
+    print(f"  → {backend}（{reason}）")
 
     missing, blocking = missing_tools(backend)
     report_missing(missing, blocking, env["package_manager"])
-    if blocking:
+
+    use_prebuilt = False
+    if args.prebuilt:
+        if env["platform"] != "windows":
+            print("\n✖ --prebuilt 只適用於 Windows。")
+            return 1
+        if backend != "vulkan":
+            print("\n✖ 內建的 Windows 預編譯檔是 Vulkan 版 llama.cpp（whisper 為官方 CPU 版）。")
+            print("  CUDA 請看 README「Windows 預編譯檔」，或拿掉 --prebuilt 自己編譯。")
+            return 1
+        use_prebuilt = True
+    if wants_full_install(args) and env["platform"] == "windows":
+        if not install_missing_runtime(args, ask):
+            return 1
+        missing, blocking = missing_tools(backend)
+    if runtime_blockers(blocking):
         print("\n✖ 先補上標成 ✖ 的東西，再跑一次 python3 setup.py。")
         return 1
+    if backend == "cuda" and not env.get("cuda"):
+        print("\n✖ 還沒有 CUDA Toolkit（nvcc）。這次不會編譯，也不會下載。")
+        if "nvcc" not in missing:
+            print("  安裝說明（不會自動安裝）：")
+            for line in install_lines(["nvcc"], env["package_manager"]):
+                print(line)
+        print("  裝好 Toolkit 後再跑一次；或重新執行，改選 Vulkan。")
+        return 1
+    if blocking and not use_prebuilt:
+        if env["platform"] == "windows" and backend == "vulkan":
+            print("\n  沒有編譯環境時，可以改下載官方預編譯檔（不需要 Visual Studio 或 Vulkan SDK）。")
+            if engines == ["whisper"]:
+                print("  這次只裝 whisper.cpp。官方 Windows 版是 CPU。")
+            else:
+                print("  whisper.cpp 官方 Windows 版是 CPU；llama.cpp 這個包是 Vulkan，會用到顯示卡。")
+            if args.yes:
+                use_prebuilt = True
+                print("  → --yes：改用官方預編譯檔")
+            elif ask_yes_no("改用官方 Windows 預編譯檔嗎？", True, ask):
+                use_prebuilt = True
+            else:
+                print("\n✖ 先補上標成 ✖ 的東西，再跑一次 python3 setup.py。")
+                return 1
+        else:
+            print("\n✖ 先補上標成 ✖ 的東西，再跑一次 python3 setup.py。")
+            return 1
 
+    needed = 4 if engines == ["whisper"] else NEEDED_DISK_GB
     free = env["free_disk_gb"]
-    if free and free < NEEDED_DISK_GB:
-        print(f"\n⚠ 可用磁碟只有 {free:.0f} GB，引擎與模型大約需要 {NEEDED_DISK_GB} GB。")
+    if free and free < needed:
+        print(f"\n⚠ 可用磁碟只有 {free:.0f} GB，這次大約需要 {needed} GB。")
         if not args.yes and not ask_yes_no("仍要繼續嗎？", False, ask):
             print("\n已取消。")
             return 1
 
-    command = build_command(engines, backend)
+    command = build_command(engines, backend, prebuilt=use_prebuilt)
     title("接下來會做的事")
     print("  " + " ".join(command))
-    print("  （依 engines.lock 取得原始碼並編譯，順便下載 whisper 模型約 1.6GB）")
+    if use_prebuilt:
+        print("  （下載官方 Windows 預編譯檔，不編譯；順便下載 whisper 模型約 1.6GB）")
+    else:
+        print("  （依 engines.lock 取得原始碼並編譯，順便下載 whisper 模型約 1.6GB）")
     if not engines:
         model, why = suggest_model(env)
         print(f"\n  總結模型：{why}")
-        for line in model_hint(model):
-            print(line)
-        print("  （setup_engines.py 不會自動下載 LLM 模型；用 --import-models 可以搬入既有檔案）")
+        if wants_full_install(args):
+            print("  引擎裝好後會下載這個 GGUF。")
+        else:
+            for line in model_hint(model):
+                print(line)
+            print("  （setup_engines.py 不會自動下載 LLM 模型；用 --import-models 可以搬入既有檔案）")
     if args.dry_run:
-        print("\n--dry-run：到這裡為止，沒有編譯。")
+        if args.provision:
+            print("  --provision：正式執行時還會用 winget 補執行環境、下載 LLM 模型、安裝 Web UI。")
+        print("\n--dry-run：到這裡為止，沒有真的安裝。")
         return 0
-    if not args.yes and not ask_yes_no("\n開始編譯嗎？", True, ask):
+    question = "\n開始下載預編譯檔嗎？" if use_prebuilt else "\n開始編譯嗎？"
+    if not args.yes and not ask_yes_no(question, True, ask):
         print("\n已取消。")
         return 1
 
@@ -298,6 +633,11 @@ def run_setup(args, ask):
     if result.returncode != 0:
         print("\n✖ setup_engines.py 失敗，訊息在上面。修好後可以直接重跑這支腳本。")
         return result.returncode
+
+    if wants_full_install(args):
+        code = finish_usable_install(args, env, engines, ask)
+        if code != 0:
+            return code
 
     title("下一步")
     lec = "python lec" if P.IS_WINDOWS else "./lec"
@@ -317,6 +657,10 @@ def parse_args(argv=None):
                         help="跳過後端詢問，直接指定")
     parser.add_argument("--whisper-only", action="store_true",
                         help="只裝 whisper.cpp（不做總結）")
+    parser.add_argument("--prebuilt", action="store_true",
+                        help="Windows：下載官方預編譯檔，不編譯")
+    parser.add_argument("--provision", action="store_true",
+                        help="補齊執行環境、LLM 模型與 Web UI；windows_setup.bat 會加上")
     return parser.parse_args(argv)
 
 

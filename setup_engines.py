@@ -11,9 +11,11 @@
   python3 setup_engines.py --backend vulkan   後端：auto（預設）/ vulkan / cuda / metal / cpu
   python3 setup_engines.py --import-models DIR  從其他位置搬入已下載的模型
   python3 setup_engines.py --generator Ninja  指定 cmake generator（Windows 預設依已安裝的 Visual Studio 自動選）
+  python3 setup_engines.py --prebuilt        只適用 Windows：下載官方預編譯檔，不編譯
 
 後端預設：Linux 與 Windows 用 Vulkan，macOS 用 Metal。
 以靜態連結編譯（BUILD_SHARED_LIBS=OFF），整個專案資料夾搬到哪裡都能執行。
+--prebuilt 不編譯，版本見 WIN_PREBUILT，跟 engines.lock 的原始碼 commit 不一定相同。
 """
 import argparse
 import hashlib
@@ -22,6 +24,7 @@ import shutil
 import subprocess
 import sys
 import tarfile
+import zipfile
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parent
@@ -75,7 +78,30 @@ APT_HINT = ("sudo apt install git cmake build-essential pkg-config "
 BREW_HINT = "xcode-select --install && brew install cmake ffmpeg opencc"
 WIN_HINT = ("請安裝：Git for Windows、CMake、Visual Studio Build Tools（含 C++ 桌面開發），"
             "Vulkan 版另需 Vulkan SDK（https://vulkan.lunarg.com），CUDA 版另需 CUDA Toolkit。\n"
-            "  不想安裝編譯環境的話，可改用官方預編譯檔，見 README「Windows 預編譯檔」。")
+            "  不想安裝編譯環境的話，執行 python setup_engines.py --prebuilt。")
+
+# 官方 Windows 預編譯檔。這不是 engines.lock 裡的原始碼 commit：
+# whisper.cpp 從 v1.9.0 之後就沒有再附 Windows 執行檔；llama.cpp 用 b11067 的
+# Vulkan 版，跟本專案傳給 llama-server 的參數相容，而且執行時只要系統有 Vulkan 驅動。
+# 雜湊不符就拒絕安裝，避免下載中斷或檔案被換掉還繼續用。
+_WHISPER_PREBUILT = {
+    "id": "whisper-bin-x64-v1.9.0",
+    "backend": "cpu",
+    "url": "https://github.com/ggml-org/whisper.cpp/releases/download/v1.9.0/whisper-bin-x64.zip",
+    "sha256": "00c4304b6be363a224a4b69829df49009f74131df8c3ce6a5878b89a11cd26ef",
+    "server": "whisper-server.exe",
+    "note": "官方 Windows 版沒有 Vulkan 建置，whisper 用 CPU",
+}
+_LLAMA_VULKAN_PREBUILT = {
+    "id": "llama-b11067-bin-win-vulkan-x64",
+    "backend": "vulkan",
+    "url": ("https://github.com/ggml-org/llama.cpp/releases/download/b11067/"
+            "llama-b11067-bin-win-vulkan-x64.zip"),
+    "sha256": "fb0761e218675372bc59eae5ef802936a2aa7edabda4a17df4f8a732adcad20d",
+    "server": "llama-server.exe",
+    "note": "Vulkan 版；執行時用系統的 Vulkan 驅動，不需要 Vulkan SDK",
+}
+WIN_PREBUILT = {"whisper": _WHISPER_PREBUILT, "llama": {"vulkan": _LLAMA_VULKAN_PREBUILT}}
 
 
 def step(msg):
@@ -364,8 +390,180 @@ def fetch_diarization_models(models_dir=None, downloader=None):
     return paths
 
 
+def ensure_whisper_model(directory, import_dir):
+    model = Path(directory) / "models" / f"ggml-{WHISPER_MODEL}.bin"
+    import_model(model, model.name, import_dir)
+    if not model.is_file():
+        print(f"▶ 下載 whisper 模型 {WHISPER_MODEL}（約 1.6GB）")
+        download(WHISPER_MODEL_URL, model)
+    print(f"✔ 模型 {model.stat().st_size / 1e9:.1f} GB {model}")
+
+
+def report_llama_runtime(binary, import_dir):
+    devs = [line.strip() for line in out([binary, "--list-devices"]).splitlines()
+            if line.strip().lower().startswith(("vulkan", "cuda", "metal", "rocm"))]
+    print("▶ 可用裝置：" + ("；".join(devs) if devs else "（沒偵測到 GPU，會用 CPU）"))
+    models = ROOT / "models"
+    models.mkdir(exist_ok=True)
+    for name in ("Qwen3-8B-Q4_K_M.gguf", "Qwen3-4B-Q4_K_M.gguf"):
+        import_model(models / name, name, import_dir)
+    found = sorted(models.glob("*.gguf"))
+    if found:
+        for path in found:
+            print(f"✔ {path.stat().st_size / 1e9:.1f} GB  {path}")
+    else:
+        print(f"⚠ {models} 裡沒有 .gguf，請依 README 下載 Qwen3-8B-Q4_K_M.gguf")
+
+
+# ---------------------------------------------------------------- Windows 預編譯檔
+def prebuilt_spec(engine, backend):
+    """這個引擎在 --prebuilt 時要下載的那一包。whisper 一律是官方 CPU zip。"""
+    if engine == "whisper":
+        return WIN_PREBUILT["whisper"]
+    if engine != "llama":
+        die(f"沒有 {engine} 的 Windows 預編譯檔")
+    spec = WIN_PREBUILT["llama"].get(backend)
+    if not spec:
+        die(f"Windows 預編譯檔沒有 {backend} 版的 llama.cpp（目前只有 vulkan）。"
+            "CUDA 或 CPU 版請看 README「Windows 預編譯檔」自己放進 llama.cpp\\build\\bin，"
+            "或安裝編譯環境後不要加 --prebuilt。")
+    return spec
+
+
+def prebuilt_stamp(spec):
+    return f"PREBUILT={spec['id']} BACKEND={spec['backend']}"
+
+
+def _zip_member_name(filename):
+    """只取 zip 成員的檔名。含 ..、絕對路徑或磁碟機代號就拒絕。"""
+    raw = filename.replace("\\", "/")
+    if raw.startswith("/") or (len(raw) >= 2 and raw[1] == ":"):
+        die(f"壓縮檔含有不安全的路徑：{filename}")
+    parts = [part for part in raw.split("/") if part not in ("", ".")]
+    if not parts or ".." in parts:
+        die(f"壓縮檔含有不安全的路徑：{filename}")
+    return parts[-1]
+
+
+def extract_windows_binaries(archive, dest):
+    """把 zip 裡的 .exe / .dll 平放到 dest。其他檔不取，路徑也不保留。"""
+    dest = Path(dest)
+    dest.mkdir(parents=True, exist_ok=True)
+    placed = {}
+    with zipfile.ZipFile(archive) as bundle:
+        for info in bundle.infolist():
+            if info.is_dir():
+                continue
+            name = _zip_member_name(info.filename)
+            if Path(name).suffix.lower() not in {".exe", ".dll"}:
+                continue
+            if name in placed:
+                die(f"壓縮檔裡有兩個 {name}，無法決定要放哪一個")
+            target = dest / name
+            with bundle.open(info, "r") as src, target.open("wb") as out_file:
+                shutil.copyfileobj(src, out_file)
+            placed[name] = target
+    if not placed:
+        die(f"{archive} 裡沒有 .exe 或 .dll")
+    return placed
+
+
+def download_verified(url, dest, expected, what, downloader=None):
+    """下載到 dest.part，雜湊相符才改名。失敗時留下 .part，方便 curl 續傳。"""
+    dest = Path(dest)
+    dest.parent.mkdir(parents=True, exist_ok=True)
+    part = dest.with_name(dest.name + ".part")
+    (downloader or download)(url, part)
+    _verified_or_die(part, expected, what)
+    os.replace(part, dest)
+    return dest
+
+
+def _clear_imported_binaries(dest):
+    dest = Path(dest)
+    if not dest.is_dir():
+        return
+    for path in dest.iterdir():
+        if path.is_file() and path.suffix.lower() in {".exe", ".dll"}:
+            path.unlink()
+
+
+def binary_starts(path):
+    """執行檔能不能啟動。缺 DLL 時 Windows 常常沒有 stdout，而且結束碼不是 0。"""
+    try:
+        result = subprocess.run(
+            [str(path), "--help"], capture_output=True, text=True, encoding="utf-8",
+            errors="replace", timeout=30, env=P.env_with_libs(path))
+    except (OSError, subprocess.TimeoutExpired):
+        return False
+    if result.returncode == 0:
+        return True
+    return bool(result.stdout or result.stderr)
+
+
+def install_prebuilt_archive(spec, dest_dir, downloader=None):
+    """下載、驗證、解出 spec 描述的那一包，回傳 server 執行檔路徑。"""
+    dest_dir = Path(dest_dir)
+    archive = dest_dir.parent / f"{spec['id']}.zip"
+    print(f"▶ 下載 {spec['id']}")
+    download_verified(spec["url"], archive, spec["sha256"], spec["id"], downloader)
+    _clear_imported_binaries(dest_dir)
+    placed = extract_windows_binaries(archive, dest_dir)
+    try:
+        archive.unlink()
+    except OSError:
+        pass
+    server = dest_dir / spec["server"]
+    if not server.is_file():
+        found = ", ".join(sorted(name for name in placed if name.lower().endswith(".exe"))) or "（沒有）"
+        die(f"預編譯檔裡沒有 {spec['server']}。找到的執行檔：{found}")
+    return server
+
+
+def install_prebuilt(names, backend, import_dir=None):
+    """Windows：放置官方預編譯檔，不下載原始碼、也不呼叫 cmake。"""
+    if P.NAME != "windows":
+        die("--prebuilt 只適用於 Windows。這個平台請用原始碼編譯。")
+    if backend != "vulkan":
+        die("--prebuilt 目前只支援 --backend vulkan（Windows 預設）。"
+            "whisper 會用官方 CPU 版；llama.cpp 用 Vulkan 版。"
+            "要 CPU 或 CUDA 版請看 README「Windows 預編譯檔」自己放檔，"
+            "或安裝編譯環境後不要加 --prebuilt。")
+    specs = [(name, prebuilt_spec(name, backend)) for name in names]
+    for name, spec in specs:
+        engine = ENGINES[name]
+        step(f"{engine['dir'].name} 預編譯檔")
+        print(f"  {spec['note']}")
+        dest = engine["dir"] / "build" / "bin"
+        stamp_path = P.build_stamp_path(engine["dir"])
+        server = dest / spec["server"]
+        want = prebuilt_stamp(spec)
+        try:
+            have = stamp_path.read_text(encoding="utf-8").strip()
+        except OSError:
+            have = ""
+        if server.is_file() and have == want and binary_starts(server):
+            print(f"▶ 已有相同的預編譯檔 {server.name}，略過"
+                  f"（要重抓請刪除 {engine['dir'].name}\\build）")
+        else:
+            server = install_prebuilt_archive(spec, dest)
+            if not binary_starts(server):
+                die(f"{server.name} 無法啟動。檔案在 {dest}。"
+                    "請確認已安裝 Visual C++ 可轉散發套件，Vulkan 版還需要顯示卡驅動。")
+            stamp_path.parent.mkdir(parents=True, exist_ok=True)
+            stamp_path.write_text(want + "\n", encoding="utf-8")
+            print(f"✔ {server}（預編譯 {spec['backend']}）")
+        if name == "whisper":
+            ensure_whisper_model(engine["dir"], import_dir)
+        else:
+            report_llama_runtime(server, import_dir)
+    step("完成")
+    print("下一步：python lec doctor")
+    return 0
+
+
 # ---------------------------------------------------------------- 主程式
-def main():
+def main(argv=None):
     ap = argparse.ArgumentParser(description="取得並編譯 whisper.cpp / llama.cpp",
                                  formatter_class=argparse.RawDescriptionHelpFormatter,
                                  epilog=__doc__)
@@ -378,7 +576,9 @@ def main():
     ap.add_argument("--import-models", metavar="DIR")
     ap.add_argument("--generator", metavar="NAME",
                     help="傳給 cmake -G（例如 Ninja）。預設：Windows 依 vswhere 找到的 Visual Studio 自動指定，其他平台交給 cmake")
-    args = ap.parse_args()
+    ap.add_argument("--prebuilt", action="store_true",
+                    help="Windows：下載官方預編譯檔到 build/bin，不編譯（沒有 Visual Studio / Vulkan SDK 時用）")
+    args = ap.parse_args(argv)
 
     want_diarize = "diarize" in args.engines
     engine_args = [n for n in args.engines if n != "diarize"]
@@ -396,6 +596,22 @@ def main():
     if backend not in BACKEND_FLAGS:
         die(f"不支援的後端：{backend}")
     lock = lock_read()
+
+    if args.prebuilt:
+        if args.update or args.lock or args.rebuild:
+            die("--prebuilt 不能跟 --update、--lock 或 --rebuild 一起用")
+        if P.NAME != "windows":
+            die("--prebuilt 只適用於 Windows。這個平台請用原始碼編譯。")
+        if backend != "vulkan":
+            die("--prebuilt 目前只支援 --backend vulkan（Windows 預設）。"
+                "whisper 會用官方 CPU 版；llama.cpp 用 Vulkan 版。"
+                "要 CPU 或 CUDA 版請看 README「Windows 預編譯檔」自己放檔，"
+                "或安裝編譯環境後不要加 --prebuilt。")
+        code = install_prebuilt(names, backend, args.import_models)
+        if want_diarize:
+            step("發言者辨識模型")
+            fetch_diarization_models()
+        return code
 
     if args.lock:
         for name in names:
@@ -425,27 +641,9 @@ def main():
             lock_write(e["key"], e["dir"])
 
         if name == "whisper":
-            model = e["dir"] / "models" / f"ggml-{WHISPER_MODEL}.bin"
-            import_model(model, model.name, args.import_models)
-            if not model.is_file():
-                print(f"▶ 下載 whisper 模型 {WHISPER_MODEL}（約 1.6GB）")
-                download(WHISPER_MODEL_URL, model)
-            print(f"✔ 模型 {model.stat().st_size / 1e9:.1f} GB {model}")
+            ensure_whisper_model(e["dir"], args.import_models)
         else:
-            bin_path = P.find_engine_bin(e["dir"], "llama-server")
-            devs = [l.strip() for l in out([bin_path, "--list-devices"]).splitlines()
-                    if l.strip().lower().startswith(("vulkan", "cuda", "metal", "rocm"))]
-            print("▶ 可用裝置：" + ("；".join(devs) if devs else "（沒偵測到 GPU，會用 CPU）"))
-            models = ROOT / "models"
-            models.mkdir(exist_ok=True)
-            for m in ("Qwen3-8B-Q4_K_M.gguf", "Qwen3-4B-Q4_K_M.gguf"):
-                import_model(models / m, m, args.import_models)
-            found = sorted(models.glob("*.gguf"))
-            if found:
-                for f in found:
-                    print(f"✔ {f.stat().st_size / 1e9:.1f} GB  {f}")
-            else:
-                print(f"⚠ {models} 裡沒有 .gguf，請依 README 下載 Qwen3-8B-Q4_K_M.gguf")
+            report_llama_runtime(P.find_engine_bin(e["dir"], "llama-server"), args.import_models)
 
     if want_diarize:
         step("發言者辨識模型")

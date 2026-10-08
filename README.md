@@ -148,17 +148,26 @@ macOS 內建的 `python3` 通常是 3.9，低於需求的 3.11；上面的 `brew
 
 **2. 編譯引擎並取得 whisper 模型**
 
-不確定該選哪個 GPU 後端的話，用互動式安裝：它會偵測這台機器（GPU、CUDA Toolkit、
-記憶體、磁碟、套件管理器）、問幾個問題，再呼叫 `setup_engines.py`。
-**它不會安裝任何系統套件**，只會告訴你缺哪些、以及這台機器對應的安裝指令。
+不確定該選哪個 GPU 後端的話，用互動式安裝：它會先做依賴自檢（Python、ffmpeg、
+GPU、CUDA Toolkit、磁碟），再問幾個問題，然後呼叫 `setup_engines.py`。
+NVIDIA 會問要不要用 CUDA；還沒有 CUDA Toolkit 時選 CUDA 只會印出安裝說明，不會編譯或下載。
+`--yes` 不會詢問。外部摘要 API 不在這裡設定，用 Web UI 的「本機設定 → 摘要 API 上游」。
+
+**全新的 Windows：** clone 之後雙擊 `windows_setup.bat`（或在 repo 資料夾執行它）。
+它會尋找 Python 3.11+，沒有就用 winget 安裝 Python 3.13，接著補上缺少的 ffmpeg、Git、
+Node.js 與 VC++ 執行庫，下載語音引擎與總結模型，建好 Web UI，並詢問要不要立刻打開
+<http://127.0.0.1:8765>。沒有 Visual Studio 時會改用官方預編譯檔。
+Linux／macOS 的 `setup.py` **不會安裝系統套件**，只會告訴你缺哪些、以及對應的安裝指令。
 
 ```bash
 python3 setup.py                    # Linux/macOS；Windows 用 python setup.py
 ```
 
-Linux 可以跑 `./linux_setup.sh`，macOS 在 Finder 雙擊 `mac_setup.command`，
-Windows 雙擊 `windows_setup.bat`——三個都只是同一支 `setup.py` 的入口。
-先看它會做什麼而不編譯：`python3 setup.py --dry-run`。
+Linux 可以跑 `./linux_setup.sh`，macOS 在 Finder 雙擊 `mac_setup.command`。
+這兩個入口只轉呼叫 `setup.py`。Windows 用雙擊 `windows_setup.bat`：它會先準備
+Python，再執行 `setup.py --provision`。
+先看它會做什麼而不安裝：`python3 setup.py --dry-run`（Windows 啟動檔加上
+`--dry-run` 同樣不會安裝）。
 
 自己清楚要什麼的話也可以直接跑：
 
@@ -371,10 +380,22 @@ npm run dev
 
 ### Windows 預編譯檔（不想裝編譯環境時）
 
-llama.cpp 官方有 Windows Vulkan / CUDA 版，whisper.cpp 官方只有 CPU 與 cuBLAS 版（且只有部分 release 附執行檔，例如 v1.9.0）。
-手動下載後把執行檔與 DLL 放進 `llama.cpp/build/bin/` 與 `whisper.cpp/build/bin/`，`lec doctor` 就能找到：
+沒有 Visual Studio 或 Vulkan SDK 時，在 repo 資料夾執行：
 
-- <https://github.com/ggml-org/llama.cpp/releases>：`llama-<版本>-bin-win-vulkan-x64.zip`
+```bat
+python setup_engines.py --prebuilt
+```
+
+`python setup.py` 若偵測到缺的是編譯工具，也會改走這條路。它會下載並核對 SHA-256：
+
+- whisper.cpp v1.9.0 的 `whisper-bin-x64.zip`（CPU。官方沒有 Windows Vulkan 版，而且 v1.9.1 之後沒有再發布 Windows 執行檔）
+- llama.cpp b11067 的 `llama-b11067-bin-win-vulkan-x64.zip`
+
+執行檔會放進 `whisper.cpp/build/bin/` 與 `llama.cpp/build/bin/`。這兩個版本跟 `engines.lock` 的原始碼 commit 不同；要完全同一版請改裝編譯環境，不要加 `--prebuilt`。CUDA 與純 CPU 的 llama 預編譯檔還沒有自動下載。
+
+也可以自己從下面的位置下載，把執行檔與 DLL 放進上面兩個 `build/bin/`，`lec doctor` 就能找到：
+
+- <https://github.com/ggml-org/llama.cpp/releases>：`llama-<版本>-bin-win-vulkan-x64.zip`（或 CUDA 版）
 - <https://github.com/ggml-org/whisper.cpp/releases/tag/v1.9.0>：`whisper-bin-x64.zip`（CPU）或 `whisper-cublas-12.4.0-bin-x64.zip`（NVIDIA）
 
 ### 目錄結構
@@ -384,7 +405,8 @@ llama.cpp 官方有 Windows Vulkan / CUDA 版，whisper.cpp 官方只有 CPU 與
 ├─ lec, core/, prompts/          程式
 ├─ ui/backend/, ui/frontend/     本機 FastAPI service 與 React UI
 ├─ setup.py                      互動式安裝（偵測環境、告知缺少的套件）
-├─ linux_setup.sh / mac_setup.command / windows_setup.bat   setup.py 的平台入口
+├─ linux_setup.sh / mac_setup.command    setup.py 的平台入口
+├─ windows_setup.bat                     全新 Windows：準備 Python 並 setup.py --provision
 ├─ setup_engines.py              取得與編譯引擎
 ├─ upgrade.py                    更新既有安裝並重新編譯
 ├─ samples/                      8 分鐘範例音檔、講稿與參考輸出
