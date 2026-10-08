@@ -371,10 +371,22 @@ npm run dev
 
 ### Windows 預編譯檔（不想裝編譯環境時）
 
-llama.cpp 官方有 Windows Vulkan / CUDA 版，whisper.cpp 官方只有 CPU 與 cuBLAS 版（且只有部分 release 附執行檔，例如 v1.9.0）。
-手動下載後把執行檔與 DLL 放進 `llama.cpp/build/bin/` 與 `whisper.cpp/build/bin/`，`lec doctor` 就能找到：
+沒有 Visual Studio 或 Vulkan SDK 時，在 repo 資料夾執行：
 
-- <https://github.com/ggml-org/llama.cpp/releases>：`llama-<版本>-bin-win-vulkan-x64.zip`
+```bat
+python setup_engines.py --prebuilt
+```
+
+`python setup.py` 若偵測到缺的是編譯工具，也會改走這條路。它會下載並核對 SHA-256：
+
+- whisper.cpp v1.9.0 的 `whisper-bin-x64.zip`（CPU。官方沒有 Windows Vulkan 版，而且 v1.9.1 之後沒有再發布 Windows 執行檔）
+- llama.cpp b11067 的 `llama-b11067-bin-win-vulkan-x64.zip`
+
+執行檔會放進 `whisper.cpp/build/bin/` 與 `llama.cpp/build/bin/`。這兩個版本跟 `engines.lock` 的原始碼 commit 不同；要完全同一版請改裝編譯環境，不要加 `--prebuilt`。CUDA 與純 CPU 的 llama 預編譯檔還沒有自動下載。
+
+也可以自己從下面的位置下載，把執行檔與 DLL 放進上面兩個 `build/bin/`，`lec doctor` 就能找到：
+
+- <https://github.com/ggml-org/llama.cpp/releases>：`llama-<版本>-bin-win-vulkan-x64.zip`（或 CUDA 版）
 - <https://github.com/ggml-org/whisper.cpp/releases/tag/v1.9.0>：`whisper-bin-x64.zip`（CPU）或 `whisper-cublas-12.4.0-bin-x64.zip`（NVIDIA）
 
 ### 目錄結構
