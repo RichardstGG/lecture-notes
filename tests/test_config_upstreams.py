@@ -26,7 +26,7 @@ class UpstreamConfigTests(unittest.TestCase):
         spec = dict(name='內網 GPU', base_url='http://private.invalid:8000/v1',
                     model='private-model', api_key='secret-token')
         spec.update(changes)
-        self.path.write_text(C.dump_toml({'upstreams': {'lab': spec}}))
+        self.path.write_text(C.dump_toml({'upstreams': {'lab': spec}}), encoding='utf-8')
 
     def test_absent_registry_preserves_local(self):
         self.assertIsNone(self.cfg.remote_summary())
@@ -49,7 +49,7 @@ class UpstreamConfigTests(unittest.TestCase):
     def test_env_auth_resolved_only_for_selected_request(self):
         self.path.write_text(C.dump_toml({'upstreams': {'lab': {
             'name': 'Lab', 'base_url': 'https://private.invalid/api/v1/',
-            'model': '30b', 'api_key_env': 'LEC_TEST_KEY'}}}))
+            'model': '30b', 'api_key_env': 'LEC_TEST_KEY'}}}), encoding='utf-8')
         self.cfg.data['summary']['upstream'] = 'lab'
         with patch.dict(os.environ, {}, clear=True):
             self.assertEqual(len(self.cfg.upstream_inventory()['options']), 2)
@@ -70,7 +70,7 @@ class UpstreamConfigTests(unittest.TestCase):
                 with self.assertRaises(C.ConfigError) as error:
                     C.load_upstreams()
                 self.assertNotIn('secret', str(error.exception))
-        self.path.write_text('[upstreams.lab]\napi_key="secret')
+        self.path.write_text('[upstreams.lab]\napi_key="secret', encoding='utf-8')
         with self.assertRaises(C.ConfigError) as error:
             C.load_upstreams()
         self.assertNotIn('secret', str(error.exception))
@@ -93,9 +93,9 @@ class UpstreamConfigTests(unittest.TestCase):
             with self.subTest(command=command), tempfile.TemporaryDirectory() as tmp:
                 root = Path(tmp)
                 course = root / 'course.toml'
-                course.write_text('[summary]\nupstream="old"\n')
+                course.write_text('[summary]\nupstream="old"\n', encoding='utf-8')
                 used = root / 'config.used.toml'
-                used.write_text('[summary]\nupstream="old"\n')
+                used.write_text('[summary]\nupstream="old"\n', encoding='utf-8')
                 cls = 'LectureRun' if command == 'run' else 'OfflineSummary'
                 args = ['run', str(course)] if command == 'run' else ['summarize', tmp, '--redo', 'all']
                 with patch.object(C, 'LOCAL_FILE', root / 'absent'), patch('core.session.' + cls) as run:
