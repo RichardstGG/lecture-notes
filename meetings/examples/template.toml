@@ -1,0 +1,14 @@
+# 會議設定（實驗中）：複製成 meetings/<id>.toml；不使用 courses/。
+# 目前提供設定查詢，錄音／匯入／會後辨識 CLI/API 仍待後續接線。
+[meeting]
+name = ""
+
+[diarization]
+num_speakers = 0  # 尚未指定；執行辨識時必須提供 1..30，不等於實際發言者數
+
+# 可選的會議專用覆寫；未寫的鍵繼承 default.toml → local.toml。
+# [audio]
+# source = "default"
+# [whisper]
+# language = "zh"
+# prompt = "以下是繁體中文的會議內容，包含中文與英文術語。"

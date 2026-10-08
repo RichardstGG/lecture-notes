@@ -11,7 +11,7 @@ from datetime import datetime
 from pathlib import Path
 
 from . import platform as P
-from .config import ConfigError
+from .config import ConfigError, meeting_output_parts
 from .servers import LlamaServer, ServerError, WhisperServer
 from .status import RunLock, Status
 from .summarize import Summarizer
@@ -55,6 +55,30 @@ def make_session_dir(cfg):
         n += 1
     d.mkdir(parents=True, exist_ok=True)
     return d
+
+
+def make_meeting_session_dir(cfg):
+    """Allocate a fresh directory, including when an existing collision is empty."""
+    root = cfg.path(cfg["paths"]["output_root"]).resolve()
+    parts = meeting_output_parts(cfg.get("paths.meeting_output_root"))
+    parent = root
+    # Refuse symlinked meeting subdirectories, including dangling links.
+    for part in parts:
+        parent = parent / part
+        if parent.is_symlink():
+            raise ConfigError("會議輸出路徑不可包含符號連結")
+    if not parent.resolve().is_relative_to(root):
+        raise ConfigError("會議輸出路徑不可超出 output_root")
+    name = cfg.meeting_directory_name(datetime.now())
+    parent.mkdir(parents=True, exist_ok=True)
+    suffix = 1
+    while True:
+        candidate = parent / (name if suffix == 1 else f"{name}-{suffix}")
+        try:
+            candidate.mkdir()  # Atomic exclusive allocation, never exist_ok=True.
+            return candidate
+        except FileExistsError:
+            suffix += 1
 
 
 STOP_FILE, STOP_FORCE_FILE = "stop", "stop_force"
@@ -196,6 +220,8 @@ class LectureRun(_Base):
 
     def run(self):
         cfg = self.cfg
+        if cfg.work_type != "lecture":
+            die("此入口只處理 lecture；會議或未知工作類型不可使用課堂流程")
         # Reject before acquiring the shared lock, creating files or starting engines.
         # File input must not silently discard a requested dual capture either.
         if cfg.capture_plan()["mode"] == "dual":
@@ -360,6 +386,8 @@ class OfflineSummary(_Base):
         self._force_exit()
 
     def run(self):
+        if self.cfg.work_type != "lecture":
+            die("此入口只處理 lecture；會議或未知工作類型不可使用課堂流程")
         if not (self.dir / "transcript.md").exists():
             die(f"{self.dir} 裡沒有 transcript.md")
         cur = self.lock.acquire(course=self.cfg.course_name, session=str(self.dir), mode="summarize")
