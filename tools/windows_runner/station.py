@@ -121,7 +121,11 @@ def execute_step(command, repo, log, control, profile, deadline):
         if key.startswith(("GITHUB_", "ACTIONS_", "RUNNER_")) or key in {"GH_TOKEN", "GITHUB_TOKEN"}:
             env.pop(key)
     with log.open("wb") as stream:
-        proc = subprocess.Popen(command, cwd=repo, env=env, stdout=stream, stderr=subprocess.STDOUT)
+        # A Windows console event can broadcast beyond the requested PID. Tests
+        # must not share the listener's console, even when their output is piped.
+        flags = subprocess.CREATE_NO_WINDOW if sys.platform == "win32" else 0
+        proc = subprocess.Popen(command, cwd=repo, env=env, stdout=stream,
+                                stderr=subprocess.STDOUT, creationflags=flags)
         try:
             while proc.poll() is None:
                 require_window(control, profile)
@@ -171,7 +175,6 @@ def run(args):
             report["acceleration_verified"] = False
             report["configured_backend"] = "vulkan"
         deadline = started + args.timeout_seconds
-        report["status"] = "passed"
         for name, command in commands(args.repo, args.profile, config, local_run):
             code = execute_step(command, args.repo, local_run / f"{name}.log",
                                 control, args.profile, deadline)
@@ -188,10 +191,14 @@ def run(args):
             if code:
                 report["status"] = "failed"
                 break
+        else:
+            report["status"] = "passed"
     except Blocked as exc:
         report.update(status="blocked", reason=str(exc))
     except TimeoutError:
         report.update(status="timed_out", reason="execution_deadline")
+    except KeyboardInterrupt:
+        report.update(status="error", reason="execution_interrupted")
     except Exception as exc:
         # Paths, device names, transcripts and arbitrary test output stay local.
         (local_run / "runner-error.txt").write_text(repr(exc), encoding="utf-8")
