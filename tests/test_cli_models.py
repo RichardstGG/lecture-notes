@@ -55,7 +55,7 @@ class ModelDiscoveryTests(unittest.TestCase):
         self.assertEqual(data["summary"]["selected"], "installed-summary")
         self.assertEqual(data["summary"]["models"][0], {
             "id": "installed-summary",
-            "path": str(self.summary_path),
+            "path": str(self.summary_path.resolve()),
             "available": True,
             "size_bytes": 5,
             "disable_thinking": True,
