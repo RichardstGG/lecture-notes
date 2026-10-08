@@ -15,6 +15,7 @@ import threading
 import time
 import unittest
 from pathlib import Path
+from unittest import mock
 
 from . import _pathfix  # noqa: F401
 from . import _capture_fakes as F
@@ -39,6 +40,34 @@ class Events:
     def of(self, kind):
         with self.lock:
             return [kv for k, kv in self.rows if k == kind]
+
+
+class ProbeDurationTests(unittest.TestCase):
+    """_probe_duration 讀 ffprobe 的文字輸出。不指定 encoding 的 text=True 會用系統預設編碼
+    （Windows 是 cp950）；輸出只有數字所以現在無害，但要和其他子行程呼叫一致，免得之後輸出多了
+    非 ASCII 內容（例如路徑）才發現。純函式測試，不需要 ffmpeg。"""
+
+    def _run(self, **result):
+        done = mock.Mock(**{"stdout": "12.345\n", **result})
+        with mock.patch.object(C.subprocess, "run", return_value=done) as run:
+            value = C._probe_duration("x.ogg")
+        return value, run
+
+    def test_text_output_is_decoded_as_utf8_with_replacement(self):
+        value, run = self._run()
+        self.assertEqual(value, 12.345)
+        kwargs = run.call_args.kwargs
+        self.assertTrue(kwargs["text"])
+        self.assertEqual(kwargs["encoding"], "utf-8")
+        self.assertEqual(kwargs["errors"], "replace", "壞位元組不能讓呼叫崩潰")
+
+    def test_unreadable_output_is_none_not_a_crash(self):
+        self.assertIsNone(self._run(stdout="N/A\n")[0])
+        self.assertIsNone(self._run(stdout="")[0])
+
+    def test_missing_ffprobe_is_none(self):
+        with mock.patch.object(C.subprocess, "run", side_effect=FileNotFoundError):
+            self.assertIsNone(C._probe_duration("x.ogg"))
 
 
 @unittest.skipUnless(HAVE_FFMPEG, "需要 ffmpeg 與 ffprobe")

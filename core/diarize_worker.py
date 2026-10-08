@@ -29,7 +29,11 @@ SR = 16000
 
 
 def emit(**event):
-    sys.stdout.write(json.dumps(event, ensure_ascii=False) + "\n")
+    # 輸出一律是純 ASCII 的 JSON（非 ASCII 字元用 \\uXXXX 跳脫），父行程用 json.loads 還原。
+    # 不能用 ensure_ascii=False：stdout 接到管線時，Python 用系統預設編碼（Windows 是 cp950），
+    # 遇到編不出來的字元 worker 會直接崩潰，真正的錯誤碼就丟了；就算編得出來，父行程以 UTF-8
+    # 解碼也是亂碼，而 Big5 的第二個位元組可能剛好是 0x5C（反斜線），會破壞 JSON 的跳脫。
+    sys.stdout.write(json.dumps(event, ensure_ascii=True) + "\n")
     sys.stdout.flush()
 
 
