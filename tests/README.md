@@ -34,6 +34,12 @@ python3 -m unittest tests.test_platform_parsers -v
 | `test_devices_sources.py` | 來源解析（`devices.resolve()` 與執行期 `resolve_source()` 的差別）、音量判斷門檻、列不出裝置時的提示 |
 | `test_doctor_helpers.py` | `core/doctor.py` 的小工具函式，以及只轉錄模式（`summary.enabled = false`）下的檢查結果 |
 | `test_doctor_platform.py` | `lec doctor` 的平台分支（實測／實驗中措辭、平台專屬指令、錄音後端）與「編譯工具」項目 |
+| `test_capture_aligner.py` | 雙來源時間軸對齊（`TrackAligner`，模擬時鐘）：起點補零、抖動、管線卡住與真實掉音的區分、快慢兩種時脈漂移、混音 |
+| `test_capture_session.py` | 雙來源擷取協調（`MultiCapture`，假擷取行程＋真的 ffmpeg 編碼）：單路故障、停滯、靜音不是故障、串流被轉接、啟動失敗不留檔、停止／強制停止、`verify_capture` |
+| `test_capture_pulse_integration.py` | 對真實 PulseAudio／PipeWire 的整合測試（虛擬裝置），**預設跳過**，要 `LEC_TEST_PULSE=1` |
+| `test_transcribe_dual.py` | `Transcriber(capture_sources=…)` 與單來源回歸 |
+| `test_platform_pulse_dual.py` | pactl 輸出解析：輸出裝置、串流綁定、播放活動、伺服器種類 |
+| `test_devices_dual.py` | `devices.plan_dual()` 裝置解析與預檢、doctor 的「雙來源錄音」項目 |
 | `test_cli_transcribe_only.py` | `lec run --transcribe-only` 的設定覆寫與 help contract |
 | `test_cli_models.py` | `lec models` 的人類可讀輸出與 versioned JSON model discovery contract |
 | `test_ui_course_store.py` | UI 課程設定的安全路徑、symlink 防護、驗證與原子寫入 |

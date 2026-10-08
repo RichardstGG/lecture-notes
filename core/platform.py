@@ -571,6 +571,111 @@ def list_sources(backend=None, include_monitors=False):
     return rows
 
 
+# ----------------------------------- 輸出裝置與串流綁定（雙來源錄音用；目前只有 pulse 後端）
+def _pactl_json(*args):
+    """執行 `pactl -f json <args>` 並解析；沒有 pactl、輸出不是 JSON 時回傳 None。"""
+    import json
+    if not shutil.which("pactl"):
+        return None
+    out = _run(["pactl", "-f", "json", *args])
+    try:
+        return json.loads(out[out.index("["):out.rindex("]") + 1])
+    except ValueError:
+        return None
+
+
+def is_monitor_source(name):
+    """pulse 的 monitor 來源（某個輸出裝置播出去的聲音），不是真的麥克風。"""
+    return str(name).endswith(".monitor")
+
+
+def monitor_of(sink):
+    """輸出裝置 → 它的 monitor 來源名稱（固定指向這個裝置，不會跟著預設輸出變）。"""
+    return f"{sink}.monitor"
+
+
+def list_sinks(backend=None):
+    """回傳 [{id, name, description, state, port}]；無法列出（非 pulse、沒有 pactl）時回傳 None。
+    id 是設定要存的值（sink 名稱）；port 是目前使用的連接埠（耳機／喇叭／HDMI…），只供提示用。"""
+    if audio_backend(backend) != "pulse":
+        return None
+    data = _pactl_json("list", "sinks")
+    if data is None:
+        return None
+    return [{"id": s.get("name", ""), "name": s.get("name", ""),
+             "description": s.get("description", ""),
+             "state": str(s.get("state", "")).lower(),
+             "port": str(s.get("active_port") or "")} for s in data]
+
+
+def default_sink(backend=None):
+    if audio_backend(backend) != "pulse" or not shutil.which("pactl"):
+        return None
+    out = _stdout(["pactl", "get-default-sink"], timeout=15)
+    return out or None
+
+
+def pulse_server():
+    """音訊伺服器資訊 {name, version, flavor}，flavor 為 pipewire / pulseaudio；問不到回傳 None。
+
+    PipeWire 透過 pipewire-pulse 相容層回報「PulseAudio (on PipeWire x.y)」，
+    兩者共用同一份 pactl 介面，這裡只用來讓 doctor 與錯誤訊息講得清楚。
+    """
+    if not shutil.which("pactl"):
+        return None
+    info = {}
+    for line in _stdout(["pactl", "info"], timeout=15).splitlines():
+        if ":" in line:
+            key, value = line.split(":", 1)
+            info[key.strip()] = value.strip()
+    name = info.get("Server Name", "")
+    if not name:
+        return None
+    return {"name": name, "version": info.get("Server Version", ""),
+            "flavor": "pipewire" if "pipewire" in name.lower() else "pulseaudio"}
+
+
+def pulse_record_bindings():
+    """目前每條錄音串流實際綁定的來源：{行程 pid: 來源名稱}；問不到回傳 None。
+
+    來源消失（拔除）時，錄音串流可能被系統「救援」轉接到別的來源（PulseAudio 的
+    module-rescue-streams 設計上轉到預設來源）；ffmpeg 完全不會知道。開發機實測
+    PipeWire 1.4.2：卸載來源後 ffmpeg 不報錯、也沒有結束，資料持續流入。
+    雙來源錄音靠這個確認串流沒有被偷偷換掉；單一來源的舊流程不受影響，也不呼叫它。
+    """
+    outputs = _pactl_json("list", "source-outputs")
+    sources = _pactl_json("list", "sources")
+    if outputs is None or sources is None:
+        return None
+    names = {s.get("index"): s.get("name", "") for s in sources}
+    bound = {}
+    for o in outputs:
+        pid = (o.get("properties") or {}).get("application.process.id")
+        try:
+            bound[int(pid)] = names.get(o.get("source"), "")
+        except (TypeError, ValueError):
+            continue
+    return bound
+
+
+def sink_activity(backend=None):
+    """目前有幾條播放串流接在各輸出裝置上：{sink 名稱: 數量}；問不到回傳 None。
+    用來在開錄前提示「會議聲音似乎不是從你選的輸出裝置播出」。"""
+    if audio_backend(backend) != "pulse":
+        return None
+    inputs = _pactl_json("list", "sink-inputs")
+    sinks = _pactl_json("list", "sinks")
+    if inputs is None or sinks is None:
+        return None
+    names = {s.get("index"): s.get("name", "") for s in sinks}
+    counts = {name: 0 for name in names.values()}
+    for i in inputs:
+        name = names.get(i.get("sink"))
+        if name is not None and not i.get("corked"):
+            counts[name] += 1
+    return counts
+
+
 def default_source(backend=None):
     backend = audio_backend(backend)
     if backend == "pulse":

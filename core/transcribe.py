@@ -25,6 +25,7 @@ from collections import deque
 from datetime import datetime
 from pathlib import Path
 
+from . import capture as CAP
 from . import platform as P
 from .util import hms, log, opencc_available, opencc_convert
 
@@ -471,7 +472,22 @@ class Transcriber:
     # 放在類別上，繞過 __init__ 的子類別（測試 harness）也能安全取用。
     recording_path = None
 
-    def __init__(self, cfg, session_dir, server_url, input_file=None, status=None):
+    # 雙來源錄音（會議）的狀態；放在類別上，繞過 __init__ 的子類別（測試 harness）也安全。
+    capture = None
+    capture_sources = None
+    capture_error = None
+    capture_options = {}          # 測試用：注入 popen／binding 等 MultiCapture 參數
+
+    def __init__(self, cfg, session_dir, server_url, input_file=None, status=None,
+                 capture_sources=None):
+        """capture_sources：兩個 core.capture.SourceSpec（system 與 mic）。
+
+        有給就改走雙來源擷取：兩路分軌存在 <session>/tracks/，混音餵給既有的 VAD／Whisper；
+        沒給就是原本的單來源流程，行為完全不變。只能用在即時錄音。
+        """
+        if capture_sources and input_file:
+            raise ValueError("雙來源錄音只能用在即時錄音，不能同時指定 input_file")
+        self.capture_sources = list(capture_sources) if capture_sources else None
         self.cfg = cfg
         self.session = Path(session_dir)
         self.server = server_url
@@ -509,7 +525,9 @@ class Transcriber:
         self.stopping = True
         if self.live:
             log("▶ 停止錄音，處理剩餘音訊中…（再按一次 Ctrl+C 強制結束）")
-            if self.proc and self.proc.poll() is None:
+            if self.capture is not None:      # 兩路各自收尾，分軌封裝完成後才會結束
+                self.capture.request_stop()
+            elif self.proc and self.proc.poll() is None:
                 try:      # 讓 ffmpeg 正常寫完 ogg；Windows 無法送 SIGINT，只能終止
                     if P.IS_WINDOWS:
                         self.proc.terminate()
@@ -594,11 +612,13 @@ class Transcriber:
                      sections_total=self.writer.sections)
         return tail
 
-    def _drain(self, sink):
-        """只做一件事：把 ffmpeg 的 stdout 盡快讀乾，別讓它因為我們而阻塞。"""
+    def _drain(self, sink, read=None):
+        """只做一件事：把 ffmpeg 的 stdout 盡快讀乾，別讓它因為我們而阻塞。
+        read 預設讀 self.proc.stdout；雙來源模式改讀 MultiCapture.read（結束時回傳 b""）。"""
+        read = read or (lambda: self.proc.stdout.read(READ_BLOCK))
         try:
             while True:
-                data = self.proc.stdout.read(READ_BLOCK)
+                data = read()
                 if not data:
                     break
                 sink.put(data)
@@ -607,9 +627,63 @@ class Transcriber:
         finally:
             sink.put(None)
 
+    # -- 雙來源
+    def _capture_event(self, kind, **kv):
+        """MultiCapture 的事件 → status／log。來源故障同時算一筆錯誤，UI 才看得到。"""
+        if not self.status:
+            return
+        self.status.event(kind, **kv)
+        if kind == "capture_source_failed":
+            self.status.error(f"錄音來源故障（{kv['role']}，{kv['code']}）：{kv['detail']}")
+        elif kind == "capture_error":
+            self.status.error(f"錄音錯誤（{kv['code']}）：{kv['detail']}")
+
+    def _start_capture(self):
+        """啟動雙來源擷取；回傳讀取函式。開始時有任何一路沒成功就整個不開始，原因記在
+        self.capture_error，讀取函式回傳空資料，後面走跟「沒有讀到任何音訊」相同的收尾。"""
+        rec = None
+        if self.cfg["audio"]["keep_recording"]:
+            rec = self.session / f"recording_{datetime.now():%H%M%S}.ogg"
+            self.recording_path = rec
+        self.capture = CAP.MultiCapture(self.capture_sources, self.session, mix_path=rec,
+                                        backend=self.cfg["audio"].get("backend"),
+                                        on_event=self._capture_event,
+                                        default_output=P.default_sink,
+                                        **self.capture_options)
+        if self.stopping:
+            self.capture.request_stop()
+        try:
+            self.capture.start()
+        except CAP.CaptureStartError as e:
+            self.capture_error = e
+            self.recording_path = None
+            if e.code == "cancelled":
+                log("▶ 啟動前就收到停止要求，沒有錄音")
+            else:
+                log(f"✖ 雙來源錄音無法開始（{e.code}）：{e}")
+                if self.status:
+                    self.status.error(f"雙來源錄音無法開始（{e.code}）：{e}")
+                    self.status.event("capture_start_failed", **e.as_dict())
+            return lambda: b""
+        return self.capture.read
+
+    def _report_capture_artifacts(self, report):
+        """分軌與混音沒有封裝完整就明講：這些檔案之後會被當成重跑的來源。"""
+        parts = [(s.get("track"), s) for s in report.get("sources", [])]
+        if report.get("mix"):
+            parts.append((report["mix"].get("path"), report["mix"]))
+        for rel, rec in parts:
+            if rel and not rec.get("complete"):
+                msg = f"錄音檔 {rel} 封裝不完整：{rec.get('problem', '原因不明')}（不可當作重跑來源）"
+                log(f"✖ {msg}")
+                if self.status:
+                    self.status.error(msg)
+
     # -- 主流程
     def run(self):
-        if self.live:
+        if self.capture_sources:
+            cmd = None
+        elif self.live:
             source = P.resolve_source(self.cfg.audio_source(), self.cfg["audio"].get("backend"))
             cmd = ["ffmpeg", "-hide_banner", "-loglevel", "error", "-nostdin",
                    *P.ffmpeg_input(source, self.cfg["audio"].get("backend")),
@@ -627,13 +701,19 @@ class Transcriber:
         log(f"VAD 已啟用（每段 {self.min_chunk:.0f}–{self.max_chunk:.0f} 秒，"
             f"停頓 ≥{self.cfg['vad']['silence_ms']}ms 切段）"
             f"{'，OpenCC 繁體轉換開啟' if self.use_opencc else ''}")
-        if self.live:
-            log(f"🎙 錄音中（{self.cfg['audio']['source']}）。按 Ctrl+C 結束。")
+        if self.capture_sources:
+            read_pcm = self._start_capture()
+            if self.capture_error is None:
+                log("按 Ctrl+C 結束錄音。")
+        else:
+            if self.live:
+                log(f"🎙 錄音中（{self.cfg['audio']['source']}）。按 Ctrl+C 結束。")
 
-        # 讓 ffmpeg 不被終端機的 Ctrl+C 直接打斷，由我們決定何時停止它
-        self.proc = subprocess.Popen(cmd, stdout=subprocess.PIPE, **P.spawn_kwargs())
-        if self.stopping and self.live:
-            self.proc.send_signal(signal.SIGINT)
+            # 讓 ffmpeg 不被終端機的 Ctrl+C 直接打斷，由我們決定何時停止它
+            self.proc = subprocess.Popen(cmd, stdout=subprocess.PIPE, **P.spawn_kwargs())
+            if self.stopping and self.live:
+                self.proc.send_signal(signal.SIGINT)
+            read_pcm = None
 
         # ffmpeg 的 stdout 由專屬執行緒讀乾，VAD 與 status 寫檔都不在讀取路徑上。
         # 以前三件事在同一個迴圈：任何一次停頓都會讓 pipe 填滿 → ffmpeg 阻塞 →
@@ -641,7 +721,7 @@ class Transcriber:
         # 一起破**（存檔是會後處理唯一的來源）。macOS 實機上這條路徑每秒固定
         # 掉約 0.2 秒；Linux 的 PulseAudio 在 server 端有緩衝所以看不出來。
         raw = queue.Queue()
-        reader = threading.Thread(target=self._drain, args=(raw,), daemon=True)
+        reader = threading.Thread(target=self._drain, args=(raw, read_pcm), daemon=True)
         reader.start()
 
         buf = b""
@@ -671,13 +751,26 @@ class Transcriber:
                 last_update = now
                 self._update(elapsed=round(self.chunker.total_seconds, 1), queue=self.q.qsize())
         reader.join(timeout=5)
-        rc = self.proc.wait()
-        self.ffmpeg_returncode = rc
-        ffmpeg_failed = rc not in (0, 255, -2, -15) and not self.stopping
-        if ffmpeg_failed:
-            log(f"⚠ ffmpeg 結束代碼 {rc}（音源或音檔可能有問題）")
-            if self.status:
-                self.status.error(f"ffmpeg 結束代碼 {rc}")
+        capture_report = None
+        if self.capture_sources:
+            # 沒有單一 ffmpeg：「失敗」= 一開始就沒能開始，或兩路都沒撐到最後。
+            # 只有一路故障算降級（degraded），錄音本身是成功的，細節在 capture_session。
+            rc = None
+            if self.capture_error is not None:
+                capture_report = {"status": "failed", "start_error": self.capture_error.as_dict()}
+                ffmpeg_failed = self.capture_error.code != "cancelled"
+            else:
+                capture_report = self.capture.report()
+                ffmpeg_failed = capture_report["status"] == "failed"
+            self.ffmpeg_returncode = rc
+        else:
+            rc = self.proc.wait()
+            self.ffmpeg_returncode = rc
+            ffmpeg_failed = rc not in (0, 255, -2, -15) and not self.stopping
+            if ffmpeg_failed:
+                log(f"⚠ ffmpeg 結束代碼 {rc}（音源或音檔可能有問題）")
+                if self.status:
+                    self.status.error(f"ffmpeg 結束代碼 {rc}")
         last = self.chunker.flush()
         if last and len(last[1]) > SR and not self.abort:        # 最後不足 1 秒就不送
             self.q.put((*last, time.time()))
@@ -694,18 +787,27 @@ class Transcriber:
                 f"有 {len(self.gaps)} 段共 {lost:.0f} 秒沒有轉錄成功，"
                 f"逐字稿中已標出缺口")
         elif ffmpeg_failed and total == 0:
-            log(f"✖ 沒有讀到任何音訊（ffmpeg 結束代碼 {rc}），逐字稿是空的")
+            why = "雙來源擷取失敗，原因見上方" if self.capture_sources else f"ffmpeg 結束代碼 {rc}"
+            log(f"✖ 沒有讀到任何音訊（{why}），逐字稿是空的")
         elif ffmpeg_failed:
+            why = "兩路來源都故障了" if self.capture_sources else f"ffmpeg 結束代碼 {rc}"
             log(f"⚠ 轉錄結束：總長 {hms(total)}，轉錄 {speed:.1f}x 速；"
-                f"但 ffmpeg 結束代碼 {rc}，錄音或音檔可能不完整")
+                f"但{why}，錄音或音檔可能不完整")
         else:
             log(f"✔ 轉錄完成：總長 {hms(total)}，轉錄 {speed:.1f}x 速")
         capture = self._check_capture()
+        if self.capture_sources:
+            self._report_capture_artifacts(capture_report)
         self._update(elapsed=round(total, 1), queue=0, sections_total=self.writer.sections)
-        return {"duration": total, "speed": speed, "aborted": self.abort,
-                "gaps": list(self.gaps), "lost_seconds": lost,
-                "ffmpeg_returncode": rc, "ffmpeg_failed": ffmpeg_failed,
-                "capture": capture}
+        result = {"duration": total, "speed": speed, "aborted": self.abort,
+                  "gaps": list(self.gaps), "lost_seconds": lost,
+                  "ffmpeg_returncode": rc, "ffmpeg_failed": ffmpeg_failed,
+                  "capture": capture}
+        if self.capture_sources:
+            # 只有雙來源模式才有這兩個鍵；單來源回傳的形狀不變
+            result["capture_session"] = capture_report
+            result["degraded"] = bool(capture_report.get("degraded"))
+        return result
 
     def _check_capture(self):
         """錄音存檔的完整性。ffmpeg 丟音訊時結束代碼仍是 0，所以得自己量。"""

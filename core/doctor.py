@@ -66,6 +66,36 @@ def missing_engine_item(name, key, binary, summary_on):
     return (FAIL, name, f"找不到 {binary}（執行 python3 setup_engines.py）")
 
 
+def dual_capture_item(backend=None):
+    """「雙來源錄音（會議）」那一行：回傳 (status, name, detail)。
+
+    這是選用功能，所以環境不齊只算警告，不讓 lec doctor 因此回傳失敗。只查詢裝置，
+    不會錄任何聲音（要實測請用硬體驗收步驟，見 docs/platform-dual-capture.md）。
+    """
+    name = "雙來源錄音"
+    if P.audio_backend(backend) != "pulse":
+        return (WARN, name, "尚未支援：這個平台錄不到輸出裝置（要另外裝虛擬音訊裝置），"
+                            "也沒有實機驗證；目前只有 Linux 提供")
+    if not shutil.which("pactl"):
+        return (WARN, name, f"無法檢查：找不到 pactl。{devices.hint()}")
+    try:
+        plan = devices.plan_dual(backend=backend)
+        server = P.pulse_server()
+    except Exception as e:                                   # doctor 不能因為這個檢查而中斷
+        return (WARN, name, f"檢查失敗：{e}")
+    flavor = {"pipewire": "PipeWire（pulse 相容層）", "pulseaudio": "PulseAudio"}.get(
+        (server or {}).get("flavor"), "未知的音訊伺服器")
+    if not plan["ok"]:
+        return (WARN, name, f"{flavor}｜{plan['errors'][0]['message']}")
+    system, mic = plan["sources"]
+    detail = (f"{flavor}｜系統輸出 {system['label']}｜麥克風 {mic['label']}"
+              f"｜實驗中（尚未完成硬體驗收）；建議戴耳機，沒有回音消除，"
+              f"monitor 會收到該輸出裝置的所有聲音")
+    if plan["warnings"]:
+        return (WARN, name, detail + "｜" + "；".join(w["message"] for w in plan["warnings"]))
+    return (OK, name, detail)
+
+
 def run(course=None, sets=(), mic=False):
     items = []
 
@@ -180,6 +210,7 @@ def run(course=None, sets=(), mic=False):
         shown = source if source not in ("default", "") else \
             f"default → {devices.default_source(backend) or '?'}"
         add(OK, "麥克風", shown)
+    add(*dual_capture_item(backend))
     if mic:
         mean, peak = devices.test_volume(source, backend=backend)
         if mean is None:
