@@ -75,6 +75,7 @@ If subsequent work depends on the Pull Request being merged, stop after reportin
   (Claude-owned). Antigravity edits only `CHANGELOG.md` on an `antigravity/changelog-*`
   branch and opens a Pull Request; Claude reviews it with the checklist in that file.
   This is the only implementation work Antigravity performs; it still never approves or merges.
+  The same rule is in `.agents/agents/code-reviewer/agent.md`.
 
 ## Completion and reporting
 
