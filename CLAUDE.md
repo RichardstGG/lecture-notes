@@ -36,11 +36,12 @@ UI 的測試需要 `ui/backend/requirements.txt` 的 fastapi；沒安裝時 `tes
 
 | | Claude（你） | Codex |
 |---|---|---|
-| **`core/`** | `platform.py`、`devices.py`、`doctor.py`、`servers.py`、`transcribe.py`、`util.py`、未來的 `diarize.py` | `cli.py`、`config.py`、`session.py`、`status.py`、`summarize.py`、`terms.py` |
+| **`core/`** | `platform.py`、`devices.py`、`doctor.py`、`servers.py`、`transcribe.py`、`util.py`、`capture.py`、`diarize.py`、`diarize_worker.py` | `cli.py`、`config.py`、`session.py`、`status.py`、`summarize.py`、`terms.py` |
 | **其他** | `setup.py`、`setup_engines.py`、`upgrade.py`、`linux_setup.sh`／`mac_setup.command`／`windows_setup.bat`、`docs/platform-*.md`、`engines.lock`、`docs/changelog-update.md`、`.agents/agents/code-reviewer/agent.md`、平台與引擎相關測試 | `ui/`（含 `ui/quality_eval.py`、`ui/SHARING.md`）、UI API/schema、UI contract tests、`prompts/summary.md`、`config/template.toml`、`meetings/` 範本 |
 | **共用** | `README.md`、`AGENTS.md`、`config/default.toml`、`docs/meeting-workbench-*.md` | ← 同左 |
 | **與 Antigravity 共有** | `CHANGELOG.md` | — |
 | **凍結** | `samples/*`、`tools/make_sample.py` | ← 同左（見下方「樣本檔案」） |
+| **`tools/`** | `dual_capture_check.py`、`score_diarization.py` | `windows_runner/`（見 AGENTS.md 的 Windows test station） |
 
 為什麼這樣切（依實際相依關係，不是依誰先寫的）：
 

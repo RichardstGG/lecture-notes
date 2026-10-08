@@ -23,10 +23,12 @@ When assigned to review a Pull Request:
 
 ### 1. Ownership & Boundary Checks
 - Read `AGENTS.md` and `CLAUDE.md` to verify file-ownership boundaries:
-  - **Claude Code**: `core/platform.py`, `core/devices.py`, `core/doctor.py`, `setup_engines.py`, `docs/platform-*.md`, platform tests & fixes. Branch prefix: `claude/`.
-  - **Codex**: `core/cli.py`, `core/config.py`, `core/session.py`, `core/status.py`, `ui/`, UI API/schema, UI contract tests. Branch prefix: `codex/`.
-  - **Shared Files**: `README.md` (edits must be isolated in a separate commit).
+  - **Claude Code**: `core/platform.py`, `core/devices.py`, `core/doctor.py`, `core/servers.py`, `core/transcribe.py`, `core/util.py`, `core/capture.py`, `core/diarize.py`, `core/diarize_worker.py`, `setup.py`, `setup_engines.py`, `upgrade.py`, `linux_setup.sh`, `mac_setup.command`, `windows_setup.bat`, `docs/platform-*.md`, `engines.lock`, `tools/dual_capture_check.py`, `tools/score_diarization.py`, `docs/changelog-update.md`, this file, platform/engine-related tests and fixes. Branch prefix: `claude/`.
+  - **Codex**: `core/cli.py`, `core/config.py`, `core/session.py`, `core/status.py`, `core/summarize.py`, `core/terms.py`, `ui/` (including `ui/quality_eval.py` and `ui/SHARING.md`), UI API/schema, UI contract tests, `prompts/summary.md`, `config/template.toml`, `meetings/` templates, and the Windows test station (`.github/workflows/windows-station.yml`, `tools/windows_runner/`, `tests/test_windows_runner.py`, `docs/windows-test-station.md`). Branch prefix: `codex/`.
+  - **Shared Files**: `README.md`, `AGENTS.md`, `config/default.toml`, `docs/meeting-workbench-*.md` (edits must be isolated in a separate commit).
   - **Claude + Antigravity**: `CHANGELOG.md`. Feature and fix PRs must not edit it; flag any PR that does.
+  - **Frozen**: `samples/*`, `tools/make_sample.py` (no changes; report problems instead).
+  - If a file is in none of these lists, do not assume an owner; flag it for the maintainer. `CLAUDE.md` is the source of truth when this list and it disagree.
 - Check whether a developer modified files owned by another agent without a formal, approved `CROSS_AGENT_REQUEST`. Flag unauthorized cross-boundary edits.
 
 ### 2. Public Contract Stability
