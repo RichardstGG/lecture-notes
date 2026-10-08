@@ -37,8 +37,8 @@ UI 的測試需要 `ui/backend/requirements.txt` 的 fastapi；沒安裝時 `tes
 | | Claude（你） | Codex |
 |---|---|---|
 | **`core/`** | `platform.py`、`devices.py`、`doctor.py`、`servers.py`、`transcribe.py`、`util.py`、`capture.py`、`diarize.py`、`diarize_worker.py` | `cli.py`、`config.py`、`session.py`、`status.py`、`summarize.py`、`terms.py` |
-| **其他** | `setup.py`、`setup_engines.py`、`upgrade.py`、`linux_setup.sh`／`mac_setup.command`／`windows_setup.bat`、`docs/platform-*.md`、`engines.lock`、`docs/changelog-update.md`、`.agents/agents/code-reviewer/agent.md`、平台與引擎相關測試 | `ui/`（含 `ui/quality_eval.py`、`ui/SHARING.md`）、UI API/schema、UI contract tests、`prompts/summary.md`、`config/template.toml`、`meetings/` 範本 |
-| **共用** | `README.md`、`AGENTS.md`、`config/default.toml`、`docs/meeting-workbench-*.md` | ← 同左 |
+| **其他** | `setup.py`、`setup_engines.py`、`upgrade.py`、`linux_setup.sh`／`mac_setup.command`／`windows_setup.bat`、`docs/platform-*.md`、`engines.lock`、`docs/changelog-update.md`、`.agents/agents/code-reviewer/agent.md`、`README.old.md`（凍結，不再更新）、平台與引擎相關測試 | `ui/`（含 `ui/quality_eval.py`、`ui/SHARING.md`）、UI API/schema、UI contract tests、`prompts/summary.md`、`config/template.toml`、`meetings/` 範本 |
+| **共用** | `README.md`、`AGENTS.md`、`config/default.toml`、`docs/meeting-workbench-*.md`、`docs/{windows,mac,linux}_setup.md` | ← 同左 |
 | **與 Antigravity 共有** | `CHANGELOG.md` | — |
 | **凍結** | `samples/*`、`tools/make_sample.py` | ← 同左（見下方「樣本檔案」） |
 | **`tools/`** | `dual_capture_check.py`、`score_diarization.py` | `windows_runner/`（見 AGENTS.md 的 Windows test station） |
@@ -57,7 +57,7 @@ UI 的測試需要 `ui/backend/requirements.txt` 的 fastapi；沒安裝時 `tes
 - Claude 的實作分支使用 `claude/<task-name>`，**base 一律明確指定 `origin/main`**（這個 checkout 可能同時被別的對話使用，不要相信當下的 HEAD；必要時用 `git worktree`）。
 - 只改自己擁有的範圍。需要動到對方的檔案時，**停下來**，用 CROSS_AGENT_REQUEST 格式回報給使用者，不要自己改、也不要混進自己的 commit。
 - CROSS_AGENT_REQUEST 內容：Requester／Target agent／類型（blocking or non-blocking）／目的／現有行為／問題／建議行為／涉及檔案／是否改變 public contract／相容性影響／建議測試／Requester 目前能否繼續其他工作。
-- **共用檔案**：要改就獨立成一個 commit。`config/default.toml` 只加（或只改）自己程式會讀的鍵，並在同一個 PR 補上說明；`docs/meeting-workbench-*.md` 由改動行為的那一方在同一個 PR 內更新。新的平台文件放 `docs/platform-*.md`。
+- **共用檔案**：要改就獨立成一個 commit。`config/default.toml` 只加（或只改）自己程式會讀的鍵，並在同一個 PR 補上說明；`docs/meeting-workbench-*.md` 由改動行為的那一方在同一個 PR 內更新。新的平台文件放 `docs/platform-*.md`。安裝步驟改變時（例如改了 `setup.py`、`upgrade.py`、啟動檔），同一個 PR 內更新對應的 `docs/*_setup.md`。
 - **`core/util.py` 的加法例外**：任何一方都可以在自己的 commit 裡新增「純 stdlib、無副作用」的小工具函式，不必先發 CROSS_AGENT_REQUEST；但修改或刪除既有函式的簽章與行為仍走正常流程。
 - **測試歸屬**跟著被斷言的那個 contract：斷言 CLI JSON／API／狀態檔契約的歸 Codex，斷言平台與引擎行為的歸 Claude。檔名以被測模組命名。
 - **`CHANGELOG.md`** 不跟著 PR 更新：maintainer 累積一批後交給 Antigravity 更新，Claude 負責復核。提示詞與復核清單在 `docs/changelog-update.md`。自己的 PR 不要順手改 `CHANGELOG.md`。
