@@ -72,6 +72,13 @@ class PinnedConstantsTests(unittest.TestCase):
         self.assertEqual(len(lines), 1, lines)
         self.assertRegex(lines[0], r"^sherpa-onnx==\d+\.\d+\.\d+$")
 
+    def test_requirements_and_the_engine_agree_on_the_sherpa_version(self):
+        # 兩邊各有一份：pip 裝的是這個檔，doctor 與安裝提示比對的是 SHERPA_ONNX_VERSION
+        from core import diarize as D
+        text = (ROOT / "requirements-diarize.txt").read_text(encoding="utf-8")
+        pinned = re.findall(r"(?m)^\s*sherpa-onnx==(\S+)\s*$", text)
+        self.assertEqual(pinned, [D.SHERPA_ONNX_VERSION])
+
 
 # ---------------------------------------------------------------- 模型下載與驗證
 class FetchModelsTests(unittest.TestCase):
