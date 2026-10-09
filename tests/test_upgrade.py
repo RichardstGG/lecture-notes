@@ -94,25 +94,30 @@ class UpgradeTests(unittest.TestCase):
         )
 
     def test_ui_install_uses_venv_and_clean_frontend_install(self):
-        python = self.root / ".venv/bin/python"
-        python.parent.mkdir(parents=True)
-        python.write_text("", encoding="utf-8")
-        calls = []
+        # venv 的 python 在 POSIX 是 bin/python，在 Windows 是 Scripts/python.exe。fixture 要建在
+        # venv_python() 回傳的位置，否則 ensure_venv 會多執行一次建立 venv。兩種版面都跑。
+        for relative in (Path("bin/python"), Path("Scripts/python.exe")):
+            with self.subTest(layout=str(relative)), \
+                    mock.patch.object(U, "venv_python", lambda r=relative: self.root / ".venv" / r):
+                python = U.venv_python()
+                python.parent.mkdir(parents=True, exist_ok=True)
+                python.write_text("", encoding="utf-8")
+                calls = []
 
-        def record(command, **kwargs):
-            calls.append((command, kwargs))
-            return self.completed()
+                def record(command, **kwargs):
+                    calls.append((command, kwargs))
+                    return self.completed()
 
-        with mock.patch.object(U, "run", side_effect=record), \
-                mock.patch.object(U.shutil, "which", return_value="/usr/bin/npm"):
-            U.install_ui()
+                with mock.patch.object(U, "run", side_effect=record), \
+                        mock.patch.object(U.shutil, "which", return_value="/usr/bin/npm"):
+                    U.install_ui()
 
-        self.assertEqual(calls, [
-            ([python, "-m", "pip", "install", "-r",
-              self.root / "ui/backend/requirements.txt"], {}),
-            (["/usr/bin/npm", "ci"], {"cwd": self.root / "ui/frontend"}),
-            (["/usr/bin/npm", "run", "build"], {"cwd": self.root / "ui/frontend"}),
-        ])
+                self.assertEqual(calls, [
+                    ([python, "-m", "pip", "install", "-r",
+                      self.root / "ui/backend/requirements.txt"], {}),
+                    (["/usr/bin/npm", "ci"], {"cwd": self.root / "ui/frontend"}),
+                    (["/usr/bin/npm", "run", "build"], {"cwd": self.root / "ui/frontend"}),
+                ])
 
     def test_windows_venv_python_path(self):
         with mock.patch.object(U.os, "name", "nt"):

@@ -20,6 +20,8 @@ import upgrade as U
 
 ROOT = Path(__file__).resolve().parent.parent
 
+VENV_LAYOUTS = (Path("bin/python"), Path("Scripts/python.exe"))
+
 
 def sha(data):
     return hashlib.sha256(data).hexdigest()
@@ -260,17 +262,29 @@ class UpgradeDiarizationTests(unittest.TestCase):
     def completed(self):
         return subprocess.CompletedProcess([], 0, stdout="", stderr="")
 
-    def test_installs_into_the_project_venv_then_fetches_models(self):
-        python = self.root / ".venv/bin/python"
-        python.parent.mkdir(parents=True)
+    # venv 裡的 python 在 POSIX 是 bin/python，在 Windows 是 Scripts/python.exe（upgrade.venv_python
+    # 依 os.name 選）。fixture 必須建在 venv_python() 回傳的位置，不然 ensure_venv 會以為 venv 不存在。
+    # 兩種版面都跑，Linux 上也能覆蓋 Windows 的路徑。
+    def venv_layout(self, relative):
+        return mock.patch.object(U, "venv_python", lambda: self.root / ".venv" / relative)
+
+    def make_venv(self):
+        python = U.venv_python()
+        python.parent.mkdir(parents=True, exist_ok=True)
         python.write_text("", encoding="utf-8")
-        calls = []
-        with mock.patch.object(U, "run", side_effect=lambda c, **k: calls.append(c) or self.completed()):
-            U.install_diarization()
-        self.assertEqual(calls, [
-            [python, "-m", "pip", "install", "-r", self.root / "requirements-diarize.txt"],
-            [sys.executable, self.root / "setup_engines.py", "diarize"],
-        ])
+        return python
+
+    def test_installs_into_the_project_venv_then_fetches_models(self):
+        for relative in VENV_LAYOUTS:
+            with self.subTest(layout=str(relative)), self.venv_layout(relative):
+                python = self.make_venv()
+                calls = []
+                with mock.patch.object(U, "run", side_effect=lambda c, **k: calls.append(c) or self.completed()):
+                    U.install_diarization()
+                self.assertEqual(calls, [
+                    [python, "-m", "pip", "install", "-r", self.root / "requirements-diarize.txt"],
+                    [sys.executable, self.root / "setup_engines.py", "diarize"],
+                ])
 
     def test_creates_the_venv_first_when_missing(self):
         calls = []
@@ -284,12 +298,13 @@ class UpgradeDiarizationTests(unittest.TestCase):
             if "pip" in [str(c) for c in command]:
                 raise U.UpgradeError("pip 失敗")
             return self.completed()
-        (self.root / ".venv/bin").mkdir(parents=True)
-        (self.root / ".venv/bin/python").write_text("", encoding="utf-8")
-        with mock.patch.object(U, "run", side_effect=run) as r, \
-                self.assertRaises(U.UpgradeError):
-            U.install_diarization()
-        self.assertEqual(r.call_count, 1)
+        for relative in VENV_LAYOUTS:
+            with self.subTest(layout=str(relative)), self.venv_layout(relative):
+                self.make_venv()
+                with mock.patch.object(U, "run", side_effect=run) as r, \
+                        self.assertRaises(U.UpgradeError):
+                    U.install_diarization()
+                self.assertEqual(r.call_count, 1)
 
     def test_default_upgrade_installs_diarization_before_the_ui(self):
         order = []
