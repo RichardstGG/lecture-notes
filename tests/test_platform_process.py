@@ -37,8 +37,13 @@ class PidAliveTests(unittest.TestCase):
         self.assertFalse(P.pid_alive(None))
 
     def test_posix_current_process_is_alive(self):
-        with mock.patch.object(P, "IS_WINDOWS", False):
+        # 必須 mock os.kill：這個測試在 Windows 上也會跑（IS_WINDOWS 被強制成 False），
+        # 而 Windows 的 os.kill(pid, 0) 不是「探測行程」，0 是 CTRL_C_EVENT：真的呼叫會對自己所在的主控台送
+        # Ctrl+C，連測試 runner 一起打斷（exit 0xC000013A），而且不會留下任何測試結果。
+        with mock.patch.object(P, "IS_WINDOWS", False), \
+                mock.patch.object(P.os, "kill") as kill:
             self.assertTrue(P.pid_alive(os.getpid()))
+        kill.assert_called_once_with(os.getpid(), 0)
 
     def test_posix_lookup_error_means_dead(self):
         with mock.patch.object(P, "IS_WINDOWS", False), \
