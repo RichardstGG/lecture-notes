@@ -10,6 +10,10 @@
 
 OpenCC 的測試把 subprocess 換掉，所以不需要真的安裝 opencc。
 """
+import errno
+import json
+import os
+import random
 import subprocess
 import tempfile
 import threading
@@ -160,6 +164,179 @@ class AtomicWriteTests(unittest.TestCase):
         with mock.patch.object(Path, "write_text", spy):
             U.atomic_write(self.dir / "status.json", "x")
         self.assertEqual(seen, [".status.json.tmp"])
+
+
+def winerror(code):
+    """Windows 的 PermissionError：目標被別的行程開著時 winerror 是 5／32／33。"""
+    e = PermissionError(errno.EACCES, "Access is denied")
+    e.winerror = code           # Linux 的 OSError 沒有這個屬性，手動補上來模擬
+    return e
+
+
+class FlakyReplace:
+    """os.replace 的替身：前幾次丟指定的例外，之後交給真的 os.replace（所以原子性是真的）。"""
+
+    def __init__(self, failures=(), always=None):
+        self.real = os.replace
+        self.failures = list(failures)
+        self.always = always
+        self.calls = 0
+        self.on_call = None
+
+    def __call__(self, src, dst):
+        self.calls += 1
+        if self.on_call:
+            self.on_call()
+        if self.always is not None:
+            raise self.always()
+        if self.failures:
+            raise self.failures.pop(0)
+        return self.real(src, dst)
+
+
+class AtomicWriteRetryTests(unittest.TestCase):
+    """Windows 上目標檔被占用時 os.replace 會暫時失敗（診斷的 G 類）。
+
+    在 Linux 用「注入帶 winerror 的 PermissionError」模擬，並讓 _on_windows() 回傳 True；
+    真的 os.replace 仍然執行，所以原子性、暫存檔清理都是實際行為，不是 mock。"""
+
+    def setUp(self):
+        self.tmp = tempfile.TemporaryDirectory()
+        self.addCleanup(self.tmp.cleanup)
+        self.dir = Path(self.tmp.name)
+        self.target = self.dir / "status.json"
+        self.target.write_text("old", encoding="utf-8")
+        self.sleeps = []
+        for patcher in (mock.patch.object(U, "_on_windows", return_value=True),
+                        mock.patch.object(U.time, "sleep", side_effect=self.sleeps.append)):
+            patcher.start()
+            self.addCleanup(patcher.stop)
+
+    def _entries(self):
+        return sorted(p.name for p in self.dir.iterdir())
+
+    def _write(self, replace):
+        with mock.patch.object(U.os, "replace", replace):
+            U.atomic_write(self.target, "new")
+
+    def test_transient_denials_are_retried_until_the_replace_succeeds(self):
+        replace = FlakyReplace([winerror(5), winerror(32), winerror(33)])
+        self._write(replace)
+        self.assertEqual(self.target.read_text(encoding="utf-8"), "new")
+        self.assertEqual(replace.calls, 4)
+        self.assertEqual(self.sleeps, list(U._REPLACE_BACKOFF[:3]), "退避時間依序遞增")
+        self.assertEqual(self._entries(), ["status.json"], "成功後不留暫存檔")
+
+    def test_the_old_content_is_untouched_until_the_replace_actually_succeeds(self):
+        seen = []
+        replace = FlakyReplace([winerror(5), winerror(5)])
+        replace.on_call = lambda: seen.append(self.target.read_text(encoding="utf-8"))
+        self._write(replace)
+        self.assertEqual(seen, ["old", "old", "old"], "重試期間讀者看到的還是完整的舊檔")
+        self.assertEqual(self.target.read_text(encoding="utf-8"), "new")
+
+    def test_gives_up_after_the_bounded_attempts_and_raises_the_original_error(self):
+        replace = FlakyReplace(always=lambda: winerror(5))
+        with mock.patch.object(U.os, "replace", replace):
+            with self.assertRaises(PermissionError) as cm:
+                U.atomic_write(self.target, "new")
+        self.assertEqual(cm.exception.winerror, 5, "丟出去的是原本的錯誤，不是包裝過的")
+        self.assertEqual(cm.exception.errno, errno.EACCES)
+        self.assertEqual(replace.calls, len(U._REPLACE_BACKOFF) + 1, "次數有上限")
+        self.assertEqual(self.sleeps, list(U._REPLACE_BACKOFF))
+        self.assertEqual(self.target.read_text(encoding="utf-8"), "old", "失敗時目標檔不動")
+        self.assertEqual(self._entries(), ["status.json"], "失敗也不留暫存檔")
+
+    def test_the_total_wait_is_bounded(self):
+        self.assertLessEqual(sum(U._REPLACE_BACKOFF), 1.0)
+        self.assertLessEqual(len(U._REPLACE_BACKOFF), 10)
+        self.assertTrue(all(d > 0 for d in U._REPLACE_BACKOFF))
+
+    def test_a_permission_error_on_posix_is_a_real_error_and_is_not_retried(self):
+        U._on_windows.return_value = False
+        replace = FlakyReplace(always=lambda: winerror(5))
+        with mock.patch.object(U.os, "replace", replace):
+            with self.assertRaises(PermissionError):
+                U.atomic_write(self.target, "new")
+        self.assertEqual(replace.calls, 1)
+        self.assertEqual(self.sleeps, [])
+
+    def test_other_windows_errors_are_not_retried(self):
+        for name, factory in (("沒有 winerror 的 PermissionError",
+                               lambda: PermissionError(errno.EACCES, "denied")),
+                              ("需要特權（winerror 1314）", lambda: winerror(1314)),
+                              ("磁碟滿", lambda: OSError(errno.ENOSPC, "No space left")),
+                              ("找不到路徑", lambda: FileNotFoundError(errno.ENOENT, "missing")),
+                              ("帶 winerror 5 的非 PermissionError", lambda: self._oserror_with_winerror())):
+            with self.subTest(name):
+                self.sleeps.clear()
+                replace = FlakyReplace(always=factory)
+                with mock.patch.object(U.os, "replace", replace):
+                    with self.assertRaises(OSError):
+                        U.atomic_write(self.target, "new")
+                self.assertEqual(replace.calls, 1)
+                self.assertEqual(self.sleeps, [])
+                self.assertEqual(self._entries(), ["status.json"])
+
+    @staticmethod
+    def _oserror_with_winerror():
+        e = OSError(errno.EIO, "io error")
+        e.winerror = 5
+        return e
+
+    def test_an_interrupt_during_the_backoff_still_cleans_up(self):
+        U.time.sleep.side_effect = KeyboardInterrupt
+        replace = FlakyReplace(always=lambda: winerror(32))
+        with mock.patch.object(U.os, "replace", replace):
+            with self.assertRaises(KeyboardInterrupt):
+                U.atomic_write(self.target, "new")
+        self.assertEqual(self.target.read_text(encoding="utf-8"), "old")
+        self.assertEqual(self._entries(), ["status.json"])
+
+    def test_readers_never_see_a_partial_file_while_writers_hit_transient_denials(self):
+        # 重現診斷的 test_get_survives_atomic_write_churn：寫入端不斷 replace，讀取端不斷讀，
+        # 其中三成的 replace 先遇到暫時性占用。寫入端不可以失敗，讀取端不可以讀到半個檔。
+        rng = random.Random(7)
+        real = os.replace
+        calls = {"n": 0, "denied": 0}
+
+        def flaky(src, dst):
+            calls["n"] += 1
+            if rng.random() < 0.3:
+                calls["denied"] += 1
+                raise winerror(rng.choice([5, 32, 33]))
+            return real(src, dst)
+
+        self.target.write_text(json.dumps({"elapsed": -1}), encoding="utf-8")
+        failures, bad_reads, done = [], [], threading.Event()
+
+        def writer():
+            try:
+                for i in range(200):
+                    U.atomic_write(self.target, json.dumps({"phase": "recording", "elapsed": i}))
+            except BaseException as e:           # noqa: BLE001 - 要把任何失敗帶回主執行緒
+                failures.append(e)
+            finally:
+                done.set()
+
+        def reader():
+            while not done.is_set():
+                try:
+                    json.loads(self.target.read_text(encoding="utf-8"))
+                except ValueError as e:
+                    bad_reads.append(e)
+
+        with mock.patch.object(U.os, "replace", flaky):
+            threads = [threading.Thread(target=writer), threading.Thread(target=reader)]
+            for t in threads:
+                t.start()
+            for t in threads:
+                t.join(timeout=60)
+        self.assertEqual(failures, [])
+        self.assertEqual(bad_reads, [], "原子 replace：讀者只會看到舊檔或新檔")
+        self.assertGreater(calls["denied"], 20, "要真的注入了足夠多的暫時性失敗，這個測試才有意義")
+        self.assertEqual(json.loads(self.target.read_text(encoding="utf-8"))["elapsed"], 199)
+        self.assertEqual(self._entries(), ["status.json"])
 
 
 class JsonTests(unittest.TestCase):
