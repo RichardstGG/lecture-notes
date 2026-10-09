@@ -1,7 +1,7 @@
 # macOS 平台備忘（實驗中，尚未實機驗證）
 
 狀態：**程式已支援，幾乎沒有在真正的 Mac 上驗證過**（實機回報只有 README 的
-安裝步驟，以及 2026-10-05 量到的「擷取掉音訊」—— 那一項是 bug，見下方同名小節）。
+安裝步驟，以及 2026-10-05／06 量到的「擷取掉音訊」—— 那一項是**尚未解決的 bug**，見下方同名小節）。
 以下內容大多是靜態驗證（讀 ffmpeg / AVFoundation 官方行為推導）與 mock test，
 不是「已測過沒問題」。第一次在真機上跑之前請先看完「還需要哪些實機測試」一節；
 要實際驗的時候照「實機驗證流程」那一節的步驟跑。
@@ -33,83 +33,112 @@
   裝置插拔而改變順序——這點沒辦法在程式面完全解決，建議固定用同一顆麥克風）。
 - 相關解析邏輯的 mock 測試：`tests/test_platform_parsers.py::AvfoundationSourcesTests`。
 
-## 擷取掉音訊（實機量測，2026-10-05）
+## 擷取掉音訊（實機量測，2026-10-05／06）
 
-**這是目前唯一一項 macOS 實機量到的錄音行為，而且是個 bug。**
+**狀態：未解決。**#52 的緩解降低了遺失，但沒有消除它；根因不明。這是目前唯一一項 macOS 實機量到的錄音
+行為，而且是個 bug：存檔比實際時間短 16–20%，**ffmpeg 結束代碼仍是 0**，逐字稿與存檔都看不出異常。
 
-使用者在 Mac 上用 `lec` 錄了一場 87.7 分鐘的會議，檔案帶回 Linux 分析後發現：
+### 量測（兩份 Mac 錄音帶回 Linux 分析）
 
-| 項目 | 數值 |
-|---|---|
-| 封包時長總和（真正錄到的音訊） | **4198.7 秒（70.0 分）** |
-| 時間戳跨距（宣告的長度） | 5259.4 秒（87.7 分） |
-| **遺失** | **1060.7 秒（17.6 分），20.2%** |
-| 空隙數 | 5,196 |
-| 空隙長度 | 中位數 213 ms（200–240 ms 為主，最大 288 ms） |
-| **空隙間距** | 平均 **1011.98 ms**（範圍 1003–1025 ms） |
-| 間距變異係數 | **0.01** |
-| 每週期保留／丟失 | 807.8 ms / 204.1 ms |
+| | 錄音 A（#52 之前） | 錄音 B（#52 之後？） | Linux 對照 |
+|---|---|---|---|
+| 時間戳跨距／實際音訊 | 87.7 分／70.0 分 | 76.3 分／64.0 分 | 吻合 |
+| **遺失** | **20.2%** | **16.1%** | ≈0%（10 份正常錄音 0.000–0.057%） |
+| 空隙數 | 5,196 | 4,390 | — |
+| 空隙長度中位數 | 213 ms | **128 ms** | — |
+| 空隙間距 | 1011.98 ms | 1013.9 ms | — |
+| 間距變異係數 | 0.01 | 0.007 | — |
+| ogg 每頁封包數（滿載 50） | 40 | 45 | 50 |
+| 每頁多出來的時間（正常 0） | 213 ms | 128 ms | 0 ms |
+| encoder tag | `Lavc63.1.101`（ffmpeg 8.x） | 同 | 本機 ffmpeg 7.1.5 |
 
-封包全部是標準的 20 ms Opus frame，所以這不是 VBR 假象。變異係數 0.01 代表
-**這是一個幾乎完美規律的 1 秒週期，每個週期固定丟掉約 0.2 秒** —— 不是偶發的
-負載尖峰（那會不規律），也不是藍牙封包遺失（那會是爆發式的）。
+- 封包全是標準 20 ms Opus frame，所以不是 VBR 假象。間距的變異係數 < 0.01：**幾乎完美規律的 1 秒週期**，
+  每個週期固定丟掉一小段。不是偶發的負載尖峰，也不是藍牙封包遺失（那會是爆發式的）。
+- **修正有改善但沒消失**：缺口從 213 ms 縮短到 128 ms，週期完全沒變。
+- **錄音 B 的 Mac 客戶端是否真的跑到 #52 未確認。**確認方式：`git merge-base --is-ancestor f6d3182 HEAD`，
+  以及該 session 的 `events.jsonl` 有沒有 `capture_integrity` 事件（修正版錄完會寫、並在終端機印
+  「✖ 錄音存檔遺失 …」）。這決定後面的推論能走多遠。
+- 錄音 B 另外在第 73.6–75.8 分有 12 個連續的 4–30 秒大空隙（合計 135 秒），不像週期性問題，像機器整個停住；
+  原因未知（闔蓋？睡眠？切換視窗？）。
 
-而且 **ffmpeg 的結束代碼是 0**，逐字稿與存檔都沒有任何異常跡象。整整 20% 的
-音訊靜悄悄消失。
+### 已確認
 
-### 機制
+- **缺的是真的音訊**，不是時間戳假象。每個 ogg 頁（1 秒）內部都有異常的波形跳變：每頁「最大跳變／區塊中位跳變」
+  Mac 兩份的中位數是 28–35，Linux 是 6.2；Mac 有 97–100% 的頁超過 Linux 的 p90。
+  錄音 B 這項只取樣到 32 頁（過濾掉太小聲的頁），錄音 A 是 112 頁；方向很明確，但不要拿它當精確數字。
+- 缺口在頁內的位置接近均勻分布（σ 約 28–29%，均勻分布約 29%），**沒有固定相位**，所以指不出是哪個週期性動作。
+- **量測陷阱（曾因此得出錯誤結論，已收回）**：ogg 的時間只記在頁尾（granule position），ffprobe 只能把
+  空隙畫在「頁的開頭」，真正的缺口可能在那 1 秒內任何位置。**不要在 ogg 頁界或 ffprobe 顯示的空隙位置量
+  波形連續性**，量到的是頁界，不是缺口。要看整頁範圍內有沒有異常跳變。
 
-錄音時是**一個 ffmpeg 同時輸出兩路**：PCM 到 `pipe:1`（給 VAD 與 whisper）
-＋ Opus 到 `recording_*.ogg` 存檔。ffmpeg 的多輸出共用同一個處理迴圈，所以
-任何一路堵住，整個擷取就停：
+### 假設（全部未證實）
 
-1. Python 端的讀取迴圈停頓（舊版本在同一個迴圈裡還要做 VAD 切段與每秒一次的
-   `status.json` 更新）
-2. `pipe:1` 填滿 → ffmpeg 阻塞
-3. AVFoundation 的擷取緩衝溢出 → **直接丟音訊**
-4. 兩路輸出一起被丟，**連存檔也破了**
+| | 假設 | 為什麼可疑 |
+|---|---|---|
+| H1 | Mac 客戶端沒跑到 #52 | 第一步先查，見上方 |
+| H2 | 輸出資料夾在 iCloud 同步的位置，每頁寫入被擋住 | **1 秒週期剛好等於 ogg 的頁間隔**；Desktop／Documents 預設會同步 |
+| H3 | ffmpeg 8.x 的 avfoundation 輸入本身掉音訊 | 錄音是 8.x，Linux 對照是 7.1.5 |
+| H4 | `lec` 的 Python 端（`_drain`、每秒一次的 `_update`／`status.json` 寫入） | 週期也與每秒一次的更新吻合；但 `Status.update()` 本身只是加鎖寫 dict，不該花 130–200 ms |
+| H5 | 裝置取樣率不符（藍牙 HFP 常是 16 kHz）或重取樣 | 未查裝置 |
+| H6 | App Nap／低電量模式／螢幕鎖定造成計時器合併 | 只能說明大空隙那段，不好解釋規律的 1 秒 |
 
-Linux 的 PulseAudio 不會這樣：它在 server 端有足夠緩衝吸收掉。開發機上 10 份
-正常錄音量到的遺失是 0.000–0.057%（那些是 ogg granule 取整的無害雜訊）。
-**所以在只有 Linux 實機的情況下，這個 bug 完全看不出來。**
+#52 當時寫的「機制」（讀取迴圈停頓 → pipe 填滿 → ffmpeg 阻塞 → AVFoundation 緩衝溢出）屬於 H4 的一種，
+**當時被寫成已確立，但從來沒有被驗證**。如果錄音 B 確實跑了修正版，它與這個說法矛盾。
 
-1 秒的週期與 `core/transcribe.py` 擷取迴圈裡唯一的 1 秒動作吻合（每秒一次的
-`_update()`）。但 `Status.update()` 本身只是加鎖寫 dict，不該花 200 ms，
-**所以 200 ms 阻塞的根因還沒確認**。一個值得查的方向：如果 Mac 上的
-`paths.output_root` 落在 iCloud 同步的資料夾（Desktop／Documents 預設都是），
-每次寫 `status.json` 都可能被同步擋住。這要在 Mac 上實測才能確認。
+### 已實作的緩解（成效未證實）
 
-### 已經做的修正
+1. **把讀取獨立成專屬執行緒**（`core/transcribe.py::Transcriber._drain`）。VAD 與 status 寫檔移出讀取路徑。
+   以前這一項被稱為「根因修復」；**證據不支持這個說法**。它在 Linux 驗過無回歸；在 Mac 上是否有效未證實（錄音 B 若確實跑了修正版，就是沒有解決問題）。
+2. **調高 AVFoundation／dshow 的 `-thread_queue_size`**（512 → 4096，`core/platform.py::ffmpeg_input`）。
+3. **擷取完整性檢查**（`capture_gap_report`／`probe_capture`，錄完自動跑）。遺失 ≥ 2% 寫成 `status` 錯誤並
+   明講這份錄音不適合做發言者辨識；≥ 0.5% 只警告；以下安靜。**這一項已被證明有用**：事後用 `probe_capture` 檢查，
+   兩份 Mac 錄音都判成錯誤等級，而 Linux 的 10 份正常錄音都不會誤報。（錄完當下的自動檢查在 Mac 上是否有跑、是否印出警告，尚未確認，同樣取決於 H1。）
 
-1. **把讀取獨立成專屬執行緒**（`core/transcribe.py::Transcriber._drain`）。
-   它只負責把 `proc.stdout` 讀乾，VAD 與 status 寫檔都移出讀取路徑。
-   這是根因修復：下游再怎麼停頓都不會讓 ffmpeg 阻塞。
-2. **調高 AVFoundation／dshow 的 `-thread_queue_size`**（512 → 4096，
-   `core/platform.py::ffmpeg_input`）。吸收讀取端偶發的數百毫秒停頓。
-3. **新增擷取完整性檢查**（`capture_gap_report` / `probe_capture`，錄完自動跑）。
-   遺失 ≥ 2% 會寫成 `status` 錯誤並在終端機明講「這份錄音不適合用來做發言者
-   辨識」；≥ 0.5% 只警告；以下安靜。對那份實機錄音實測能完整重現上表數字
-   （88 分鐘的檔案只花 0.4 秒）。這一項的價值是**下次不會再靜悄悄掉 20%**。
+### 隔離實驗（在 Mac 上做；每項錄 2–3 分鐘，要有持續的聲音）
 
-### 還沒驗證的部分
+先把 `lec` 排除，直接用 ffmpeg，編號用 `./lec devices` 查到的。錄完用 `probe_capture` 與下面的 ogg 頁分析。
 
-**修正本身沒有在 Mac 上驗過。** Linux 實機確認無回歸（`lec run --file` 全長
-轉錄正常，7.6x 速），`tests/test_transcribe_capture.py` 有 21 個測試，但
-「macOS 上掉音訊是否真的消失」只能在 Mac 上驗。驗的時候：
+| 實驗 | 做法 | 看什麼 |
+|---|---|---|
+| E1 | `ffmpeg -f avfoundation -thread_queue_size 4096 -i ":<編號>" -ac 1 -ar 16000 -c:a libopus -b:a 32k -t 150 /tmp/e1.ogg` | 掉不掉？掉：ffmpeg／avfoundation 本身（H3、H5）；不掉：往下 |
+| E2 | 同 E1，輸出到 `lec` 的 `output_root`（或 `~/Desktop`） | E1 乾淨而 E2 掉 → 輸出位置（H2） |
+| E3 | 同 E1，輸出 WAV（`-c:a pcm_s16le`），比較檔案長度與牆鐘時間 | 排除 Opus 編碼器與 ogg 封裝 |
+| E4 | `./lec run 測試 --transcribe-only` 錄 150 秒 | E1–E3 乾淨而 E4 掉 → `lec` 的 Python 端（H4） |
+| E5 | E4 但 `--set paths.output_root=/tmp/lec-test` | 同 E2，但走完整路徑 |
+| E6（選用） | 裝另一個大版本的 ffmpeg（例如 `brew install ffmpeg@7`）重跑 E1 | 區分 ffmpeg 8.x（H3）。會改使用者環境，先問 |
 
-```bash
-# 錄 5 分鐘，然後看終端機有沒有擷取遺失的警告
-./lec run 測試 --transcribe-only
-# 事後也可以單獨檢查任何一個存檔
-python3 -c "from core.transcribe import probe_capture; print(probe_capture('outputs/<session>/recording_*.ogg'))"
+解讀：比對**空隙長度與週期**，不要只看總遺失比例；某個實驗把 128／213 ms 變成 ~0，那個變因就是主因；只是縮短則可能有
+多個成因疊加。同一個實驗至少做兩次。一併蒐集：`sw_vers`、`uname -m`、`ffmpeg -version | head -1`、`which ffmpeg`、
+`./lec doctor`、`paths.output_root` 的實際位置（是否在 iCloud 底下）、麥克風是內建／USB／藍牙、電源與低電量模式。
+
+ogg 每頁封包數與多出來的時間（正常錄音每頁 50 個封包、多出來的時間 0 ms）：
+
+```python
+#!/usr/bin/env python3
+import statistics, struct, sys
+def pages(path):
+    data, i, out = open(path, "rb").read(), 0, []
+    while True:
+        i = data.find(b"OggS", i)
+        if i < 0 or i + 27 > len(data): break
+        gp, nseg = struct.unpack_from("<q", data, i + 6)[0], data[i + 26]
+        lac = data[i + 27:i + 27 + nseg]
+        out.append((gp, sum(1 for v in lac if v < 255)))
+        i += 27 + nseg + sum(lac)
+    return [p for p in out if p[0] >= 0][2:]
+for path in sys.argv[1:]:
+    pg = pages(path)
+    extra = [(g1 - g0) - n1 * 960 for (g0, _), (g1, n1) in zip(pg, pg[1:])]   # 960 = 20 ms @ 48 kHz
+    npk = [n for _, n in pg[1:]]
+    print(f"{path}: {len(pg)} 頁；每頁封包數 median={statistics.median(npk):.0f}（滿載 50）；"
+          f"每頁多出來的時間 median={statistics.median(extra)/48:.1f} ms（正常 0）")
 ```
 
-遺失比例應該要掉到和 Linux 同級（< 0.1%）。如果還是掉 20%，表示根因不在
-讀取路徑，而在上面提的 `status.json` 寫入阻塞或別的地方，要帶著
-`mean_gap_spacing_seconds` 的數值回來繼續查。
+### 「已修好」的定義
 
-同時也請回報：Mac 的 `ffmpeg -version`（那份錄音是 `Lavc63.1.101`，即 ffmpeg 8.x，
-而開發機是 7.1.5）、以及 `paths.output_root` 的實際位置（是否在 iCloud 底下）。
+在這台 Mac 上實際錄 **≥ 30 分鐘**，`probe_capture` 的 `lost_ratio` < 0.005（理想是接近 Linux 的 < 0.0006），
+而且每頁封包數接近 50。少於這個不得宣稱修好。修好之前，**不要在 Mac 上錄任何需要事後處理的內容**；
+驗證用的樣本請在 Linux 錄。
 
 ## 麥克風權限（TCC）
 
@@ -338,11 +367,9 @@ echo "寫到 $R"
 以下项目目前**只有靜態驗證或 mock test**，沒有在真正的 Mac 上跑過，是這次
 沒有 macOS 實機時最大的風險來源：
 
-0. **擷取掉音訊的修正是否真的有效**（見「擷取掉音訊」一節）。這是目前唯一
-   已知的 macOS 實機 bug：實機量到每秒固定掉約 0.2 秒、整場遺失 20.2%，
-   而 ffmpeg 結束代碼仍是 0。修正（讀取獨立執行緒 + 調高 thread_queue_size
-   + 擷取完整性檢查）只在 Linux 驗過無回歸，**沒有在 Mac 上驗過**。
-   在這一項確認之前，不要在 Mac 上錄任何需要事後處理的內容。
+0. **擷取掉音訊（未解決）**（見「擷取掉音訊」一節）。實機量到每秒固定掉一小段、整場遺失 16–20%，而 ffmpeg
+   結束代碼仍是 0；#52 的緩解把缺口從 213 ms 縮到 128 ms，但沒有消除，根因不明。需要先確認 Mac 客戶端有沒有跑到
+   #52，再依序做隔離實驗。在這一項解決之前，不要在 Mac 上錄任何需要事後處理的內容。
 1. `ffmpeg -f avfoundation -list_devices true` 的實際輸出格式（尤其是中文
    裝置名稱、藍牙耳機等特殊裝置）是否跟這裡假設的一致。
 2. 第一次執行時的麥克風權限對話框行為、以及 `_permission_hint()` 猜的錯誤
