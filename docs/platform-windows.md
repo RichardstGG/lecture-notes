@@ -4,6 +4,9 @@
 `lec run --file`（CUDA）與 `lec devices`，下面標註「實機」的段落是依實機結果修正的；
 其餘仍是依文件推導與 mock test。
 
+測試在 Linux 與 Windows 之間的可攜性守則、在 Linux 上提前抓到 Windows 失敗的模擬方法、測試站摘要的讀法，以及
+2026-10 那一輪診斷的紀錄，見 [platform-windows-testing.md](platform-windows-testing.md)。
+
 ## DirectShow 裝置列表的兩種格式（實機更正，2026-09）
 
 ffmpeg `-f dshow -list_devices true` 的輸出有兩種格式，`parse_dshow_devices()` 兩種都支援：
