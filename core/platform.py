@@ -91,7 +91,8 @@ def pid_alive(pid):
     except PermissionError:
         return True
     try:                                   # 殭屍程序算已結束
-        with open(f"/proc/{pid}/stat") as f:
+        # 行程名稱（comm）可以是任意位元組，不是合法 UTF-8 時不能讓 pid_alive 崩潰
+        with open(f"/proc/{pid}/stat", encoding="utf-8", errors="replace") as f:
             return f.read().split(")")[-1].split()[0] != "Z"
     except OSError:
         return True
