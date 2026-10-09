@@ -240,6 +240,25 @@ def find_python(explicit=None):
     return None
 
 
+def sherpa_version(python):
+    """該直譯器裡 sherpa-onnx 的版本字串；取不到回傳 None。
+
+    給 lec doctor 比對 SHERPA_ONNX_VERSION 用。讀法與 diarize_worker 回報
+    engine_version 的方式相同（模組的 __version__）。
+    """
+    try:
+        r = subprocess.run(
+            [str(python), "-c",
+             "import sherpa_onnx; print(getattr(sherpa_onnx, '__version__', ''))"],
+            capture_output=True, text=True, encoding="utf-8", errors="replace", timeout=60)
+    except (OSError, subprocess.TimeoutExpired):
+        return None
+    lines = r.stdout.strip().splitlines()
+    if r.returncode != 0 or not lines:
+        return None
+    return lines[-1].strip()
+
+
 def _install_hint():
     return (f"找不到安裝了 sherpa-onnx 的 Python。請安裝：\n"
             f"  {_venv_python()} -m pip install sherpa-onnx=={SHERPA_ONNX_VERSION}\n"
