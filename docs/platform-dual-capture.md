@@ -88,6 +88,11 @@ ffmpeg(mic)            ─┘   （每路各自一個執行緒）   └→ 混�
 `gaps[]`、`drift{clock_error_ppm,slip_inserted,slip_dropped}`、`levels{peak_dbfs,digital_silence_seconds,…}`、
 `fault`、`complete`、`bytes`、`sha256`）、`mix`、`degraded`、`faults[]`、`warnings[]`。
 
+`track` 與 `mix.path` 是**相對於 session 資料夾、一律以 `/` 分隔**的路徑（例如 `tracks/mic.ogg`），與寫入的平台
+無關；`verify_capture()` 回傳的 `usable`／`playable` 鍵也是這個格式。讀取時會把反斜線轉成 `/`，所以
+Windows 上寫出的舊格式（`tracks\mic.ogg`）仍認得。雙來源錄音目前只支援 Linux，實際上不會有這種舊檔，
+這是防禦性的相容。
+
 ## 引擎介面（Codex 接線用；也是提案）
 
 ```python

@@ -16,12 +16,12 @@ class FindEngineBinTests(unittest.TestCase):
     def setUp(self):
         self._tmp = tempfile.TemporaryDirectory()
         self.addCleanup(self._tmp.cleanup)
-        self.engine_dir = Path(self._tmp.name) / "whisper.cpp"
+        self.engine_dir = Path(self._tmp.name).resolve() / "whisper.cpp"
 
     def _touch(self, rel):
         p = self.engine_dir / rel
         p.parent.mkdir(parents=True, exist_ok=True)
-        p.write_text("")
+        p.write_text("", encoding="utf-8")
         return p
 
     def test_posix_plain_bin_layout(self):
@@ -57,16 +57,18 @@ class LibraryDirsTests(unittest.TestCase):
     def setUp(self):
         self._tmp = tempfile.TemporaryDirectory()
         self.addCleanup(self._tmp.cleanup)
-        self.root = Path(self._tmp.name)
+        # library_dirs／env_with_libs 會 resolve()，所以期望值也要用正規化後的路徑。
+        # Windows 的 TEMP 常是 8.3 短路徑（USERNA~1），Linux 的 TMPDIR 也可能是 symlink。
+        self.root = Path(self._tmp.name).resolve()
 
     def _make_binary_and_libs(self, exe_rel, lib_rels):
         binary = self.root / exe_rel
         binary.parent.mkdir(parents=True, exist_ok=True)
-        binary.write_text("")
+        binary.write_text("", encoding="utf-8")
         for rel in lib_rels:
             lib = self.root / rel
             lib.parent.mkdir(parents=True, exist_ok=True)
-            lib.write_text("")
+            lib.write_text("", encoding="utf-8")
         return binary
 
     def test_linux_finds_shared_objects(self):
@@ -99,13 +101,15 @@ class EnvWithLibsTests(unittest.TestCase):
     def setUp(self):
         self._tmp = tempfile.TemporaryDirectory()
         self.addCleanup(self._tmp.cleanup)
-        self.root = Path(self._tmp.name)
+        # library_dirs／env_with_libs 會 resolve()，所以期望值也要用正規化後的路徑。
+        # Windows 的 TEMP 常是 8.3 短路徑（USERNA~1），Linux 的 TMPDIR 也可能是 symlink。
+        self.root = Path(self._tmp.name).resolve()
         self.binary = self.root / "build" / "bin" / "whisper-server"
         self.binary.parent.mkdir(parents=True)
-        self.binary.write_text("")
+        self.binary.write_text("", encoding="utf-8")
         # 三種平台各自的函式庫副檔名都放一份，讓同一份 fixture 能給三個平台的測試共用
         for name in ("libggml.so", "libggml.dylib", "ggml.dll"):
-            (self.binary.parent / name).write_text("")
+            (self.binary.parent / name).write_text("", encoding="utf-8")
 
     def test_linux_uses_ld_library_path_and_keeps_old_value(self):
         with mock.patch.object(P, "IS_WINDOWS", False), mock.patch.object(P, "NAME", "linux"):
