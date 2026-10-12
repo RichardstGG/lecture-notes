@@ -277,6 +277,34 @@ class TestFindPython(unittest.TestCase):
         self.assertEqual(rel, Path("Scripts/python.exe") if os.name == "nt" else Path("bin/python"))
 
 
+class TestWorkerEmit(unittest.TestCase):
+    def _emit_through(self, encoding, **event):
+        import io
+        from core import diarize_worker as W
+        raw = io.BytesIO()
+        out = io.TextIOWrapper(raw, encoding=encoding, errors="strict", newline="\n")
+        with mock.patch.object(W.sys, "stdout", out):
+            W.emit(**event)
+            out.flush()
+        return raw.getvalue()
+
+    def test_output_is_pure_ascii_and_round_trips(self):
+        event = {"type": "error", "code": "decode_failed", "message": "分群失敗：路徑 C:\\使用者\\音訊 ✔ \"引號\""}
+        data = self._emit_through("ascii", **event)
+        data.decode("ascii")                       # 不拋例外 = 純 ASCII
+        self.assertEqual(json.loads(data.decode("ascii")), event)
+
+    def test_output_does_not_depend_on_the_stdout_encoding(self):
+        event = {"type": "error", "code": "x", "message": "測試 ✔ 😀"}
+        outputs = {enc: self._emit_through(enc, **event) for enc in ("ascii", "utf-8", "cp950", "latin-1")}
+        self.assertEqual(len(set(outputs.values())), 1, "不論 stdout 用什麼編碼，輸出都是同樣的位元組")
+
+    def test_one_event_is_exactly_one_line(self):
+        data = self._emit_through("ascii", type="progress", processed=1.5, total=9.0)
+        self.assertEqual(data.count(b"\n"), 1)
+        self.assertTrue(data.endswith(b"\n"))
+
+
 # ---------------------------------------------------------------- 真的 worker + 假的 sherpa
 FAKE_SHERPA = '''
 __version__ = "0.0-fake"
@@ -323,7 +351,8 @@ class OfflineSpeakerDiarization:
     def process(self, samples, callback=None):
         import os
         if os.environ.get("FAKE_SHERPA_RAISE") == "1":
-            raise RuntimeError("boom inside process")
+            import json
+            raise RuntimeError(json.loads(os.environ.get("FAKE_SHERPA_MESSAGE_JSON", '"boom inside process"')))
         n = len(samples)
         for done in (1, 2, 3):
             if callback is not None and callback(done, 3) != 0:
@@ -380,6 +409,25 @@ class TestRealWorkerWithFakeSherpa(Base):
             self.run_real(FAKE_SHERPA_RAISE="1")
         self.assertEqual(cm.exception.code, "segmentation_failed")
         self.assertIn("boom inside process", cm.exception.message)
+
+    def test_a_chinese_error_survives_a_stdout_that_cannot_encode_it(self):
+        # stdout 接到管線時 Python 用系統預設編碼（Windows 是 cp950）。以前 worker 用 ensure_ascii=False 直接寫
+        # 中文，編不出來就崩潰，父行程只剩籠統的 segmentation_failed 而丟了真正的訊息。
+        # PYTHONIOENCODING=ascii 讓 stdout 連一個中文字都編不出來，重現同一類失敗。
+        message = "分群爆炸：模型載入失敗 ✔"
+        # 訊息用 JSON 跳脫成純 ASCII 再放進環境變數：在 ASCII 地區設定下 Python 連 os.environ 都編不出中文
+        env = {"PYTHONIOENCODING": "ascii", "FAKE_SHERPA_RAISE": "1",
+               "FAKE_SHERPA_MESSAGE_JSON": json.dumps(message)}
+        with self.assertRaises(D.DiarizationError) as cm:
+            self.run_real(**env)
+        self.assertEqual(cm.exception.code, "segmentation_failed")
+        self.assertIn(message, cm.exception.message, "訊息要原樣傳到父行程，不是亂碼或被丟掉")
+
+    def test_a_chinese_error_code_path_also_keeps_its_stable_code(self):
+        # 錯誤碼本身（input_invalid）走的是同一條輸出路徑，不能因為編碼問題被降級成 segmentation_failed
+        with self.assertRaises(D.DiarizationError) as cm:
+            self.run_real(FAKE_SHERPA_INVALID="1", PYTHONIOENCODING="ascii")
+        self.assertEqual(cm.exception.code, "input_invalid")
 
     def test_undecodable_audio_is_decode_failed(self):
         (self.root / "bad.wav").write_bytes(b"this is not audio")

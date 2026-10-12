@@ -6,6 +6,8 @@
 """
 import os
 import signal
+import subprocess
+import sys
 import types
 import unittest
 from unittest import mock
@@ -113,6 +115,47 @@ class InterruptTests(unittest.TestCase):
 # 模擬 POSIX 的測試要在 Windows 上也能跑：Windows 沒有 os.killpg、signal.SIGKILL，
 # 而正式碼的 POSIX 分支會讀到它們，所以測試得把它們一併補上，而不是只 patch 其中一個。
 SIGKILL = getattr(signal, "SIGKILL", 9)
+
+
+@unittest.skipUnless(sys.platform.startswith("linux") and os.path.isdir("/proc"), "需要 Linux 的 /proc")
+class PidAliveProcessNameTests(unittest.TestCase):
+    """RunLock.current() 用 pid_alive() 判斷另一個 lec 還在不在。/proc/<pid>/stat 裡的行程名稱（comm）
+    可以是任意位元組，任何行程都能自己設定；以前遇到不是合法 UTF-8 的名稱，pid_alive() 會拋
+    UnicodeDecodeError（它只攔 OSError），lec 啟動就帶著 traceback 崩潰。"""
+
+    CODE = ("import ctypes, sys, time\n"
+            "ctypes.CDLL(None).prctl(15, b'\\xff\\xfe\\xfd', 0, 0, 0)   # PR_SET_NAME\n"
+            "print('ready', flush=True)\n"
+            "time.sleep(30)\n")
+
+    def _child(self):
+        child = subprocess.Popen([sys.executable, "-c", self.CODE], stdout=subprocess.PIPE)
+        self.addCleanup(lambda: (child.kill(), child.wait(), child.stdout.close()))
+        self.assertEqual(child.stdout.readline().strip(), b"ready")
+        return child
+
+    def test_a_process_name_that_is_not_utf8_does_not_crash_pid_alive(self):
+        child = self._child()
+        with open(f"/proc/{child.pid}/stat", "rb") as f:
+            self.assertIn(b"(\xff\xfe\xfd)", f.read(), "測試前提：行程名稱真的不是合法 UTF-8")
+        self.assertTrue(P.pid_alive(child.pid))
+
+    def test_it_still_reports_a_dead_process_as_dead(self):
+        child = self._child()
+        child.kill()
+        child.wait()
+        self.assertFalse(P.pid_alive(child.pid))
+
+    def test_a_zombie_with_such_a_name_still_counts_as_dead(self):
+        child = self._child()
+        os.kill(child.pid, signal.SIGKILL)
+        for _ in range(100):                        # 等它變成殭屍（還沒被 wait）
+            with open(f"/proc/{child.pid}/stat", "rb") as f:
+                if f.read().rsplit(b")", 1)[-1].split()[0] == b"Z":
+                    break
+            import time
+            time.sleep(0.02)
+        self.assertFalse(P.pid_alive(child.pid), "殭屍程序算已結束")
 
 
 class KillTests(unittest.TestCase):
