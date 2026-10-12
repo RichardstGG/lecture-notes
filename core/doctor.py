@@ -9,6 +9,7 @@ from pathlib import Path
 
 from . import config as C
 from . import devices
+from . import diarize as D
 from . import platform as P
 from .servers import LlamaServer, WhisperServer, http_get
 
@@ -114,6 +115,41 @@ def dual_capture_item(backend=None):
     if plan["warnings"]:
         return (WARN, name, detail + "｜" + "；".join(w["message"] for w in plan["warnings"]))
     return (OK, name, detail)
+
+
+def diarize_item(cfg):
+    """「發言者辨識（會議）」那一行：回傳 (status, name, detail)。
+
+    直譯器用 core.diarize.find_python 找，與實際執行辨識時同一套探索順序，
+    doctor 說「找得到」就代表 diarize_session 也找得到。模型路徑走
+    cfg.diarization_options()，與 CLI 驗證的是同一組設定鍵。
+    選用功能：缺東西只算警告，不讓 lec doctor 因此回傳失敗。
+    """
+    name = "發言者辨識"
+    hint = f"執行 {'python' if P.NAME == 'windows' else 'python3'} upgrade.py"
+    try:
+        opts = cfg.diarization_options()
+    except C.ConfigError as e:
+        return (WARN, name, f"設定有誤：{e}")
+    models = [Path(opts["segmentation_model"]), Path(opts["embedding_model"])]
+    problems = []
+    python = D.find_python()
+    version = None
+    if python is None:
+        problems.append("找不到安裝了 sherpa-onnx 的 Python")
+    else:
+        version = D.sherpa_version(python)
+        if version != D.SHERPA_ONNX_VERSION:
+            problems.append(f"{python} 的 sherpa-onnx 版本是 {version or '未知'}，"
+                            f"已實測的是 {D.SHERPA_ONNX_VERSION}")
+    missing = [m for m in models if not m.is_file()]
+    if missing:
+        problems.append("找不到模型 " + "、".join(str(m) for m in missing))
+    if problems:
+        return (WARN, name, "只有會議模式需要｜" + "；".join(problems) + f"；{hint}")
+    size = sum(m.stat().st_size for m in models) / 1e6
+    return (OK, name, f"sherpa-onnx {version}（{python}）｜模型 {len(models)} 個（{size:.0f} MB）"
+                      f"｜實驗中：辨識品質尚未用標註樣本驗證")
 
 
 def run(course=None, sets=(), mic=False):
@@ -231,6 +267,9 @@ def run(course=None, sets=(), mic=False):
         except OSError:
             ok = False
         add(OK if ok else FAIL, label, str(p) + ("" if ok else "（無法寫入）"))
+
+    # ---- 會議（選用）
+    add(*diarize_item(cfg))
 
     # ---- 麥克風
     source = cfg.audio_source()

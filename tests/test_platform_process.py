@@ -6,6 +6,8 @@
 """
 import os
 import signal
+import subprocess
+import sys
 import types
 import unittest
 from unittest import mock
@@ -37,8 +39,13 @@ class PidAliveTests(unittest.TestCase):
         self.assertFalse(P.pid_alive(None))
 
     def test_posix_current_process_is_alive(self):
-        with mock.patch.object(P, "IS_WINDOWS", False):
+        # 必須 mock os.kill：這個測試在 Windows 上也會跑（IS_WINDOWS 被強制成 False），
+        # 而 Windows 的 os.kill(pid, 0) 不是「探測行程」，0 是 CTRL_C_EVENT：真的呼叫會對自己所在的主控台送
+        # Ctrl+C，連測試 runner 一起打斷（exit 0xC000013A），而且不會留下任何測試結果。
+        with mock.patch.object(P, "IS_WINDOWS", False), \
+                mock.patch.object(P.os, "kill") as kill:
             self.assertTrue(P.pid_alive(os.getpid()))
+        kill.assert_called_once_with(os.getpid(), 0)
 
     def test_posix_lookup_error_means_dead(self):
         with mock.patch.object(P, "IS_WINDOWS", False), \
@@ -105,6 +112,52 @@ class InterruptTests(unittest.TestCase):
             self.assertFalse(P.interrupt(123))
 
 
+# 模擬 POSIX 的測試要在 Windows 上也能跑：Windows 沒有 os.killpg、signal.SIGKILL，
+# 而正式碼的 POSIX 分支會讀到它們，所以測試得把它們一併補上，而不是只 patch 其中一個。
+SIGKILL = getattr(signal, "SIGKILL", 9)
+
+
+@unittest.skipUnless(sys.platform.startswith("linux") and os.path.isdir("/proc"), "需要 Linux 的 /proc")
+class PidAliveProcessNameTests(unittest.TestCase):
+    """RunLock.current() 用 pid_alive() 判斷另一個 lec 還在不在。/proc/<pid>/stat 裡的行程名稱（comm）
+    可以是任意位元組，任何行程都能自己設定；以前遇到不是合法 UTF-8 的名稱，pid_alive() 會拋
+    UnicodeDecodeError（它只攔 OSError），lec 啟動就帶著 traceback 崩潰。"""
+
+    CODE = ("import ctypes, sys, time\n"
+            "ctypes.CDLL(None).prctl(15, b'\\xff\\xfe\\xfd', 0, 0, 0)   # PR_SET_NAME\n"
+            "print('ready', flush=True)\n"
+            "time.sleep(30)\n")
+
+    def _child(self):
+        child = subprocess.Popen([sys.executable, "-c", self.CODE], stdout=subprocess.PIPE)
+        self.addCleanup(lambda: (child.kill(), child.wait(), child.stdout.close()))
+        self.assertEqual(child.stdout.readline().strip(), b"ready")
+        return child
+
+    def test_a_process_name_that_is_not_utf8_does_not_crash_pid_alive(self):
+        child = self._child()
+        with open(f"/proc/{child.pid}/stat", "rb") as f:
+            self.assertIn(b"(\xff\xfe\xfd)", f.read(), "測試前提：行程名稱真的不是合法 UTF-8")
+        self.assertTrue(P.pid_alive(child.pid))
+
+    def test_it_still_reports_a_dead_process_as_dead(self):
+        child = self._child()
+        child.kill()
+        child.wait()
+        self.assertFalse(P.pid_alive(child.pid))
+
+    def test_a_zombie_with_such_a_name_still_counts_as_dead(self):
+        child = self._child()
+        os.kill(child.pid, signal.SIGKILL)
+        for _ in range(100):                        # 等它變成殭屍（還沒被 wait）
+            with open(f"/proc/{child.pid}/stat", "rb") as f:
+                if f.read().rsplit(b")", 1)[-1].split()[0] == b"Z":
+                    break
+            import time
+            time.sleep(0.02)
+        self.assertFalse(P.pid_alive(child.pid), "殭屍程序算已結束")
+
+
 class KillTests(unittest.TestCase):
     def test_windows_kill_tree_uses_taskkill(self):
         with mock.patch.object(P, "IS_WINDOWS", True), \
@@ -124,7 +177,8 @@ class KillTests(unittest.TestCase):
 
     def test_posix_kill_tree_returns_immediately_if_already_dead(self):
         with mock.patch.object(P, "IS_WINDOWS", False), \
-                mock.patch.object(P.os, "killpg", side_effect=ProcessLookupError) as killpg, \
+                mock.patch.object(P.signal, "SIGKILL", SIGKILL, create=True), \
+                mock.patch.object(P.os, "killpg", create=True, side_effect=ProcessLookupError) as killpg, \
                 mock.patch.object(P.time, "sleep") as sleep:
             P.kill_tree(123, timeout=5)
             killpg.assert_called_once_with(123, signal.SIGTERM)
@@ -138,7 +192,8 @@ class KillTests(unittest.TestCase):
             raise PermissionError
 
         with mock.patch.object(P, "IS_WINDOWS", False), \
-                mock.patch.object(P.os, "killpg", side_effect=fake_killpg), \
+                mock.patch.object(P.signal, "SIGKILL", SIGKILL, create=True), \
+                mock.patch.object(P.os, "killpg", create=True, side_effect=fake_killpg), \
                 mock.patch.object(P.os, "kill") as kill, \
                 mock.patch.object(P, "pid_alive", return_value=False), \
                 mock.patch.object(P.os, "waitpid", side_effect=ChildProcessError):
@@ -147,9 +202,10 @@ class KillTests(unittest.TestCase):
 
     def test_posix_kill_now_sends_sigkill(self):
         with mock.patch.object(P, "IS_WINDOWS", False), \
-                mock.patch.object(P.os, "killpg") as killpg:
+                mock.patch.object(P.signal, "SIGKILL", SIGKILL, create=True), \
+                mock.patch.object(P.os, "killpg", create=True) as killpg:
             P.kill_now(123)
-            killpg.assert_called_once_with(123, signal.SIGKILL)
+            killpg.assert_called_once_with(123, SIGKILL)
 
 
 class InhibitorTests(unittest.TestCase):
