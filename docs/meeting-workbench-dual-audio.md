@@ -1,8 +1,8 @@
 # 會議雙音源契約與引擎交接（2026-10-06）
 
-2026-10-08 現況補充：下方「沒有雙路引擎」描述 PR #62 時點；PR #63 已合併引擎，仍未接會議 CLI／API。新設定資料層不開放雙來源，schema 與介面差異見 [最新里程碑說明](meeting-workbench-config.md)。
+2026-10-12 現況補充：下方交付紀錄描述 PR #62 時點；PR #63 已合併雙路引擎，仍未接會議執行 CLI／API。main 已提供 status／run schema 2、events schema 1 與 `run.lock` 原子 OS 鎖，見 [鎖與狀態](meeting-workbench-lock-status.md)。公開雙來源錄音入口仍停用；下列引擎介面與來源／capture schema 保留為原始交接提案，與現有引擎的差異見 [設定里程碑說明](meeting-workbench-config.md)。
 
-## 交付狀態與範圍
+## PR #62 交付時點的狀態與範圍
 
 以重新 fetch 的 `origin/main`（3a5c364）及程式為基準：會議工作台仍為預覽；沒有 `lec meeting run`、meeting-runs API、會議來源寫入器或雙路錄音引擎。`core/diarize.py` 已存在，但未接會議生命週期。這次交付是可獨立審查的**設定驗證＋能力查詢＋啟動阻擋＋UI 預覽**。以下明標「提案」的介面和檔案格式尚未實作或經 Claude 驗證，不表示功能已開放。
 
@@ -70,11 +70,11 @@ schema 2 頂層：`schema_version=2, kind="recording", capture_mode="dual", crea
 
 ## 提案：狀態、停止、CLI/API 接線
 
-沿用 meeting 正式契約的未實作 status schema 2，增加可選 `capture`：`{mode, state:"starting"|"recording"|"degraded"|"stopped", complete:null|bool, sources:[{id,role,device_id,state:"opening"|"active"|"silent"|"failed"|"stopped",level_dbfs:null|number,last_sample_at:null|ISO8601,error:null|{code,message},gaps:[]}]}`。音量範圍 [-120,0] dBFS，未知為 null，靜音為 -120；所有 timestamp/level 來自引擎，UI 不推測。來源失效事件仍用 events schema 1 的新增 type `capture_source_error`，含 source_id/code；不新增 phase 來取代既有 phase。
+沿用 meeting 正式契約已實作的 status schema 2 容器；以下可選 `capture` 欄位仍為提案：`{mode, state:"starting"|"recording"|"degraded"|"stopped", complete:null|bool, sources:[{id,role,device_id,state:"opening"|"active"|"silent"|"failed"|"stopped",level_dbfs:null|number,last_sample_at:null|ISO8601,error:null|{code,message},gaps:[]}]}`。音量範圍 [-120,0] dBFS，未知為 null，靜音為 -120；所有 timestamp/level 來自引擎，UI 不推測。來源失效事件仍用 events schema 1 的新增 type `capture_source_error`，含 source_id/code；不新增 phase 來取代既有 phase。
 
 meeting run 未來追加 `--capture-mode single|dual --system-source ID --microphone-source ID`，API meeting-runs 對應新增可選 capture_mode/system_source/microphone_source；省略為 single，既有 source/file 不改義。dual+file 或 dual+source 輸入衝突回 exit 2 / HTTP 400，unsupported 回 exit 1 / HTTP 422，忙碌 exit 3 / HTTP 409。啟動前驗證能力與裝置，拿鎖後再次驗證，以免熱拔插競態。檢查失敗不啟動一路替代。
 
-兩路共用同一個 `<state_dir>/run.json` 原子鎖及 session stop/stop_force；一個 stop 同時結束兩路。中途一路失效仍保留鎖到剩餘錄音及收尾完成；最終 incomplete 用 failed + 錯誤資訊，不回正常完成。以上均屬後續整合驗收，這次沒有虛構作業成功路徑。
+後續兩路流程須共用現有 `<state_dir>/run.lock` 原子 OS 鎖及 session stop/stop_force；`run.json` 僅為工作 metadata。一個 stop 同時結束兩路。中途一路失效仍保留鎖到剩餘錄音及收尾完成；最終 incomplete 用 failed + 錯誤資訊，不回正常完成。以上均屬後續整合驗收，這次沒有虛構作業成功路徑。
 
 ## CROSS_AGENT_REQUEST
 

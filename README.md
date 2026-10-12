@@ -358,14 +358,15 @@ npm run dev
 | 元件 | 現況 | 文件 |
 |---|---|---|
 | 會議設定與資料層 | `meetings/*.toml`、`lec meetings`、`lec config --work-type meeting`；不錄音 | [docs/meeting-workbench-config.md](docs/meeting-workbench-config.md) |
+| 單工作鎖與狀態 | `run.lock` 原子 OS 鎖；status／run writer 為 schema 2，events 為 schema 1，reader 相容舊檔；會議編排尚未接線 | [docs/meeting-workbench-lock-status.md](docs/meeting-workbench-lock-status.md) |
 | 會後發言者辨識 `core/diarize.py` | 引擎層完成（sherpa-onnx，子行程執行）；**尚未接 CLI／UI／狀態檔，準確度未驗證** | [docs/diarize-install.md](docs/diarize-install.md)、[評分器](docs/diarize-evaluation.md) |
 | 雙音源錄音 `core/capture.py` | 僅 Linux（PulseAudio／PipeWire）；**硬體驗收未做**。macOS／Windows 不支援 | [docs/platform-dual-capture.md](docs/platform-dual-capture.md) |
 | 設定與能力查詢 | `[audio] capture_mode = "dual"` 的驗證與 `lec capture-capabilities`；`lec run` 遇到 dual 會明確拒絕 | [docs/meeting-workbench-dual-audio.md](docs/meeting-workbench-dual-audio.md) |
 | UI 會議頁 | 讀取既有會議場次與辨識進度；開始錄音停用 | [ui/WORKBENCH.md](ui/WORKBENCH.md) |
 
-契約與實作順序：[docs/meeting-workbench-contract.md](docs/meeting-workbench-contract.md)（規劃 schema 2、`diarizing` phase；**尚未實作**，
-目前出貨的 `status.json`／`events.jsonl`／`run.json` 仍是 schema 1，phase 沒有 `diarizing`）、
+契約與實作順序：[docs/meeting-workbench-contract.md](docs/meeting-workbench-contract.md)、
 [docs/meeting-workbench-implementation.md](docs/meeting-workbench-implementation.md)。
+`diarizing`／`diarization` 的狀態容器與 UI 讀取已提供，但尚無會議執行入口產生這段工作流程；不能視為已可啟動辨識。
 
 兩個獨立的驗收工具（不經過 `lec`）：`tools/dual_capture_check.py`（雙音源硬體驗收，錄音時會真的收錄所選裝置）、
 `tools/score_diarization.py`（拿人工標註替發言者辨識評分，不訂通過門檻）。
