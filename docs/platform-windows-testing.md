@@ -141,8 +141,8 @@ run 之前），卻能跑完 991 項。所以「這個測試每次都會造成�
 ### 合併後的 Windows 驗證（2026-10-09）
 
 把 Codex 的 #77 與 Claude 的 #78–#81 合併成一個**暫時的驗證分支**（`claude/windows-verify-combined`，SHA
-`f30ef0cb03bb9b09f9112509045fe905dc7710a1`；#78 與 #81 在 `tests/test_platform_process.py`、`tests/test_capture_session.py` 有
-「兩邊各自新增」的衝突，保留兩邊），派送 `basic`：request `8ffcd2bb67a9452aa6508f4fbc4256fd`、
+`f30ef0cb03bb9b09f9112509045fe905dc7710a1`；合併時有兩處「兩邊各自新增」的衝突，保留兩邊：#78 與 #81 在
+`tests/test_platform_process.py`，#79 與 #81 在 `tests/test_capture_session.py`），派送 `basic`：request `8ffcd2bb67a9452aa6508f4fbc4256fd`、
 run 37894227163、`local_run_id=066e04ad9f22484e9d5a85e8b74f98be`。
 
 | 項目 | 結果 |
