@@ -20,6 +20,10 @@ def sine(freq, start, n, amp=8000):
                              for i in range(n))).tobytes()
 
 
+# Windows 沒有 signal.SIGKILL；測試只需要「有被強制結束」這個記號，不需要真的訊號編號。
+_KILL = getattr(signal, "SIGKILL", 9)
+
+
 class FakeCapture:
     """假的擷取行程。
 
@@ -119,8 +123,12 @@ class FakeCapture:
         self.send_signal(signal.SIGTERM)
 
     def kill(self):
-        self.signals.append(signal.SIGKILL)
-        self._halt.set()
+        # 先讓假行程收尾，再記錄訊號：_halt 沒被設定的話 _feed 執行緒永遠不會停，
+        # 測試會卡到逾時，直譯器結束時 daemon 執行緒還會對已關閉的 stderr 寫入而崩潰。
+        try:
+            self.signals.append(_KILL)
+        finally:
+            self._halt.set()
 
 
 class FakePopen:

@@ -37,8 +37,13 @@ class PidAliveTests(unittest.TestCase):
         self.assertFalse(P.pid_alive(None))
 
     def test_posix_current_process_is_alive(self):
-        with mock.patch.object(P, "IS_WINDOWS", False):
+        # 必須 mock os.kill：這個測試在 Windows 上也會跑（IS_WINDOWS 被強制成 False），
+        # 而 Windows 的 os.kill(pid, 0) 不是「探測行程」，0 是 CTRL_C_EVENT：真的呼叫會對自己所在的主控台送
+        # Ctrl+C，連測試 runner 一起打斷（exit 0xC000013A），而且不會留下任何測試結果。
+        with mock.patch.object(P, "IS_WINDOWS", False), \
+                mock.patch.object(P.os, "kill") as kill:
             self.assertTrue(P.pid_alive(os.getpid()))
+        kill.assert_called_once_with(os.getpid(), 0)
 
     def test_posix_lookup_error_means_dead(self):
         with mock.patch.object(P, "IS_WINDOWS", False), \
@@ -105,6 +110,11 @@ class InterruptTests(unittest.TestCase):
             self.assertFalse(P.interrupt(123))
 
 
+# 模擬 POSIX 的測試要在 Windows 上也能跑：Windows 沒有 os.killpg、signal.SIGKILL，
+# 而正式碼的 POSIX 分支會讀到它們，所以測試得把它們一併補上，而不是只 patch 其中一個。
+SIGKILL = getattr(signal, "SIGKILL", 9)
+
+
 class KillTests(unittest.TestCase):
     def test_windows_kill_tree_uses_taskkill(self):
         with mock.patch.object(P, "IS_WINDOWS", True), \
@@ -124,7 +134,8 @@ class KillTests(unittest.TestCase):
 
     def test_posix_kill_tree_returns_immediately_if_already_dead(self):
         with mock.patch.object(P, "IS_WINDOWS", False), \
-                mock.patch.object(P.os, "killpg", side_effect=ProcessLookupError) as killpg, \
+                mock.patch.object(P.signal, "SIGKILL", SIGKILL, create=True), \
+                mock.patch.object(P.os, "killpg", create=True, side_effect=ProcessLookupError) as killpg, \
                 mock.patch.object(P.time, "sleep") as sleep:
             P.kill_tree(123, timeout=5)
             killpg.assert_called_once_with(123, signal.SIGTERM)
@@ -138,7 +149,8 @@ class KillTests(unittest.TestCase):
             raise PermissionError
 
         with mock.patch.object(P, "IS_WINDOWS", False), \
-                mock.patch.object(P.os, "killpg", side_effect=fake_killpg), \
+                mock.patch.object(P.signal, "SIGKILL", SIGKILL, create=True), \
+                mock.patch.object(P.os, "killpg", create=True, side_effect=fake_killpg), \
                 mock.patch.object(P.os, "kill") as kill, \
                 mock.patch.object(P, "pid_alive", return_value=False), \
                 mock.patch.object(P.os, "waitpid", side_effect=ChildProcessError):
@@ -147,9 +159,10 @@ class KillTests(unittest.TestCase):
 
     def test_posix_kill_now_sends_sigkill(self):
         with mock.patch.object(P, "IS_WINDOWS", False), \
-                mock.patch.object(P.os, "killpg") as killpg:
+                mock.patch.object(P.signal, "SIGKILL", SIGKILL, create=True), \
+                mock.patch.object(P.os, "killpg", create=True) as killpg:
             P.kill_now(123)
-            killpg.assert_called_once_with(123, signal.SIGKILL)
+            killpg.assert_called_once_with(123, SIGKILL)
 
 
 class InhibitorTests(unittest.TestCase):

@@ -92,7 +92,7 @@ class GpuNamesTests(unittest.TestCase):
 class MemoryAndDiskTests(unittest.TestCase):
     def test_posix_uses_sysconf(self):
         with mock.patch.object(P, "IS_WINDOWS", False), \
-                mock.patch.object(P.os, "sysconf",
+                mock.patch.object(P.os, "sysconf", create=True,        # Windows 沒有 os.sysconf
                                   side_effect=lambda n: {"SC_PHYS_PAGES": 4_000_000,
                                                          "SC_PAGE_SIZE": 4096}[n]):
             self.assertAlmostEqual(P.total_memory_gb(), 16.384, places=3)
@@ -101,7 +101,7 @@ class MemoryAndDiskTests(unittest.TestCase):
         for error in (OSError, ValueError):
             with self.subTest(error=error), \
                     mock.patch.object(P, "IS_WINDOWS", False), \
-                    mock.patch.object(P.os, "sysconf", side_effect=error):
+                    mock.patch.object(P.os, "sysconf", create=True, side_effect=error):
                 self.assertIsNone(P.total_memory_gb())
 
     def test_free_disk_is_decimal_gb(self):

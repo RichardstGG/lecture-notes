@@ -125,6 +125,8 @@ class DoctorRunTranscribeOnlyTests(unittest.TestCase):
             with contextlib.ExitStack() as stack:
                 stack.enter_context(mock.patch.object(DOC.devices, "list_sources", return_value=[]))
                 stack.enter_context(mock.patch.object(DOC.devices, "default_source", return_value=None))
+                # 不讓本機有沒有 .venv／LEC_DIARIZE_PYTHON 影響結果（DiarizeItemTests 另外測）
+                stack.enter_context(mock.patch.object(DOC.D, "find_python", return_value=None))
                 if upstream_text is not None:
                     stack.enter_context(mock.patch.object(DOC.C, "UPSTREAMS_FILE", upstreams))
                 return DOC.run(None, sets)
@@ -175,6 +177,10 @@ class DoctorRunTranscribeOnlyTests(unittest.TestCase):
         self.assertEqual(upstream["status"], DOC.FAIL)
         self.assertNotIn("test-key-value", upstream["detail"])
 
+    def test_diarization_is_listed_but_never_fails_doctor(self):
+        st = self._run(False)
+        self.assertEqual(st["發言者辨識"], DOC.WARN)
+
     def test_transcribe_only_ignores_a_selected_upstream(self):
         items = self._items(False, extra=["summary.upstream=lab"], upstream_text="[upstreams]\n")
         names = {it["name"] for it in items}
@@ -182,6 +188,105 @@ class DoctorRunTranscribeOnlyTests(unittest.TestCase):
         self.assertNotIn("摘要上游", names)
         self.assertEqual(st["llama-server"]["status"], DOC.WARN)
         self.assertIn("只轉錄", st["llama-server"]["detail"])
+
+
+class DiarizeItemTests(unittest.TestCase):
+    """「發言者辨識」那一行：直譯器探索與實際執行同一套、版本對 SHERPA_ONNX_VERSION、模型存在。"""
+
+    def setUp(self):
+        tmp = tempfile.TemporaryDirectory()
+        self.addCleanup(tmp.cleanup)
+        self.dir = Path(tmp.name)
+        self.seg, self.emb = self.dir / "seg.onnx", self.dir / "emb.onnx"
+
+    def cfg(self, *extra):
+        return DOC.C.load(None, sets=[f"diarization.segmentation_model='{self.seg.as_posix()}'",
+                                      f"diarization.embedding_model='{self.emb.as_posix()}'",
+                                      *extra])[0]
+
+    def models(self):
+        self.seg.write_bytes(b"x" * 1000)
+        self.emb.write_bytes(b"x" * 2000)
+
+    def item(self, cfg, python=Path("/venv/python"), version=None):
+        version = DOC.D.SHERPA_ONNX_VERSION if version is None else version
+        with mock.patch.object(DOC.D, "find_python", return_value=python) as find, \
+                mock.patch.object(DOC.D, "sherpa_version", return_value=version):
+            result = DOC.diarize_item(cfg)
+        self.find = find
+        return result
+
+    def test_ready_is_ok_but_still_labelled_experimental(self):
+        self.models()
+        st, name, detail = self.item(self.cfg())
+        self.assertEqual((st, name), (DOC.OK, "發言者辨識"))
+        self.assertIn(DOC.D.SHERPA_ONNX_VERSION, detail)
+        self.assertIn("實驗中", detail)
+
+    def test_uses_the_same_discovery_as_diarize_session(self):
+        # 不傳 explicit：與 _default_diarizer 在沒有 req.python 時走同一條路
+        self.models()
+        self.item(self.cfg())
+        self.find.assert_called_once_with()
+
+    def test_nothing_installed_is_a_warning_naming_both_gaps_and_the_fix(self):
+        st, _, detail = self.item(self.cfg(), python=None)
+        self.assertEqual(st, DOC.WARN)
+        self.assertIn("sherpa-onnx", detail)
+        self.assertIn(str(self.seg), detail)
+        self.assertIn(str(self.emb), detail)
+        self.assertIn("upgrade.py", detail)
+
+    def test_one_missing_model_is_named(self):
+        self.seg.write_bytes(b"x")
+        st, _, detail = self.item(self.cfg())
+        self.assertEqual(st, DOC.WARN)
+        self.assertIn(str(self.emb), detail)
+        self.assertNotIn(str(self.seg), detail)
+
+    def test_untested_sherpa_version_is_a_warning(self):
+        self.models()
+        st, _, detail = self.item(self.cfg(), version="9.9.9")
+        self.assertEqual(st, DOC.WARN)
+        self.assertIn("9.9.9", detail)
+        self.assertIn(DOC.D.SHERPA_ONNX_VERSION, detail)
+
+    def test_unreadable_version_is_a_warning(self):
+        self.models()
+        st, _, detail = self.item(self.cfg(), version="")
+        self.assertEqual(st, DOC.WARN)
+        self.assertIn("未知", detail)
+
+    def test_invalid_settings_are_a_warning_not_a_crash(self):
+        st, _, detail = self.item(self.cfg("diarization.embedding_model=''"))
+        self.assertEqual(st, DOC.WARN)
+        self.assertIn("embedding_model", detail)
+
+
+class SherpaVersionTests(unittest.TestCase):
+    """core.diarize.sherpa_version 實際啟動直譯器（用假的 sherpa_onnx 模組，不需要真的安裝）。"""
+
+    def version_with(self, module_text):
+        with tempfile.TemporaryDirectory() as d:
+            if module_text is not None:
+                (Path(d) / "sherpa_onnx.py").write_text(module_text, encoding="utf-8")
+            with mock.patch.dict(DOC.D.os.environ, {"PYTHONPATH": d}):
+                return DOC.D.sherpa_version(DOC.D.sys.executable)
+
+    def test_reads_the_module_version(self):
+        self.assertEqual(self.version_with('__version__ = "1.2.3"\n'), "1.2.3")
+
+    def test_module_without_version_is_none(self):
+        self.assertIsNone(self.version_with(""))
+
+    def test_import_failure_is_none(self):
+        self.assertIsNone(self.version_with('raise ImportError("broken")\n'))
+
+    def test_output_before_a_failed_import_is_not_taken_as_a_version(self):
+        self.assertIsNone(self.version_with('print("loading 1.2.3")\nraise ImportError("broken")\n'))
+
+    def test_missing_interpreter_is_none(self):
+        self.assertIsNone(DOC.D.sherpa_version(Path(tempfile.gettempdir()) / "no-such-python"))
 
 
 if __name__ == "__main__":

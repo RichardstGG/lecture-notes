@@ -1018,8 +1018,7 @@ class MultiCapture:
     def _source_meta(self, s, final):
         al = s.aligner.stats() if s.aligner else {}
         meta = {**s.spec.as_dict(),
-                "track": None if s.track_path is None else
-                str(s.track_path.relative_to(self.dir)),
+                "track": None if s.track_path is None else _rel(s.track_path, self.dir),
                 "start_offset_ms": round(al.get("lead_seconds", 0) * 1000, 1),
                 "samples_in": al.get("samples_in", 0), "samples_out": al.get("samples_out", 0),
                 "duration_seconds": round(al.get("samples_out", 0) / SR, 3),
@@ -1044,8 +1043,8 @@ class MultiCapture:
         sources = [self._source_meta(s, final) for s in self._src]
         mix = None
         if self.mix_path:
-            mix = {"path": str(self.mix_path.relative_to(self.dir)
-                               if self.mix_path.is_relative_to(self.dir) else self.mix_path),
+            mix = {"path": (_rel(self.mix_path, self.dir) if self.mix_path.is_relative_to(self.dir)
+                            else self.mix_path.as_posix()),
                    "duration_seconds": round(self._mixed_samples / SR, 3),
                    "method": "saturating_sum"}
             if final:
@@ -1087,6 +1086,21 @@ def _probe_duration(path):
         return float(r.stdout.strip())
     except (OSError, ValueError, subprocess.TimeoutExpired):
         return None
+
+
+def _rel(path, base):
+    """session 內的相對路徑，一律用 `/` 分隔。
+
+    capture.json 是跨平台的紀錄：`str(Path)` 在 Windows 會變成 `tracks\\mic.ogg`，在別的平台
+    讀就成了一個叫那個怪名字的檔案，verify_capture 會判成找不到。"""
+    return path.relative_to(base).as_posix()
+
+
+def _portable_rel(rel):
+    """讀 capture.json 時把路徑正規化成 `/` 分隔，這樣在 Windows 寫出的 `tracks\\mic.ogg` 也認得。
+
+    角色只有 system／mic、混音檔名固定，檔名不會合法地含反斜線，所以直接轉換是安全的。"""
+    return rel.replace("\\", "/") if isinstance(rel, str) else rel
 
 
 def _artifact(path, failure, expected_seconds):
@@ -1138,9 +1152,9 @@ def verify_capture(session_dir, meta_name="capture.json", deep=True):
     except (OSError, ValueError, KeyError, AssertionError) as e:
         return {"state": "invalid", "usable": {}, "problems": [f"capture.json 讀不懂：{e}"]}
     usable, problems = {}, []
-    artifacts = [(s.get("track"), s) for s in meta.get("sources", [])]
+    artifacts = [(_portable_rel(s.get("track")), s) for s in meta.get("sources", [])]
     if meta.get("mix"):
-        artifacts.append((meta["mix"].get("path"), meta["mix"]))
+        artifacts.append((_portable_rel(meta["mix"].get("path")), meta["mix"]))
     final = meta.get("status") == "complete"
     for rel, rec in artifacts:
         if not rel:
