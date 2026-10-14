@@ -211,10 +211,10 @@ Automated / Mock test：93 項平台、擷取完整性、轉錄失敗與 doctor 
 Manual test：`lec doctor` 仍顯示 macOS 實驗中，能找到 swiftc；CLI help／停止參數不變。
 
 完整 suite 使用隔離環境補齊 UI 依賴、設定 `TMPDIR=/private/tmp` 並允許 loopback 後，
-1031 項中有 1 個既有 UI 測試 `test_wildcard_accepts_two_local_addresses_and_rejects_forged_host`
+A／B 後重新執行完整 `python3 -m unittest`：1042 項中有 1 個既有 UI 測試 `test_wildcard_accepts_two_local_addresses_and_rejects_forged_host`
 因本機 `127.0.0.2` 連線逾時失敗，另 12 項 skipped。未修改的 origin/main（ce41e1f）相同測試
-亦為 ConnectTimeout，與錄音 patch 無關；沒有修改 UI／會議碼去繞過它。此後新增的兩項 native 失敗契約測試
-已包含在 93 項通過的目標測試。完成全套驗證需要裝好 `ui/backend/requirements.txt` 與 httpx，
+亦為 ConnectTimeout，與錄音 patch 無關；沒有修改 UI／會議碼去繞過它。原生失敗契約、
+來源選擇與報告保留測試均包含在這次完整測試與 102 項通過的目標測試。完成全套驗證需要裝好 `ui/backend/requirements.txt` 與 httpx，
 在支援這兩個 loopback 位址的 Linux／Windows 環境執行 `python3 -m unittest`。
 macOS 另外需使用 canonical `TMPDIR=/private/tmp`，避免既有會議測試的 `/var` symlink 路徑斷言差異。
 
@@ -222,6 +222,32 @@ Windows basic／microphone：**Not tested，待測試站結果**。需以 primar
 與完整 SHA 派送；microphone 另需 PC 使用者開啟有效測試時段。PR 記錄派送與摘要結果，
 未取得對應 SHA／request ID 的通過摘要前不得視為通過。Linux 真機、其他 Mac、USB／iPhone、
 ffmpeg@7、闔蓋／休眠與 TCC 拒絕情境都未在此修復驗證；不據此宣稱跨平台硬體全面支援。
+
+### A／B 審查修正的實機驗證（2026-10-14）
+
+Hardware test：arm64、macOS 27.0.1（26A434）、ffmpeg 9.0.1，實際使用
+`lec run ... --source default --transcribe-only`，播放經使用者授權的低音量測試音。
+裝置枚舉首項為 Background Music（index 0），另有 Background Music (UI Sounds)（index 2）；
+`default_source()`、`resolve_source("default")` 與 session.log 均確認選到內建麥克風（index 1）。
+
+| 量測 | 原始數字 |
+|---|---|
+| probe audio_seconds／span_seconds | 302.407／302.407 秒 |
+| probe lost_seconds／lost_ratio／gap_count／max_gap_seconds | 0／0／0／0 |
+| Ogg 完整頁數／每頁封包中位數／額外頁時間中位數 | 302／50／0 ms |
+| native audio_seconds／pts_span_seconds | 302.40000000020115／302.3999999999942 秒 |
+| native callbacks／gap_count／lost_seconds／error | 28350／0／0／空字串 |
+| native wall_seconds | 302.41959916666383 秒 |
+| 停止時 elapsed／程序牆鐘／總程序牆鐘 | 301.5／307.15267949999543／313.0282460839953 秒 |
+| CLI 退出碼／最終 phase／errors／殘留自有子行程 | 0／done／0／無 |
+
+原生報告在 session.log 與 `capture_integrity.detail.native_capture` 的數字一致；
+事件 schema_version 仍為 1，頂層 probe 數字沒有被原生報告覆蓋。
+Mock／Automated test 另驗證未知來源不啟動 helper、明確虛擬裝置可選、成功報告有 gap 時
+保留並寫入事件與日誌、缺報告不影響結果、低比例原生 gap 警告與 0.5%／2% 門檻。
+
+Not tested：Bluetooth／錄音中取樣率切換（#88）、擷取架構後續設計（#90）、人工驗收清單（#91），
+沒有在這次補修實作。#87 helper 快取與 #89 doctor／README 等 #86 合併後另開 PR。
 
 ### 重做隔離實驗
 
