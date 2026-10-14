@@ -345,7 +345,7 @@ def capture_gap_report(packets, min_gap=0.001):
     `packets` 是 (pts_seconds, duration_seconds) 的可迭代物（可以是 generator，
     三小時的錄音有五十幾萬個封包，不要整份讀進記憶體）。
 
-    為什麼需要這個：ffmpeg 的擷取緩衝溢出時會直接丟音訊，但**結束代碼仍然是 0**，
+    為什麼需要這個：ffmpeg 的 macOS 擷取已量到丟音訊，但**結束代碼仍然是 0**，
     逐字稿與存檔都看不出異常。macOS 實機上量到一份 87.7 分鐘的錄音只錄到 70.0
     分鐘的音訊（5,196 個空隙、每秒固定掉約 0.2 秒），而當時完全沒有任何警告。
     """
@@ -710,16 +710,17 @@ class Transcriber:
                 log(f"🎙 錄音中（{self.cfg['audio']['source']}）。按 Ctrl+C 結束。")
 
             # 讓 ffmpeg 不被終端機的 Ctrl+C 直接打斷，由我們決定何時停止它
-            self.proc = subprocess.Popen(cmd, stdout=subprocess.PIPE, **P.spawn_kwargs())
+            self.proc = (P.start_live_capture(cmd, source, self.cfg["audio"].get("backend"))
+                         if self.live else
+                         subprocess.Popen(cmd, stdout=subprocess.PIPE, **P.spawn_kwargs()))
             if self.stopping and self.live:
                 self.proc.send_signal(signal.SIGINT)
             read_pcm = None
 
         # ffmpeg 的 stdout 由專屬執行緒讀乾，VAD 與 status 寫檔都不在讀取路徑上。
-        # 以前三件事在同一個迴圈：任何一次停頓都會讓 pipe 填滿 → ffmpeg 阻塞 →
-        # 作業系統的擷取緩衝溢出 → 音訊被丟掉，而且**連 keep_recording 的存檔
-        # 一起破**（存檔是會後處理唯一的來源）。macOS 實機上這條路徑每秒固定
-        # 掉約 0.2 秒；Linux 的 PulseAudio 在 server 端有緩衝所以看不出來。
+        # 這可隔離 Python 下游停頓，但不是 macOS 掉音訊的根因修復：直接用
+        # ffmpeg 錄 WAV 也遺失。macOS 單來源擷取由原生 callback 保留每個 buffer
+        # 與原始 PTS，詳見 platform.start_live_capture 與 docs/platform-macos.md。
         raw = queue.Queue()
         reader = threading.Thread(target=self._drain, args=(raw, read_pcm), daemon=True)
         reader.start()
@@ -767,7 +768,13 @@ class Transcriber:
             rc = self.proc.wait()
             self.ffmpeg_returncode = rc
             ffmpeg_failed = rc not in (0, 255, -2, -15) and not self.stopping
-            if ffmpeg_failed:
+            native_problem = P.native_capture_problem(self.proc)
+            if native_problem:
+                ffmpeg_failed = True
+                log(f"✖ macOS 原生擷取失敗：{native_problem}")
+                if self.status:
+                    self.status.error(f"macOS 原生擷取失敗：{native_problem}")
+            elif ffmpeg_failed:
                 log(f"⚠ ffmpeg 結束代碼 {rc}（音源或音檔可能有問題）")
                 if self.status:
                     self.status.error(f"ffmpeg 結束代碼 {rc}")
@@ -818,8 +825,8 @@ class Transcriber:
             return None
         if report["lost_ratio"] >= CAPTURE_LOSS_ERROR:
             spacing = report["mean_gap_spacing_seconds"]
-            regular = (f"，平均每 {spacing:.2f} 秒一次（規律間隔代表系統性問題，"
-                       f"不是偶發負載）" if spacing else "")
+            regular = (f"，時間戳空隙平均每 {spacing:.2f} 秒一次（封裝呈現規律間隔；"
+                       f"實際缺口位置需在擷取端確認）" if spacing else "")
             msg = (f"錄音存檔遺失 {100 * report['lost_ratio']:.1f}% 的音訊"
                    f"（錄到 {report['audio_seconds'] / 60:.1f} 分，"
                    f"時間跨距 {report['span_seconds'] / 60:.1f} 分；"
