@@ -148,7 +148,8 @@ Parrot 驅動。只有驅動 host 在執行，未觀察到可退出的 Backgroun
 - PCM 透過帶原始 capture PTS 的 Matroska pipe 交給既有 ffmpeg，輸出仍是 16 kHz PCM 與
   原有 Opus 存檔。**不使用無時間戳 raw PCM 作輸入**，以免把真正遺失掩蓋成連續的合成時間。
   合成測試刻意加入 128 ms 缺口，編成 Opus 後 `probe_capture` 仍量到 0.128 秒、一個缺口。
-- 需要 Xcode Command Line Tools 的 `swiftc`。`lec doctor` 增加這項提示；每次錄音在獨立
+- 需要 Xcode Command Line Tools 的 `swiftc`。`lec doctor` 在 macOS 缺少它時顯示 ✖（FAIL），
+  訊息指向 `xcode-select --install`；Linux／Windows 的檢查不變。每次錄音在獨立
   暫存目錄編譯 helper，正常收尾刪除原始碼、binary 與 module cache。不加新設定鍵。
   編譯／啟動失敗明確回報，**不退回已知會掉音訊的 ffmpeg avfoundation 擷取**。
 - `lec stop`／Ctrl+C 仍走原協定：停止檔或 signal handler 要求 helper 停止來源，等 FIFO
