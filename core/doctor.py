@@ -152,6 +152,19 @@ def diarize_item(cfg):
                       f"｜實驗中：辨識品質尚未用標註樣本驗證")
 
 
+def _tool_checks(name):
+    """(指令, 缺少算失敗?, 用途)。macOS 的 swiftc 是必要的：課堂即時錄音用原生 helper 擷取，
+    缺它時 start_live_capture 會直接報錯，不會退回會掉音訊的 ffmpeg avfoundation。"""
+    tools = [("ffmpeg", True, "錄音與解碼"), ("opencc", False, "台灣繁體用語轉換"),
+             ("git", False, "setup_engines.py 取得原始碼"), ("cmake", False, "編譯引擎")]
+    if name == "linux":
+        tools += [("pactl", False, "列出麥克風"), ("systemd-inhibit", False, "上課時阻止休眠")]
+    elif name == "macos":
+        tools += [("caffeinate", False, "上課時阻止休眠"),
+                  ("swiftc", True, "課堂即時錄音的原生擷取需要它；請執行 xcode-select --install")]
+    return tools
+
+
 def run(course=None, sets=(), mic=False):
     items = []
 
@@ -163,14 +176,7 @@ def run(course=None, sets=(), mic=False):
     tested = {"linux": "已實測", "macos": "實驗中", "windows": "實驗中"}[P.NAME]
     add(OK if P.NAME == "linux" else WARN, "作業系統", f"{P.describe()}｜{tested}")
     add(OK, "錄音後端", P.audio_backend())
-    tools = [("ffmpeg", True, "錄音與解碼"), ("opencc", False, "台灣繁體用語轉換"),
-             ("git", False, "setup_engines.py 取得原始碼"), ("cmake", False, "編譯引擎")]
-    if P.NAME == "linux":
-        tools += [("pactl", False, "列出麥克風"), ("systemd-inhibit", False, "上課時阻止休眠")]
-    elif P.NAME == "macos":
-        tools += [("caffeinate", False, "上課時阻止休眠")]
-        tools += [("swiftc", False, "macOS 課堂單來源原生擷取；缺少時請執行 xcode-select --install")]
-    for cmd, need, why in tools:
+    for cmd, need, why in _tool_checks(P.NAME):
         p = shutil.which(cmd)
         add(OK if p else (FAIL if need else WARN), cmd, p or f"找不到（{why}）")
 
