@@ -54,6 +54,13 @@
 | macOS | 實驗中 | [docs/mac_setup.md](docs/mac_setup.md) |
 | Linux | 正式支援 | [docs/linux_setup.md](docs/linux_setup.md) |
 
+macOS（實驗中）安裝前先執行下列指令，完成 Xcode Command Line Tools 安裝，再依上方文件操作。
+課堂單來源即時錄音需要其中的 `swiftc` 編譯原生擷取 helper。
+
+```bash
+xcode-select --install
+```
+
 - **版本歷史**：[CHANGELOG.md](CHANGELOG.md)，列出每次更新對應的版本號。
 - 遇到問題時，請先看各安裝文件最後的「遇到問題」一節。
 

@@ -2,16 +2,19 @@
 
 doctor.run() 裡有幾處會因作業系統而不同：「作業系統」那行的實測／實驗中措辭、
 要檢查哪些外部指令（pactl / systemd-inhibit / caffeinate）、錄音後端，以及編譯工具鏈。
-macOS 與 Windows 沒有實機可以跑，所以至少用 mock 把三個平台的分支都走過一次，
+本檔以 mock 把三個平台的分支都走過一次，不將它當作實機驗證，
 避免跨平台重構時在這裡靜默壞掉。
 
 只 patch core/platform.py 的 NAME：行程相關的 IS_WINDOWS 是 import 時算好的常數，
 不會被動到，所以不會誤觸 ctypes.windll 這種真的只能在 Windows 執行的路徑。
 """
 import contextlib
+import io
+import json
 import tempfile
 import unittest
 from pathlib import Path
+from types import SimpleNamespace
 from unittest import mock
 
 from . import _pathfix  # noqa: F401
@@ -85,6 +88,50 @@ class DoctorPlatformBranchTests(unittest.TestCase):
         for tool in ("pactl", "systemd-inhibit", "caffeinate"):
             # Windows 用 SetThreadExecutionState 阻止休眠、用 ffmpeg 列裝置，沒有額外指令要裝
             self.assertNotIn(tool, windows)
+
+    def test_missing_swiftc_fails_only_on_macos_with_install_hint(self):
+        def which(cmd):
+            return None if cmd == "swiftc" else f"/usr/bin/{cmd}"
+
+        macos = run_doctor("macos", which=which)[0]
+        self.assertEqual(macos["swiftc"]["status"], DOC.FAIL)
+        self.assertIn("xcode-select --install", macos["swiftc"]["detail"])
+        self.assertEqual(set(macos["swiftc"]), {"status", "name", "detail"})
+        for name in ("linux", "windows"):
+            with self.subTest(name=name):
+                items = run_doctor(name, which=which)[0]
+                self.assertNotIn("swiftc", items)
+                # 對這兩個平台的其餘工具，swiftc 存在與否沒有影響。
+                present = run_doctor(name, which=lambda cmd: f"/usr/bin/{cmd}")[0]
+                self.assertEqual({key: item["status"] for key, item in items.items()},
+                                 {key: item["status"] for key, item in present.items()})
+                for tool in ("ffmpeg", "opencc", "git", "cmake", "pactl", "systemd-inhibit"):
+                    if tool in items:
+                        self.assertEqual(items[tool], present[tool])
+
+    def test_available_swiftc_is_ok_on_macos(self):
+        items = run_doctor("macos", which=lambda cmd: f"/usr/bin/{cmd}")[0]
+        self.assertEqual(items["swiftc"], {"status": DOC.OK, "name": "swiftc",
+                                          "detail": "/usr/bin/swiftc"})
+
+    def test_swiftc_severity_uses_existing_doctor_exit_and_json_contract(self):
+        from core.cli import cmd_doctor
+        for missing in (False, True):
+            item = run_doctor("macos", which=lambda cmd: None if missing and cmd == "swiftc"
+                              else f"/usr/bin/{cmd}")[0]["swiftc"]
+            for as_json in (False, True):
+                with self.subTest(missing=missing, as_json=as_json):
+                    output = io.StringIO()
+                    args = SimpleNamespace(course=None, set=[], mic=False, json=as_json)
+                    with mock.patch.object(DOC, "run", return_value=[item]), \
+                         mock.patch("sys.stdout", output):
+                        code = cmd_doctor(args)
+                    self.assertEqual(code, int(missing))
+                    if as_json:
+                        self.assertEqual(json.loads(output.getvalue()), [item])
+                    elif missing:
+                        self.assertIn("1 個錯誤", output.getvalue())
+                        self.assertIn("xcode-select --install", output.getvalue())
 
     def test_shared_tools_are_checked_everywhere(self):
         for name in ("linux", "macos", "windows"):
