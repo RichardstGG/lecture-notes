@@ -1,5 +1,6 @@
 """lec 指令列介面。UI 也透過這些指令操作（不直接 import core）。"""
 import argparse
+import contextlib
 import json
 import os
 import re
@@ -119,6 +120,117 @@ def cmd_run(args):
     if created:
         print(f"▷ 已建立課程設定檔 {C.COURSES_DIR / (args.course + '.toml')}（目前使用預設值，之後可修改）")
     return LectureRun(cfg, args.file).run()
+
+
+def _meeting_error(code, message):
+    return {"schema_version": 1, "accepted": False, "error": {"code": code, "message": message}}
+
+
+def _speaker_count(value):
+    try:
+        if isinstance(value, bool) or not re.fullmatch(r"[0-9]+", str(value)):
+            raise ValueError
+        count = int(value)
+        if not 1 <= count <= 30:
+            raise ValueError
+        return count
+    except (TypeError, ValueError):
+        raise argparse.ArgumentTypeError("--speakers 必須是 1..30 的整數") from None
+
+
+class _MeetingParser(argparse.ArgumentParser):
+    def error(self, message):
+        if getattr(self, "json_errors", False):
+            print(json.dumps(_meeting_error("input_invalid", "會議指令參數不合法"), ensure_ascii=False))
+            self.exit(2)
+        super().error(message)
+
+
+def _meeting_diarize_config(session, sets, speakers):
+    # Keep the recorded meeting/transcription settings; do not overwrite the
+    # capture snapshot or let a same-named lecture config bleed into this job.
+    used = session / "config.used.toml"
+    if not used.is_file():
+        raise C.ConfigError("找不到會議設定快照")
+    snapshot = C.load_toml(used)
+    if C.normalize_work_type(snapshot.get("work", {}).get("type")) != "meeting":
+        raise C.ConfigError("此 session 不是會議")
+    overrides = []
+    for expr in sets:
+        over = C.parse_set(expr)
+        if set(over) != {"diarization"}:
+            raise C.ConfigError("會後辨識只能覆寫 diarization 設定")
+        overrides.append(over)
+    base = C.load_meeting()
+    data = C.deep_merge(base.data, {key: value for key, value in snapshot.items()
+                                   if key in C.MEETING_SECTIONS})
+    data["paths"]["whisper_dir"] = snapshot.get("paths", {}).get("whisper_dir", data["paths"]["whisper_dir"])
+    data["system"]["opencc"] = snapshot.get("system", {}).get("opencc", data["system"]["opencc"])
+    for over in overrides:
+        if C._unknown_keys(C.load_toml(C.DEFAULT_FILE), over):
+            raise C.ConfigError("未知的辨識設定鍵")
+        data = C.deep_merge(data, over)
+    data["diarization"]["num_speakers"] = speakers
+    cfg = C.Config(data)
+    errors = cfg.validate()
+    if errors:
+        raise C.ConfigError("會議設定不合法")
+    cfg.diarization_options(require_speakers=True)
+    return cfg
+
+
+def cmd_meeting(args):
+    from .session import MeetingRun, MeetingDiarize, MeetingJobError
+    output = sys.stdout
+    job = None
+
+    def accepted():
+        if not hasattr(job, "dir"):
+            return _meeting_error("cancelled", "使用者取消工作")
+        return {"schema_version": 1, "accepted": True, "work_type": "meeting",
+                "operation": args.operation, "session": str(job.dir),
+                "pid": os.getpid(), "outcome": job.outcome}
+
+    def emit(payload):
+        if args.json:
+            print(json.dumps(payload, ensure_ascii=False), file=output, flush=True)
+        elif not payload["accepted"]:
+            print(payload["error"]["message"], file=sys.stderr)
+        else:
+            print(f"會議作業 {payload['outcome']}：{payload['session']}", file=output)
+
+    try:
+        speakers = _speaker_count(args.speakers)
+        if args.operation == "run":
+            cfg = C.load_meeting(args.meeting, source=args.source,
+                                 sets=[*args.set, f"diarization.num_speakers={speakers}"])
+            job = MeetingRun(cfg, speakers, args.file)
+        else:
+            session = Path(args.session).expanduser().resolve()
+            if not session.is_dir():
+                raise MeetingJobError("source_missing", "找不到會議 session", 2)
+            cfg = _meeting_diarize_config(session, args.set, speakers)
+            job = MeetingDiarize(cfg, speakers, session)
+        job.on_force = lambda: emit(accepted())
+        # Engine log output can include ASR text. JSON jobs keep it in local
+        # session logs, and emit only the public envelope on stdout.
+        with open(os.devnull, "w") as quiet:
+            with contextlib.redirect_stdout(quiet) if args.json else contextlib.nullcontext():
+                code = job.run()
+        if code not in (0, 130):
+            emit(_meeting_error(job.error_code, job.error_message))
+        else:
+            emit(accepted())
+        return code
+    except (C.ConfigError, argparse.ArgumentTypeError, ValueError, TypeError, KeyError, AttributeError):
+        emit(_meeting_error("input_invalid", "會議參數或設定不合法"))
+        return 2
+    except MeetingJobError as exc:
+        emit(_meeting_error(exc.code, str(exc)))
+        return exc.exit_code
+    except OSError:
+        emit(_meeting_error("write_failed", "無法讀寫會議檔案"))
+        return 1
 
 
 def cmd_summarize(args):
@@ -447,8 +559,11 @@ def cmd_capture_capabilities(args):
 
 
 def main(argv=None):
-    ap = argparse.ArgumentParser(prog="lec", description="課堂筆記系統",
+    raw_args = list(sys.argv[1:] if argv is None else argv)
+    meeting_json = bool(raw_args and raw_args[0] == "meeting" and "--json" in raw_args)
+    ap = _MeetingParser(prog="lec", description="課堂筆記系統",
                                  formatter_class=argparse.RawDescriptionHelpFormatter, epilog=EPILOG)
+    ap.json_errors = meeting_json
     ap.add_argument("--start-ui", action="store_true", help="啟動本機 Web UI service")
     ap.add_argument("--port", type=_ui_port, metavar="PORT",
                     help=f"Web UI port（僅搭配 --start-ui，預設 {DEFAULT_UI_PORT}）")
@@ -462,6 +577,21 @@ def main(argv=None):
                    help="只轉錄，不啟動總結模型（等同 --set summary.enabled=false）")
     _add_overrides(p)
     p.set_defaults(func=cmd_run)
+
+    p = sub.add_parser("meeting", help="會議錄音、匯入與會後辨識（實驗中）")
+    p.json_errors = meeting_json
+    operations = p.add_subparsers(dest="operation", required=True)
+    for operation in ("run", "diarize"):
+        q = operations.add_parser(operation, help="錄音／匯入" if operation == "run" else "會後發言者辨識")
+        q.json_errors = meeting_json
+        q.add_argument("meeting" if operation == "run" else "session")
+        q.add_argument("--speakers", type=_speaker_count, required=True)
+        q.add_argument("--set", action="append", default=[])
+        q.add_argument("--json", action="store_true")
+        if operation == "run":
+            q.add_argument("--file")
+            q.add_argument("--source")
+        q.set_defaults(func=cmd_meeting)
 
     p = sub.add_parser("summarize", help="對已完成的逐字稿補做或重做總結")
     p.add_argument("session", help="輸出資料夾（含 transcript.md）")
@@ -529,7 +659,7 @@ def main(argv=None):
     p.add_argument("--json", action="store_true")
     p.set_defaults(func=cmd_doctor, set=[])
 
-    args = ap.parse_args(argv)
+    args = ap.parse_args(raw_args)
     if args.start_ui:
         if args.cmd:
             ap.error("--start-ui 不能與子指令同時使用")

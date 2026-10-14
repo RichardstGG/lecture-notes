@@ -1,5 +1,10 @@
 """一次 lec run / lec summarize 的完整流程（server 生命週期、訊號處理、收尾）。"""
 import os
+import hashlib
+import json
+import math
+import tempfile
+from dataclasses import asdict
 import re
 import shutil
 import signal
@@ -13,10 +18,10 @@ from pathlib import Path
 from . import platform as P
 from .config import ConfigError, meeting_output_parts
 from .servers import LlamaServer, ServerError, WhisperServer
-from .status import RunLock, Status
+from .status import RunLock, Status, now_iso
 from .summarize import Summarizer
 from .transcribe import Transcriber
-from .util import atomic_write, die, log, read_json, safe_name
+from .util import atomic_write, die, log, read_json, safe_name, write_json
 
 
 def capture_capabilities():
@@ -451,3 +456,362 @@ class OfflineSummary(_Base):
             self.lock.release()
             log.close()
         return code
+
+
+# ------------------------------------------------------------- meeting jobs
+class MeetingJobError(Exception):
+    """Safe public error: engine diagnostics remain in local session logs."""
+    def __init__(self, code, message, exit_code=1):
+        super().__init__(message)
+        self.code, self.exit_code = code, exit_code
+
+
+def source_sha256(path):
+    digest = hashlib.sha256()
+    with Path(path).open("rb") as stream:
+        for block in iter(lambda: stream.read(1 << 20), b""):
+            digest.update(block)
+    return digest.hexdigest()
+
+
+def source_duration(path):
+    """Check the saved audio, including decode errors, before publishing metadata."""
+    try:
+        probe = subprocess.run(
+            ["ffprobe", "-v", "error", "-show_entries", "format=duration",
+             "-of", "json", str(path)], capture_output=True, timeout=30)
+        duration = float(json.loads(probe.stdout)["format"]["duration"])
+        if probe.returncode or not math.isfinite(duration) or duration <= 0:
+            raise ValueError
+        check = subprocess.run(
+            ["ffmpeg", "-nostdin", "-v", "error", "-xerror", "-i", str(path),
+             "-map", "0:a:0", "-f", "null", "-"], capture_output=True, timeout=120)
+        if check.returncode:
+            raise ValueError
+        return duration
+    except (OSError, ValueError, TypeError, KeyError, subprocess.TimeoutExpired):
+        raise MeetingJobError("decode_failed", "來源音檔無法完整解碼") from None
+
+
+def verify_meeting_source(session):
+    metadata = read_json(session / "source.json")
+    if not isinstance(metadata, dict):
+        raise MeetingJobError("source_missing", "缺少可重跑的來源紀錄")
+    name = metadata.get("path")
+    duration = metadata.get("duration_seconds")
+    if (type(metadata.get("schema_version")) is not int or metadata["schema_version"] != 1
+            or metadata.get("kind") not in ("recording", "import")
+            or not isinstance(name, str) or not re.fullmatch(r"source_audio\.[A-Za-z0-9]+", name)
+            or not isinstance(metadata.get("original_name"), str)
+            or type(metadata.get("size_bytes")) is not int or metadata["size_bytes"] <= 0
+            or not isinstance(metadata.get("sha256"), str)
+            or not re.fullmatch(r"[a-f0-9]{64}", metadata["sha256"])
+            or type(duration) not in (int, float) or not math.isfinite(duration) or duration <= 0
+            or not isinstance(metadata.get("created_at"), str)
+            or type(metadata.get("requested_speakers")) is not int
+            or not 1 <= metadata["requested_speakers"] <= 30):
+        raise MeetingJobError("input_invalid", "來源紀錄格式不合法", 2)
+    source = session / name
+    if source.is_symlink() or not source.is_file():
+        raise MeetingJobError("source_missing", "session 內來源音檔不存在")
+    if source.stat().st_size != metadata["size_bytes"] or source_sha256(source) != metadata["sha256"]:
+        raise MeetingJobError("source_hash_mismatch", "來源大小或雜湊不符，禁止重跑")
+    return source.resolve(), metadata
+
+
+class _MeetingJob(_Base):
+    operation = None
+
+    def __init__(self, cfg, speakers):
+        super().__init__(cfg)
+        if type(speakers) is not int or not 1 <= speakers <= 30:
+            raise MeetingJobError("input_invalid", "預計人數必須是 1..30 的整數", 2)
+        self.speakers = speakers
+        self.cancelled = threading.Event()
+        self.error_code = self.error_message = None
+        self.outcome = None
+        self.on_force = None
+        self._old_signals = {}
+        self._terminal_published = False
+
+    def _install_signals(self):
+        for sig in ([signal.SIGINT] if P.IS_WINDOWS else [signal.SIGINT, signal.SIGTERM]):
+            self._old_signals[sig] = signal.getsignal(sig)
+        super()._install_signals()
+
+    def _on_signal(self, signum, frame):
+        self.presses += 1
+        if self.presses > 1:
+            self._force_exit()
+        self.cancelled.set()
+        if self.status:
+            self.status.update(stop_reason="user")
+        if self.stage == "transcribe" and self.transcriber:
+            self.transcriber.request_stop()
+        elif self.stage != "diarize" and signum is not None:
+            raise KeyboardInterrupt
+
+    def _force_exit(self):
+        # During segmentation the engine owns a detached worker. Let its cancel
+        # poll kill/reap that worker before releasing the shared lock. Killing
+        # only this parent would leave inference running in the background.
+        self.cancelled.set()
+        if (self.operation == "diarize" and self.stage == "diarize"
+                and self.status.get("diarization")["stage"] == "segmentation"):
+            self.outcome = "aborted"
+            if not self._terminal_published:
+                self.status.event("diarization_cancelled", **self.status.get("diarization"))
+                self.status.phase("finishing", stop_reason="user")
+                self.status.phase("aborted", stop_reason="user")
+                self._terminal_published = True
+            if self.whisper:
+                self.whisper.kill_now()
+            return
+        # Unfinished recordings do not receive reusable source metadata.
+        transcriber = getattr(self, "transcriber", None)
+        if transcriber and transcriber.proc:
+            transcriber.proc.kill()
+        self.outcome = "aborted"
+        for srv in (self.whisper, self.llama):
+            if srv:
+                srv.kill_now()
+        self.inhibitor.stop()
+        if self.status:
+            if self.operation == "diarize":
+                self.status.event("diarization_cancelled", **(self.status.get("diarization") or {}))
+            self.status.phase("finishing", stop_reason="user")
+            self.status.phase("aborted", stop_reason="user")
+            self.status.close()
+        if self.on_force:
+            self.on_force()
+        log.close()
+        # Release only after publishing the final status/envelope.
+        self.lock.release()
+        os._exit(130)
+
+    def _poll_cancel(self):
+        if (self.dir / STOP_FORCE_FILE).exists():
+            self._force_exit()
+        if (self.dir / STOP_FILE).exists():
+            self.cancelled.set()
+        return self.cancelled.is_set()
+
+    def _execute(self):
+        raise NotImplementedError
+
+    def run(self):
+        mode = "diarize" if self.operation == "diarize" else ("file" if self.input_file else "live")
+        try:
+            busy = self.lock.acquire(work_type="meeting", mode=mode, course=self.cfg.meeting_name)
+        except OSError:
+            raise MeetingJobError("write_failed", "無法取得工作鎖") from None
+        if busy:
+            raise MeetingJobError("busy", "已有工作執行中", 3)
+        code = 0
+        try:
+            self._install_signals()
+            if self.operation == "run":
+                self.dir = make_meeting_session_dir(self.cfg)
+            log.attach(self.dir / "session.log")
+            self._clear_stop_files()
+            self.lock.update(session=str(self.dir))
+            self.status = Status(self.dir, self.cfg.get("system.status_interval"),
+                                 work_type="meeting", course=self.cfg.meeting_name, mode=mode)
+            self.status.phase("starting")
+            self.status.phase("loading")
+            self._start_stop_watcher()
+            if self.cfg.get("system.inhibit_sleep"):
+                self.inhibitor.start(f"lec meeting：{self.cfg.meeting_name}", log)
+            self._execute()
+        except KeyboardInterrupt:
+            self.cancelled.set()
+            code = 130
+        except MeetingJobError as exc:
+            code = exc.exit_code
+            self.error_code, self.error_message = exc.code, str(exc)
+        except ServerError:
+            code = 1
+            self.error_code, self.error_message = "engine_unavailable", "無法啟動轉錄引擎"
+        except (OSError, ConfigError):
+            code = 1
+            self.error_code, self.error_message = "write_failed", "會議作業無法完成，請檢查本機設定與檔案"
+        except Exception:
+            code = 1
+            self.error_code, self.error_message = "asr_failed", "會議作業發生未預期錯誤"
+        finally:
+            self.stage = "cleanup"
+            if self._terminal_published:
+                code = 130
+            if self.status:
+                if self.error_code:
+                    self.status.error(f"{self.error_code}: {self.error_message}")
+                if code == 130:
+                    self.status.update(stop_reason="user")
+                if not self._terminal_published:
+                    self.status.phase("finishing")
+            self._cleanup()
+            if self._watcher:
+                self._watcher.join(timeout=2)
+            self.outcome = "aborted" if code == 130 else ("done" if code == 0 else "failed")
+            if self.status:
+                if not self._terminal_published:
+                    self.status.phase(self.outcome)
+                self.status.close()
+            self.lock.release()
+            for sig, previous in self._old_signals.items():
+                signal.signal(sig, previous)
+            log.close()
+        return code
+
+    def _start_whisper(self):
+        self.whisper = WhisperServer(self.cfg)
+        self.status.set_server("whisper", "loading")
+        self.whisper.ensure(self.dir / "whisper-server.log")
+        self.status.set_server("whisper", "ok")
+
+
+class MeetingRun(_MeetingJob):
+    operation = "run"
+
+    def __init__(self, cfg, speakers, input_file=None):
+        super().__init__(cfg, speakers)
+        self.input_file = Path(input_file).expanduser().resolve() if input_file else None
+        self.transcriber = None
+        if cfg.capture_plan()["mode"] != "single":
+            raise MeetingJobError("input_invalid", "雙來源錄音入口尚未啟用", 2)
+        cfg.data["audio"]["keep_recording"] = True
+        cfg.data["summary"]["enabled"] = False
+
+    def _save_source(self, source, kind, original_name):
+        duration = source_duration(source)
+        size = source.stat().st_size
+        if size <= 0:
+            raise MeetingJobError("source_missing", "來源音檔是空檔")
+        write_json(self.dir / "source.json", {
+            "schema_version": 1, "kind": kind, "original_name": original_name,
+            "path": source.name, "size_bytes": size, "sha256": source_sha256(source),
+            "duration_seconds": duration, "created_at": now_iso(),
+            "requested_speakers": self.speakers,
+        })
+
+    def _execute(self):
+        atomic_write(self.dir / "config.used.toml", self.cfg.dump())
+        source = None
+        if self.input_file:
+            if not self.input_file.is_file():
+                raise MeetingJobError("source_missing", "找不到匯入音檔", 2)
+            suffix = self.input_file.suffix.lstrip(".")
+            if not re.fullmatch(r"[A-Za-z0-9]+", suffix):
+                raise MeetingJobError("input_invalid", "匯入音檔需要合法副檔名", 2)
+            source = self.dir / f"source_audio.{suffix}"
+            fd, temporary = tempfile.mkstemp(prefix=".source-", dir=self.dir)
+            os.close(fd)
+            try:
+                shutil.copyfile(self.input_file, temporary)
+                os.replace(temporary, source)
+            finally:
+                Path(temporary).unlink(missing_ok=True)
+            self._save_source(source, "import", self.input_file.name)
+        if self._poll_cancel():
+            raise KeyboardInterrupt
+        self._start_whisper()
+        if self._poll_cancel():
+            raise KeyboardInterrupt
+        self.transcriber = Transcriber(self.cfg, self.dir, self.whisper.url, source, self.status)
+        self.stage = "transcribe"
+        self.status.phase("transcribing" if source else "recording")
+        if self.cancelled.is_set():
+            self.transcriber.request_stop()
+        result = self.transcriber.run()
+        if self.cancelled.is_set() or result.get("aborted"):
+            self.status.update(stop_reason="user")
+        if result.get("gaps"):
+            self.status.event("transcription_gaps", gaps=result["gaps"],
+                              lost_seconds=result.get("lost_seconds"),
+                              ffmpeg_returncode=result.get("ffmpeg_returncode"))
+        if result.get("ffmpeg_failed"):
+            raise MeetingJobError("decode_failed", "音訊擷取或解碼未完整完成")
+        if not self.input_file:
+            from .transcribe import CAPTURE_LOSS_ERROR
+            capture = result.get("capture")
+            if not capture or capture.get("lost_ratio", 1) >= CAPTURE_LOSS_ERROR:
+                raise MeetingJobError("source_incomplete", "錄音完整性檢查未通過，禁止會後辨識")
+            # Native PTS gaps may be hidden by the saved container timestamps.
+            for line in (self.dir / "events.jsonl").read_text(encoding="utf-8").splitlines():
+                event = json.loads(line)
+                if event.get("type") == "capture_integrity":
+                    native = event.get("detail", {}).get("native_capture")
+                    if native and native.get("lost_seconds", 0) / max(native.get("pts_span_seconds", 0), 1e-9) >= CAPTURE_LOSS_ERROR:
+                        raise MeetingJobError("source_incomplete", "原生擷取完整性檢查未通過")
+            recording = self.transcriber.recording_path
+            if not recording or not Path(recording).is_file():
+                raise MeetingJobError("source_missing", "錄音未保存來源音檔")
+            # Integrity is checked above; publish metadata only after decode verification.
+            source = self.dir / "source_audio.ogg"
+            os.replace(recording, source)
+            self._save_source(source, "recording", Path(recording).name)
+
+
+class MeetingDiarize(_MeetingJob):
+    operation = "diarize"
+
+    def __init__(self, cfg, speakers, session_dir):
+        super().__init__(cfg, speakers)
+        self.dir = Path(session_dir).expanduser().resolve()
+
+    def _progress(self, event):
+        previous = self.status.get("diarization") or {}
+        total = max(0.0, float(event["total_seconds"]))
+        processed = min(total, max(0.0, float(event["processed_seconds"])))
+        if previous.get("stage") == event["stage"]:
+            processed = min(total, max(processed, previous.get("processed_seconds", 0)))
+        data = dict(event, processed_seconds=processed, total_seconds=total,
+                    requested_speakers=self.speakers, actual_speakers=None)
+        self.status.update(diarization=data)
+        self.status.event("diarization_progress", **data)
+        self.status.flush()
+
+    def _execute(self):
+        from .diarize import DiarizationRequest, DiarizationCancelled, DiarizationError, diarize_session
+        source, metadata = verify_meeting_source(self.dir)
+        options = self.cfg.diarization_options(require_speakers=True)
+        options["requested_speakers"] = self.speakers
+        for key in ("segmentation_model", "embedding_model"):
+            if not options[key].is_file():
+                raise MeetingJobError("model_missing", "缺少會後辨識模型")
+        self.whisper = WhisperServer(self.cfg)
+        request = DiarizationRequest(
+            session_dir=self.dir, source_audio=source, source_sha256=metadata["sha256"],
+            meeting_name=self.cfg.meeting_name, whisper_server=self.whisper.url,
+            whisper_prompt=self.cfg.whisper_prompt(), threads=self.cfg.get("whisper.threads"),
+            opencc=self.cfg.get("system.opencc"), **options)
+        record = {key: str(value) if isinstance(value, Path) else value
+                  for key, value in asdict(request).items()}
+        record.update(schema_version=1, spec_version=1, created_at=now_iso(),
+                      segmentation_model_sha256=source_sha256(request.segmentation_model),
+                      embedding_model_sha256=source_sha256(request.embedding_model))
+        write_json(self.dir / "diarization.request.json", record)
+        self.status.set_server("whisper", "loading")
+        self.whisper.ensure(self.dir / "whisper-server.log")
+        self.status.set_server("whisper", "ok")
+        if self._poll_cancel():
+            raise KeyboardInterrupt
+        self.stage = "diarize"
+        self.status.phase("diarizing", diarization={
+            "stage": "segmentation", "processed_seconds": 0, "total_seconds": metadata["duration_seconds"],
+            "requested_speakers": self.speakers, "speakers_found": 0, "actual_speakers": None})
+        try:
+            result = diarize_session(request, progress=self._progress, cancel=self._poll_cancel)
+        except DiarizationCancelled:
+            if not self._terminal_published:
+                self.status.event("diarization_cancelled", **(self.status.get("diarization") or {}))
+            raise KeyboardInterrupt from None
+        except DiarizationError as exc:
+            if self.cancelled.is_set():
+                self.status.event("diarization_cancelled", **(self.status.get("diarization") or {}))
+                raise KeyboardInterrupt from None
+            raise MeetingJobError(exc.code, "會後辨識失敗，請依錯誤代碼檢查本機環境") from None
+        data = self.status.get("diarization")
+        data.update(actual_speakers=result.actual_speakers,
+                    total_seconds=result.duration_seconds, processed_seconds=result.duration_seconds)
+        self.status.update(diarization=data)
