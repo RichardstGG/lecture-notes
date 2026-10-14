@@ -167,16 +167,22 @@ def _meeting_diarize_config(session, sets, speakers):
     data["paths"]["whisper_dir"] = snapshot.get("paths", {}).get("whisper_dir", data["paths"]["whisper_dir"])
     data["system"]["opencc"] = snapshot.get("system", {}).get("opencc", data["system"]["opencc"])
     for over in overrides:
-        if C._unknown_keys(C.load_toml(C.DEFAULT_FILE), over):
-            raise C.ConfigError("未知的辨識設定鍵")
+        unknown = C._unknown_keys(C.load_toml(C.DEFAULT_FILE), over)
+        if unknown:
+            raise C.ConfigError("未知的辨識設定鍵：" + ", ".join(unknown))
         data = C.deep_merge(data, over)
     data["diarization"]["num_speakers"] = speakers
     cfg = C.Config(data)
     errors = cfg.validate()
     if errors:
-        raise C.ConfigError("會議設定不合法")
+        raise C.ConfigError("設定錯誤：\n  " + "\n  ".join(errors))
     cfg.diarization_options(require_speakers=True)
     return cfg
+
+
+def _meeting_config_message(exc):
+    keys = sorted(set(re.findall(r"\b(?:meeting|whisper|audio|vad|transcript|diarization|paths|system)\.[A-Za-z_][A-Za-z0-9_]*", str(exc))))
+    return "會議參數或設定不合法" + ("：" + ", ".join(keys) if keys else "")
 
 
 def cmd_meeting(args):
@@ -211,26 +217,34 @@ def cmd_meeting(args):
                 raise MeetingJobError("source_missing", "找不到會議 session", 2)
             cfg = _meeting_diarize_config(session, args.set, speakers)
             job = MeetingDiarize(cfg, speakers, session)
-        job.on_force = lambda: emit(accepted())
-        # Engine log output can include ASR text. JSON jobs keep it in local
-        # session logs, and emit only the public envelope on stdout.
-        with open(os.devnull, "w") as quiet:
-            with contextlib.redirect_stdout(quiet) if args.json else contextlib.nullcontext():
-                code = job.run()
-        if code not in (0, 130):
-            emit(_meeting_error(job.error_code, job.error_message))
-        else:
-            emit(accepted())
-        return code
-    except (C.ConfigError, argparse.ArgumentTypeError, ValueError, TypeError, KeyError, AttributeError):
-        emit(_meeting_error("input_invalid", "會議參數或設定不合法"))
+    except (C.ConfigError, argparse.ArgumentTypeError, ValueError, TypeError, KeyError, AttributeError) as exc:
+        emit(_meeting_error("input_invalid", _meeting_config_message(exc)))
         return 2
     except MeetingJobError as exc:
         emit(_meeting_error(exc.code, str(exc)))
         return exc.exit_code
     except OSError:
-        emit(_meeting_error("write_failed", "無法讀寫會議檔案"))
+        emit(_meeting_error("write_failed", "無法讀寫會議設定"))
         return 1
+
+    job.on_force = lambda: emit(accepted())
+    try:
+        # Engine log output can include ASR text. JSON jobs keep it in local
+        # session logs, and emit only the public envelope on stdout.
+        with open(os.devnull, "w") as quiet:
+            with contextlib.redirect_stdout(quiet) if args.json else contextlib.nullcontext():
+                code = job.run()
+    except MeetingJobError as exc:
+        emit(_meeting_error(exc.code, str(exc)))
+        return exc.exit_code
+    except Exception as exc:
+        emit(_meeting_error("write_failed" if isinstance(exc, OSError) else "asr_failed", "會議作業發生未預期錯誤"))
+        return 1
+    if code not in (0, 130):
+        emit(_meeting_error(job.error_code, job.error_message))
+    else:
+        emit(accepted())
+    return code
 
 
 def cmd_summarize(args):
@@ -583,6 +597,8 @@ def main(argv=None):
     operations = p.add_subparsers(dest="operation", required=True)
     for operation in ("run", "diarize"):
         q = operations.add_parser(operation, help="錄音／匯入" if operation == "run" else "會後發言者辨識")
+        if operation == "diarize":
+            q.description = "沿用錄音時 config.used.toml 的辨識設定；local.toml 後續變更不覆蓋快照，請用 --set diarization.k=v 覆寫。"
         q.json_errors = meeting_json
         q.add_argument("meeting" if operation == "run" else "session")
         q.add_argument("--speakers", type=_speaker_count, required=True)

@@ -485,7 +485,7 @@ def source_duration(path):
             raise ValueError
         check = subprocess.run(
             ["ffmpeg", "-nostdin", "-v", "error", "-xerror", "-i", str(path),
-             "-map", "0:a:0", "-f", "null", "-"], capture_output=True, timeout=120)
+             "-map", "0:a:0", "-f", "null", "-"], capture_output=True, timeout=max(120, duration * 2))
         if check.returncode:
             raise ValueError
         return duration
@@ -514,6 +514,8 @@ def verify_meeting_source(session):
     source = session / name
     if source.is_symlink() or not source.is_file():
         raise MeetingJobError("source_missing", "session 內來源音檔不存在")
+    # The engine intentionally hashes again at its own boundary; this check
+    # protects orchestration, while the second detects changes before inference.
     if source.stat().st_size != metadata["size_bytes"] or source_sha256(source) != metadata["sha256"]:
         raise MeetingJobError("source_hash_mismatch", "來源大小或雜湊不符，禁止重跑")
     return source.resolve(), metadata
@@ -533,6 +535,8 @@ class _MeetingJob(_Base):
         self.on_force = None
         self._old_signals = {}
         self._terminal_published = False
+        self._diarization_published = False
+        self._manifest_before = None
 
     def _install_signals(self):
         for sig in ([signal.SIGINT] if P.IS_WINDOWS else [signal.SIGINT, signal.SIGTERM]):
@@ -540,6 +544,8 @@ class _MeetingJob(_Base):
         super()._install_signals()
 
     def _on_signal(self, signum, frame):
+        if self.stage == "cleanup" or self._has_published_diarization():
+            return
         self.presses += 1
         if self.presses > 1:
             self._force_exit()
@@ -551,7 +557,21 @@ class _MeetingJob(_Base):
         elif self.stage != "diarize" and signum is not None:
             raise KeyboardInterrupt
 
+    def _has_published_diarization(self):
+        if self.operation != "diarize":
+            return False
+        if self._diarization_published:
+            return True
+        # The engine switches the manifest just before returning. Observe that
+        # commit point too, closing the gap before the success flag is set.
+        current = read_json(self.dir / "diarization.current.json")
+        return (isinstance(current, dict) and current != self._manifest_before
+                and current.get("schema_version") == 1
+                and isinstance(current.get("generation"), str))
+
     def _force_exit(self):
+        if self._has_published_diarization():
+            return
         # During segmentation the engine owns a detached worker. Let its cancel
         # poll kill/reap that worker before releasing the shared lock. Killing
         # only this parent would leave inference running in the background.
@@ -590,6 +610,8 @@ class _MeetingJob(_Base):
         os._exit(130)
 
     def _poll_cancel(self):
+        if self._has_published_diarization():
+            return False
         if (self.dir / STOP_FORCE_FILE).exists():
             self._force_exit()
         if (self.dir / STOP_FILE).exists():
@@ -615,8 +637,16 @@ class _MeetingJob(_Base):
             log.attach(self.dir / "session.log")
             self._clear_stop_files()
             self.lock.update(session=str(self.dir))
+            initial = {}
+            if self.operation == "diarize":
+                previous = read_json(self.dir / "status.json", {})
+                if isinstance(previous, dict):
+                    initial = {key: previous[key] for key in (
+                        "started_at", "elapsed", "transcribed", "transcribe_lag",
+                        "sections_total", "sections_summarized", "input_file") if key in previous}
+                self._manifest_before = read_json(self.dir / "diarization.current.json")
             self.status = Status(self.dir, self.cfg.get("system.status_interval"),
-                                 work_type="meeting", course=self.cfg.meeting_name, mode=mode)
+                                 work_type="meeting", course=self.cfg.meeting_name, mode=mode, **initial)
             self.status.phase("starting")
             self.status.phase("loading")
             self._start_stop_watcher()
@@ -640,27 +670,56 @@ class _MeetingJob(_Base):
             self.error_code, self.error_message = "asr_failed", "會議作業發生未預期錯誤"
         finally:
             self.stage = "cleanup"
-            if self._terminal_published:
+            code = self._finalize(code)
+        return code
+
+    def _finalize(self, code):
+        """Best-effort status/cleanup; lifetime lock and signals are unconditional."""
+        def failure(exc):
+            nonlocal code
+            code = 1
+            self.error_code = "write_failed" if isinstance(exc, OSError) else "asr_failed"
+            self.error_message = "會議作業收尾失敗"
+
+        def attempt(action):
+            try:
+                action()
+            except Exception as exc:
+                failure(exc)
+
+        try:
+            if self._terminal_published and not self._has_published_diarization():
                 code = 130
+            # Stop/join the watcher first so it cannot publish a competing
+            # terminal state while finalization is underway.
+            attempt(self._stop_watcher)
+            if self._watcher:
+                attempt(lambda: self._watcher.join(timeout=2))
             if self.status:
                 if self.error_code:
-                    self.status.error(f"{self.error_code}: {self.error_message}")
+                    attempt(lambda: self.status.error(f"{self.error_code}: {self.error_message}"))
                 if code == 130:
-                    self.status.update(stop_reason="user")
+                    attempt(lambda: self.status.update(stop_reason="user"))
                 if not self._terminal_published:
-                    self.status.phase("finishing")
-            self._cleanup()
-            if self._watcher:
-                self._watcher.join(timeout=2)
+                    attempt(lambda: self.status.phase("finishing"))
+            attempt(self._cleanup)
             self.outcome = "aborted" if code == 130 else ("done" if code == 0 else "failed")
             if self.status:
                 if not self._terminal_published:
-                    self.status.phase(self.outcome)
-                self.status.close()
-            self.lock.release()
-            for sig, previous in self._old_signals.items():
-                signal.signal(sig, previous)
-            log.close()
+                    attempt(lambda: self.status.phase(self.outcome))
+                # If terminal phase publication failed, still try to publish
+                # a failed snapshot without invoking the failed phase hook.
+                if code == 1:
+                    attempt(lambda: self.status.update(phase="failed", last_error=f"{self.error_code}: {self.error_message}"))
+                attempt(self.status.close)
+        finally:
+            try:
+                self.lock.release()
+            finally:
+                for sig, previous in self._old_signals.items():
+                    attempt(lambda sig=sig, previous=previous: signal.signal(sig, previous))
+                attempt(log.close)
+        self.outcome = "aborted" if code == 130 else ("done" if code == 0 else "failed")
         return code
 
     def _start_whisper(self):
@@ -725,6 +784,8 @@ class MeetingRun(_MeetingJob):
         result = self.transcriber.run()
         if self.cancelled.is_set() or result.get("aborted"):
             self.status.update(stop_reason="user")
+        if self.input_file and result.get("aborted"):
+            raise KeyboardInterrupt
         if result.get("gaps"):
             self.status.event("transcription_gaps", gaps=result["gaps"],
                               lost_seconds=result.get("lost_seconds"),
@@ -758,6 +819,7 @@ class MeetingDiarize(_MeetingJob):
     def __init__(self, cfg, speakers, session_dir):
         super().__init__(cfg, speakers)
         self.dir = Path(session_dir).expanduser().resolve()
+        self._manifest_before = read_json(self.dir / "diarization.current.json")
 
     def _progress(self, event):
         previous = self.status.get("diarization") or {}
@@ -802,6 +864,10 @@ class MeetingDiarize(_MeetingJob):
             "requested_speakers": self.speakers, "speakers_found": 0, "actual_speakers": None})
         try:
             result = diarize_session(request, progress=self._progress, cancel=self._poll_cancel)
+            self._diarization_published = True
+            self._terminal_published = False
+            self.status.update(stop_reason=None)
+            self.stage = "cleanup"
         except DiarizationCancelled:
             if not self._terminal_published:
                 self.status.event("diarization_cancelled", **(self.status.get("diarization") or {}))

@@ -21,7 +21,7 @@ from tests import _pathfix  # noqa: F401
 from core import cli, config as C
 from core.diarize import CODES, DiarizationCancelled, DiarizationError
 from core.session import MeetingDiarize, MeetingJobError, MeetingRun, verify_meeting_source
-from core.status import RunLock
+from core.status import RunLock, Status
 
 
 class MeetingSessionTests(unittest.TestCase):
@@ -356,6 +356,119 @@ class MeetingSessionTests(unittest.TestCase):
         self.assertEqual((code, payload['accepted'], payload['error']['code']), (130, False, 'cancelled'))
         self.assertFalse((self.state / 'run.json').exists())
 
+    def test_diarize_preserves_capture_metrics_and_reports_attempt_separately(self):
+        from ui.backend.session_store import SessionStore
+        for outcome in ('done', 'model_missing', 'aborted'):
+            with self.subTest(outcome=outcome):
+                session = self.session()
+                status, _ = self.files(session)
+                original = dict(started_at='2026-10-10T09:00:00+08:00', elapsed=12.5,
+                                transcribed=11.5, sections_total=2, sections_summarized=0)
+                status.update(original)
+                (session / 'status.json').write_text(json.dumps(status))
+                (session / 'transcript.md').write_text('original draft')
+                def engine(request, progress, cancel):
+                    progress(dict(stage='segmentation', processed_seconds=3,
+                                  total_seconds=12.5, speakers_found=2))
+                    code, runtime = self.invoke('status', '--json')
+                    self.assertEqual(code, 0)
+                    self.assertTrue(runtime['running'])
+                    self.assertEqual(runtime['mode'], 'diarize')
+                    self.assertEqual(runtime['status']['phase'], 'diarizing')
+                    self.assertEqual(runtime['status']['diarization']['processed_seconds'], 3)
+                    if outcome == 'aborted':
+                        (session / 'stop').touch()
+                        self.assertTrue(cancel())
+                        raise DiarizationCancelled()
+                    return SimpleNamespace(actual_speakers=2, duration_seconds=12.5)
+                if outcome == 'model_missing':
+                    self.seg.unlink()
+                with patch('core.diarize.diarize_session', side_effect=engine):
+                    code, payload = self.invoke(*self.diarize_args(session))
+                self.assertEqual(code, {'done': 0, 'model_missing': 1, 'aborted': 130}[outcome])
+                current, _ = self.files(session)
+                for key, value in original.items():
+                    self.assertEqual(current[key], value)
+                summary = SessionStore(self.root / 'output').get(session.relative_to(self.root / 'output').as_posix())['session']
+                self.assertEqual((summary['phase'], summary['mode']), ('done', 'file'))
+                self.assertEqual((summary['started_at'], summary['elapsed'], summary['sections_total']),
+                                 (original['started_at'], 12.5, 2))
+                self.assertTrue(summary['has_recording'])
+                self.assertEqual(summary['diarization_status']['phase'], 'failed' if outcome == 'model_missing' else outcome)
+                if outcome == 'model_missing':
+                    self.assertIn('model_missing', summary['diarization_status']['last_error'])
+                self.seg.write_bytes(b'segmentation model')
+
+    def test_finalization_phase_failure_releases_lock_and_restores_signals(self):
+        import signal
+        original_phase = Status.phase
+        previous = signal.getsignal(signal.SIGINT)
+        def phase(status, name, **extra):
+            if name == 'finishing':
+                raise OSError('injected status write failure')
+            return original_phase(status, name, **extra)
+        with patch.object(Status, 'phase', phase):
+            code, payload = self.import_audio()
+        self.assertEqual((code, payload['accepted'], payload['error']['code']), (1, False, 'write_failed'))
+        self.assertFalse((self.state / 'run.json').exists())
+        self.assertIs(signal.getsignal(signal.SIGINT), previous)
+        lock = RunLock(self.state)
+        self.assertIsNone(lock.acquire())
+        lock.release()
+        session = next((self.root / 'output' / 'meetings').iterdir())
+        self.assertEqual(self.files(session)[0]['phase'], 'failed')
+
+    def test_cleanup_failure_and_unexpected_runtime_errors_are_operation_errors(self):
+        with patch.object(MeetingRun, '_cleanup', side_effect=TypeError('bug in cleanup')):
+            code, payload = self.import_audio()
+        self.assertEqual((code, payload['error']['code']), (1, 'asr_failed'))
+        self.assertFalse((self.state / 'run.json').exists())
+        for exc in (ValueError, TypeError, KeyError, AttributeError):
+            with self.subTest(exception=exc), patch.object(MeetingRun, 'run', side_effect=exc('bug')):
+                code, payload = self.import_audio()
+                self.assertEqual((code, payload['error']['code']), (1, 'asr_failed'))
+
+    def test_manifest_publication_wins_force_stop_before_and_after_engine_return(self):
+        session = self.session()
+        def engine(request, progress, cancel):
+            # Publish, then invoke force in the tiny interval before returning.
+            (session / 'diarization.current.json').write_text(json.dumps(
+                dict(schema_version=1, generation='0002')))
+            (session / 'stop_force').touch()
+            self.assertFalse(cancel())
+            return SimpleNamespace(actual_speakers=2, duration_seconds=12.5)
+        real_cleanup = MeetingDiarize._cleanup
+        def cleanup(job):
+            # Also exercise the success flag after the engine has returned.
+            job._force_exit()
+            real_cleanup(job)
+        with patch('core.diarize.diarize_session', side_effect=engine), patch.object(MeetingDiarize, '_cleanup', cleanup):
+            code, payload = self.invoke(*self.diarize_args(session))
+        self.assertEqual((code, payload['outcome']), (0, 'done'))
+        status, events = self.files(session)
+        self.assertEqual(status['phase'], 'done')
+        self.assertIsNone(status['stop_reason'])
+        self.assertFalse(any(event['type'] == 'diarization_cancelled' for event in events))
+        self.assertFalse((self.state / 'run.json').exists())
+
+    def test_snapshot_diarization_settings_are_explicit_and_errors_name_keys(self):
+        session = self.session()
+        with C.LOCAL_FILE.open('a') as stream:
+            stream.write('[diarization]\ncluster_threshold=0.9\n')
+        cfg = cli._meeting_diarize_config(session, [], 4)
+        self.assertEqual(cfg.get('diarization.cluster_threshold'), 0.5)
+        cfg = cli._meeting_diarize_config(session, ['diarization.cluster_threshold=0.7'], 4)
+        self.assertEqual(cfg.get('diarization.cluster_threshold'), 0.7)
+        for operation in ('run', 'diarize'):
+            args = ('meeting', 'run', 'team', '--speakers', '2', '--json') if operation == 'run' else self.diarize_args(session)
+            code, payload = self.invoke(*args, '--set', 'diarization.cluster_threshold=0')
+            self.assertEqual(code, 2)
+            self.assertIn('diarization.cluster_threshold', payload['error']['message'])
+        with contextlib.redirect_stdout(io.StringIO()) as output, self.assertRaises(SystemExit):
+            cli.main(['meeting', 'diarize', '--help'])
+        self.assertIn('config.used.toml', output.getvalue())
+        self.assertIn('local.toml', output.getvalue())
+
     def test_signals_are_restored_after_import(self):
         import signal
         previous = signal.getsignal(signal.SIGINT)
@@ -384,24 +497,27 @@ class Whisper:
     def kill_now(self): pass
 class Transcriber:
     def __init__(self, cfg, session, url, source, status):
-        self.session, self.status = session, status
+        self.session, self.status, self.source = session, status, source
         self.stopped = False
         self.proc = None
     def request_stop(self): self.stopped = True
     def run(self):
-        self.recording_path = self.session / 'recording_120000.ogg'
-        self.recording_path.write_bytes(b'complete recording')
+        if self.source is None:
+            self.recording_path = self.session / 'recording_120000.ogg'
+            self.recording_path.write_bytes(b'complete recording')
         (root / 'entered-run').touch()
         while not self.stopped: time.sleep(.05)
         self.status.event('capture_integrity', lost_ratio=0)
-        return dict(duration=12.5, ffmpeg_failed=False, capture=dict(lost_ratio=0))
+        return dict(duration=12.5, ffmpeg_failed=False, capture=dict(lost_ratio=0),
+                    aborted=self.source is not None and self.stopped)
 def diarize(request, progress, cancel):
     (root / 'entered-diarize').touch()
     while not cancel(): time.sleep(.05)
     raise DiarizationCancelled()
 with patch('core.session.WhisperServer', Whisper), patch('core.session.Transcriber', Transcriber), \
      patch('core.session.source_duration', return_value=12.5), patch('core.diarize.diarize_session', diarize):
-    args = ['meeting', 'run', 'team'] if operation == 'run' else ['meeting', 'diarize', str(root / 'session')]
+    args = ['meeting', 'run', 'team'] if operation in ('run', 'import') else ['meeting', 'diarize', str(root / 'session')]
+    if operation == 'import': args += ['--file', str(root / 'input.ogg')]
     sys.exit(cli.main([*args, '--speakers', '2', '--json']))
 '''
 
@@ -417,6 +533,7 @@ with patch('core.session.WhisperServer', Whisper), patch('core.session.Transcrib
         session.mkdir()
         (session / 'config.used.toml').write_text('[work]\ntype="meeting"\n[meeting]\nname="Team"')
         audio = b'complete audio'
+        (root / 'input.ogg').write_bytes(audio)
         (session / 'source_audio.ogg').write_bytes(audio)
         (session / 'source.json').write_text(json.dumps(dict(schema_version=1, kind='import',
             original_name='input.ogg', path='source_audio.ogg', size_bytes=len(audio),
@@ -485,3 +602,44 @@ with patch('core.session.WhisperServer', Whisper), patch('core.session.Transcrib
                 self.assertEqual(status['stop_reason'], 'user')
                 self.assertEqual((session / 'source.json').exists(), stop != 'stop_force')
                 self.assertFalse((root / 'state' / 'run.json').exists())
+
+
+    def test_import_stop_and_sigint_abort_and_preserve_verified_source(self):
+        import signal
+        for stop in ('stop', 'SIGINT'):
+            with self.subTest(stop=stop), tempfile.TemporaryDirectory() as tmp:
+                root = Path(tmp)
+                self.setup_root(root)
+                proc = self.start(root, 'import')
+                self.wait_path(root / 'entered-run')
+                active = json.loads((root / 'state' / 'run.json').read_text())
+                session = Path(active['session'])
+                if stop == 'SIGINT':
+                    proc.send_signal(signal.SIGINT)
+                else:
+                    (session / 'stop').touch()
+                stdout, stderr = proc.communicate(timeout=10)
+                self.assertEqual(stderr, '')
+                payload = json.loads(stdout)
+                self.assertEqual((proc.returncode, payload['accepted'], payload['outcome']), (130, True, 'aborted'))
+                status = json.loads((session / 'status.json').read_text())
+                self.assertEqual((status['phase'], status['stop_reason']), ('aborted', 'user'))
+                phases = [json.loads(line)['phase'] for line in (session / 'events.jsonl').read_text().splitlines()
+                          if json.loads(line)['type'] == 'phase']
+                self.assertEqual(phases[-2:], ['finishing', 'aborted'])
+                self.assertTrue((session / 'source.json').exists())
+                source, metadata = verify_meeting_source(session)
+                self.assertEqual(source.read_bytes(), (root / 'input.ogg').read_bytes())
+                self.assertEqual(metadata['kind'], 'import')
+                self.assertFalse((root / 'state' / 'run.json').exists())
+
+
+class SourceDurationTests(unittest.TestCase):
+    def test_decode_timeout_scales_with_long_audio(self):
+        from core.session import source_duration
+        for duration, timeout in ((12.5, 120), (10800, 21600)):
+            with self.subTest(duration=duration), patch('core.session.subprocess.run', side_effect=[
+                SimpleNamespace(returncode=0, stdout=json.dumps({'format': {'duration': duration}}).encode()),
+                SimpleNamespace(returncode=0)]) as run:
+                self.assertEqual(source_duration(Path('audio.ogg')), duration)
+                self.assertEqual(run.call_args.kwargs['timeout'], timeout)

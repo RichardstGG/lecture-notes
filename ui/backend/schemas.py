@@ -249,6 +249,7 @@ class SessionSummary(BaseModel):
     has_notes: bool
     has_recording: bool
     has_speaker_transcript: bool = False
+    diarization_status: dict[str, Any] | None = None
 
 
 class SessionContentFile(BaseModel):

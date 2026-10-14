@@ -1,5 +1,6 @@
 """Filesystem contract tests for UI session history and content."""
 import json
+import hashlib
 import os
 import tempfile
 import threading
@@ -89,6 +90,69 @@ class SessionStoreTests(unittest.TestCase):
         self.assertTrue(sessions[0]["has_transcript"])
         self.assertTrue(sessions[0]["has_notes"])
         self.assertTrue(sessions[0]["has_recording"])
+
+    def make_meeting(self, kind='recording'):
+        session = self.make_session('meetings/one')
+        status = json.loads((session / 'status.json').read_text())
+        status.update(work_type='meeting', schema_version=2, mode='live' if kind == 'recording' else 'file')
+        (session / 'status.json').write_text(json.dumps(status))
+        (session / 'recording_100000.ogg').unlink()
+        source = session / 'source_audio.ogg'
+        source.write_bytes(b'saved meeting audio')
+        metadata = dict(schema_version=1, kind=kind, original_name='original.ogg', path=source.name,
+                        size_bytes=source.stat().st_size, sha256=hashlib.sha256(source.read_bytes()).hexdigest(),
+                        duration_seconds=123.4, requested_speakers=3, created_at=status['started_at'])
+        (session / 'source.json').write_text(json.dumps(metadata))
+        return session, metadata
+
+    def test_meeting_source_sets_has_recording_with_safe_metadata_and_hash(self):
+        for kind in ('recording', 'import'):
+            with self.subTest(kind=kind):
+                if (self.output / 'meetings' / 'one').exists():
+                    import shutil
+                    shutil.rmtree(self.output / 'meetings' / 'one')
+                session, metadata = self.make_meeting(kind)
+                self.assertTrue(self.store.get('meetings/one')['session']['has_recording'])
+                # A same-size mutation must be detected, even on coarse timestamps.
+                (session / 'source_audio.ogg').write_bytes(b'x' * metadata['size_bytes'])
+                self.assertFalse(self.store.get('meetings/one')['session']['has_recording'])
+
+    def test_meeting_recording_rejects_symlinks_missing_and_invalid_source(self):
+        session, metadata = self.make_meeting()
+        source = session / 'source_audio.ogg'
+        original = source.read_bytes()
+        external = self.output / 'external.ogg'
+        external.write_bytes(original)
+        source.unlink()
+        source.symlink_to(external)
+        self.assertFalse(self.store.get('meetings/one')['session']['has_recording'])
+        source.unlink()
+        self.assertFalse(self.store.get('meetings/one')['session']['has_recording'])
+        source.write_bytes(original)
+        for change in ({'path': '../external.ogg'}, {'sha256': '0' * 64}, {'size_bytes': True},
+                       {'schema_version': True}, {'requested_speakers': True}):
+            with self.subTest(change=change):
+                (session / 'source.json').write_text(json.dumps({**metadata, **change}))
+                self.assertFalse(self.store.get('meetings/one')['session']['has_recording'])
+        (session / 'source.json').unlink()
+        (session / 'source.json').symlink_to(external)
+        self.assertFalse(self.store.get('meetings/one')['session']['has_recording'])
+
+    def test_history_keeps_original_abort_without_confusing_valid_source_with_done(self):
+        session, _ = self.make_meeting('import')
+        status = json.loads((session / 'status.json').read_text())
+        status.update(mode='diarize', phase='failed', last_error='model_missing')
+        (session / 'status.json').write_text(json.dumps(status))
+        (session / 'events.jsonl').write_text('\n'.join(json.dumps(dict(schema_version=1, type='phase', phase=phase))
+                                                for phase in ('starting', 'loading', 'transcribing', 'finishing', 'aborted', 'starting', 'failed')))
+        summary = self.store.get('meetings/one')['session']
+        self.assertEqual((summary['phase'], summary['mode']), ('aborted', 'file'))
+        self.assertTrue(summary['has_transcript'])
+        self.assertTrue(summary['has_recording'])
+        self.assertEqual(summary['diarization_status']['phase'], 'failed')
+        self.assertEqual(summary['diarization_status']['last_error'], 'model_missing')
+        (session / 'events.jsonl').unlink()
+        self.assertIsNone(self.store.get('meetings/one')['session']['phase'])
 
     def test_get_returns_transcript_and_notes(self):
         session = self.make_session()
