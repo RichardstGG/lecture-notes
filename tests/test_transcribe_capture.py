@@ -4,7 +4,10 @@
 （5,196 個空隙、平均每 1.01 秒固定掉約 0.2 秒），而當時完全沒有任何警告。
 見 docs/platform-macos.md「擷取掉音訊」。
 """
+import json
 import queue
+import tempfile
+from pathlib import Path
 import threading
 import unittest
 from unittest import mock
@@ -184,6 +187,49 @@ class CheckCaptureTests(unittest.TestCase):
         self.assertEqual(lines, [])
         self.assertEqual(st.events[-1][0], "capture_integrity")
 
+    def test_native_success_report_reaches_existing_event_detail_and_session_log(self):
+        from core.status import Status, EVENT_SCHEMA_VERSION
+        from core.util import Logger
+        native = {"audio_seconds": 99.0, "pts_span_seconds": 100.0, "callbacks": 100,
+                  "gap_count": 1, "lost_seconds": 1.0, "wall_seconds": 101.0, "error": ""}
+        ogg = T.capture_gap_report(packets(count=100))
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            st = Status(root)
+            logger = Logger()
+            logger.attach(root / "session.log")
+            try:
+                with mock.patch.object(T, "probe_capture", return_value=ogg), \
+                     mock.patch.object(T, "log", logger):
+                    result = _Target(st, "rec.ogg")._check_capture(native)
+            finally:
+                logger.close()
+            self.assertEqual(result, ogg, "run result 的 capture 形狀不增加欄位")
+            event = json.loads((root / "events.jsonl").read_text().splitlines()[-1])
+            self.assertEqual(event["type"], "capture_integrity")
+            self.assertEqual(event["schema_version"], EVENT_SCHEMA_VERSION)
+            self.assertEqual(event["detail"], {"native_capture": native})
+            log = (root / "session.log").read_text()
+            self.assertIn('"callbacks": 100', log)
+            self.assertIn("⚠ macOS 原生擷取", log)
+
+    def test_native_gap_severity_matches_probe_ratio_thresholds(self):
+        for loss, gaps, severity in ((0, 0, None), (0.1, 1, "⚠"),
+                                     (0.5, 0, "⚠"), (2.0, 1, "✖")):
+            with self.subTest(loss=loss):
+                native = {"audio_seconds": 100 - loss, "pts_span_seconds": 100.0,
+                          "callbacks": 100, "gap_count": gaps, "lost_seconds": loss,
+                          "wall_seconds": 101.0, "error": ""}
+                st, lines = _FakeStatus(), []
+                with mock.patch.object(T, "log", side_effect=lines.append):
+                    self.assertIsNone(_Target(st)._check_capture(native))
+                warnings = [l for l in lines if l.startswith(("⚠", "✖"))]
+                self.assertEqual(len(warnings), int(severity is not None))
+                if severity:
+                    self.assertTrue(warnings[0].startswith(severity))
+                self.assertEqual(len(st.errors), int(severity == "✖"))
+                self.assertEqual(st.events, [], "沒有存檔時不偽造 ffprobe 事件")
+
     def test_thresholds_are_ordered_with_headroom_over_observed_noise(self):
         self.assertLess(T.CAPTURE_LOSS_WARN, T.CAPTURE_LOSS_ERROR)
         self.assertGreater(T.CAPTURE_LOSS_WARN, 0.00057 * 5,
@@ -213,8 +259,8 @@ class _BlockingStdout:
 class DrainTests(unittest.TestCase):
     """_drain 只負責把 pipe 讀乾；VAD 與 status 不在讀取路徑上。
 
-    這是 macOS 掉音訊的根因修復：以前三件事在同一個迴圈，任何停頓都會
-    讓 ffmpeg 阻塞，進而讓作業系統的擷取緩衝溢出。
+    這可隔離 Python 下游停頓，並非 macOS 掉音訊的根因修復：直接用 ffmpeg
+    錄 WAV 也會遺失；原生 callback 與 demux 輪詢的對照見平台文件。
     """
 
     def _drain_all(self, stdout):
