@@ -205,11 +205,11 @@ class CheckCaptureTests(unittest.TestCase):
             finally:
                 logger.close()
             self.assertEqual(result, ogg, "run result 的 capture 形狀不增加欄位")
-            event = json.loads((root / "events.jsonl").read_text().splitlines()[-1])
+            event = json.loads((root / "events.jsonl").read_text(encoding="utf-8").splitlines()[-1])
             self.assertEqual(event["type"], "capture_integrity")
             self.assertEqual(event["schema_version"], EVENT_SCHEMA_VERSION)
             self.assertEqual(event["detail"], {"native_capture": native})
-            log = (root / "session.log").read_text()
+            log = (root / "session.log").read_text(encoding="utf-8")
             self.assertIn('"callbacks": 100', log)
             self.assertIn("⚠ macOS 原生擷取", log)
 

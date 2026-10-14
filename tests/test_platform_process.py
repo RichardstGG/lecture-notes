@@ -196,6 +196,7 @@ class KillTests(unittest.TestCase):
                 mock.patch.object(P.os, "killpg", create=True, side_effect=fake_killpg), \
                 mock.patch.object(P.os, "kill") as kill, \
                 mock.patch.object(P, "pid_alive", return_value=False), \
+                mock.patch.object(P.os, "WNOHANG", 1, create=True), \
                 mock.patch.object(P.os, "waitpid", side_effect=ChildProcessError):
             P.kill_tree(123, timeout=1)
             self.assertTrue(kill.called, "killpg 沒權限時應該 fallback 到 os.kill")
