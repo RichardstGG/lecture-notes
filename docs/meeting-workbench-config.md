@@ -38,6 +38,8 @@ id 為不含副檔名的可攜單一檔名；拒絕路徑分隔符、絕對路�
 - `make_meeting_session_dir(cfg)` 在 output_root/meeting_output_root 下排他建立新目錄。default 為 `meetings/<safe name>_<local YYYYMMDD_HHMMSS>`；同名追加 `-2`、`-3`，即使原目錄為空也不重用。檔案／符號連結碰撞也不覆寫。
 - meeting_output_root 允許巢狀相對路徑（兩種斜線均可），拒絕絕對路徑、Windows drive、`..`、空／不合法元件；meeting 子目錄不能是符號連結。meeting_session_name 只支援 `{meeting}`、`{date:...}`，產出單層檔名，使用既有 safe_name。課堂 make_session_dir 行為不變。
 
+Windows 已解析路徑可能以一般磁碟／UNC 路徑或 `\\?\` extended-length 形式回傳；目錄包含檢查視兩者為相同路徑，避免並行建立父目錄時誤報逸出。仍拒絕解析後真正位於 output_root 外的路徑與 meeting 子目錄符號連結，不變更設定、CLI、輸出命名或排他建立契約。
+
 函式只分配目錄，尚未由 meeting run 呼叫；不是已啟動的錄音。目前 main 已在另一個里程碑提供 status／run writer schema 2、events schema 1 及 `run.lock` 原子單工作鎖，詳見 [鎖與狀態](meeting-workbench-lock-status.md)。目錄並發測試與工作鎖競跑測試驗證不同契約，不能相互替代。
 
 ## 文件與最新程式的差異
