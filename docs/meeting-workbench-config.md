@@ -40,7 +40,7 @@ id 為不含副檔名的可攜單一檔名；拒絕路徑分隔符、絕對路�
 
 Windows 已解析路徑可能以一般磁碟／UNC 路徑或 `\\?\` extended-length 形式回傳；目錄包含檢查視兩者為相同路徑，避免並行建立父目錄時誤報逸出。仍拒絕解析後真正位於 output_root 外的路徑與 meeting 子目錄符號連結，不變更設定、CLI、輸出命名或排他建立契約。
 
-函式只分配目錄，尚未由 meeting run 呼叫；不是已啟動的錄音。目前 main 已在另一個里程碑提供 status／run writer schema 2、events schema 1 及 `run.lock` 原子單工作鎖，詳見 [鎖與狀態](meeting-workbench-lock-status.md)。目錄並發測試與工作鎖競跑測試驗證不同契約，不能相互替代。
+`lec meeting run` 已使用此函式分配錄音／匯入目錄。`lec meeting diarize <session-path>` 直接讀取指定 session 的設定快照與已驗證來源，不另分配目錄；Windows 一般／extended-length 路徑均指向同一份 session。目前 main 已在另一個里程碑提供 status／run writer schema 2、events schema 1 及 `run.lock` 原子單工作鎖，詳見 [鎖與狀態](meeting-workbench-lock-status.md)。目錄並發測試與工作鎖競跑測試驗證不同契約，不能相互替代。
 
 ## 文件與最新程式的差異
 
@@ -49,6 +49,8 @@ Windows 已解析路徑可能以一般磁碟／UNC 路徑或 `\\?\` extended-len
 正式契約 num_speakers 的 0 sentinel 優先於簡述中的「設定一律 1..30」；本次區分可儲存設定與執行必填驗證。既有安裝已合併，文件中「安裝流程未提供」不得再作為阻擋理由。
 
 ## 驗證與未完成項目
+
+會議 JSON 模式的內部輸出串流使用 UTF-8，避免 cp950 無法編碼停止訊息而中斷 watcher；公開 JSON envelope 與 stop／stop_force 檔案契約不變。Windows 自動測試在無主控台的真實子行程內，以測試管線觸發主執行緒 SIGINT handler；POSIX 保留原生 signal。這些測試使用假音訊引擎，不代表 Windows 主控台 Ctrl+C、麥克風或模型硬體驗收。
 
 契約測試：同名課堂／會議隔離、合併順序、強制關閉摘要、參數型別／邊界、未知類型保留、CLI JSON／exit、模型路徑、輸出安全、空目錄碰撞及四個獨立行程同時分配不同目錄。測試不使用麥克風、不安裝套件。
 
