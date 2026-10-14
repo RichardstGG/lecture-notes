@@ -321,6 +321,22 @@ class RunResultTests(unittest.TestCase):
         self.assertEqual(result["lost_seconds"], 0.0)
         self.assertTrue(any(l.startswith("✔ 轉錄完成") for l in lines))
 
+    def test_native_source_failure_is_reported_even_when_ffmpeg_exits_zero(self):
+        with mock.patch.object(T.P, "native_capture_problem", return_value="helper 結束代碼 1"):
+            result, lines = self._run(0)
+        self.assertTrue(result["ffmpeg_failed"])
+        self.assertEqual(result["ffmpeg_returncode"], 0, "不得把 helper 的退出碼當作 ffmpeg 退出碼")
+        self.assertTrue(any("macOS 原生擷取失敗" in line for line in lines))
+        self.assertFalse(any(line.startswith("✔ 轉錄完成") for line in lines))
+
+    def test_native_startup_failure_keeps_none_for_a_ffmpeg_that_never_started(self):
+        with mock.patch.object(T.P, "native_capture_problem", return_value="找不到 swiftc"):
+            result, lines = self._run(None)
+        self.assertTrue(result["ffmpeg_failed"])
+        self.assertIsNone(result["ffmpeg_returncode"])
+        self.assertEqual(result["duration"], 0)
+        self.assertTrue(any("macOS 原生擷取失敗" in line for line in lines))
+
     def test_interrupted_ffmpeg_is_not_treated_as_a_failure(self):
         for rc in (255, -2, -15):
             with self.subTest(rc=rc):
