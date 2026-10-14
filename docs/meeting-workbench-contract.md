@@ -141,20 +141,32 @@ Ctrl+C 與 stop 使用相同語義：正常停止現場錄音完成原稿與來�
 會議的唯讀 session API 不再以辨識作業的 terminal phase 判定原稿是否完成：`mode=diarize` 時，
 歷史摘要的 `phase` 取既有 `events.jsonl` 中原錄音／匯入第一個 terminal phase，`mode` 取
 `source.json.kind` 對應的 live/file；原稿已取消仍顯示 aborted，不因來源與部分原稿存在就猜成 done。
-缺少原工作 phase 事件時以 null 表示未知，不猜完成。會議來源 metadata 的格式、大小及 SHA-256 通過檢查，
-且 metadata／來源均非 symlink 時，`has_recording=true`；課堂仍沿用 `recording_*.ogg` 規則。
-UI reader 每次以串流計算 SHA-256；不依賴大小／時間戳快取，避免同大小且同時間戳刻度的來源變更被漏判。
+缺少原工作 phase 事件時以 null 表示未知，不猜完成。會議的 `has_recording` 是顯示用可用性旗標：
+只驗證 `source.json` schema（含 sha256 字串格式）、拒絕 metadata／音檔 symlink 與越界路徑、確認檔案存在及 `st_size` 相符。
+UI 不讀取音檔內容、不計算雜湊；同大小內容竄改仍可能回 true，不保證來源內容完整。
+來源完整性以 `meeting diarize` 的 `verify_meeting_source()` 與引擎 `_validate` 為準，兩者的 SHA-256 檢查維持不變。
+課堂仍沿用 `recording_*.ogg` 規則。async session API 與 SSE 的檔案讀取使用執行緒，避免磁碟 I/O 阻塞 event loop。
 
 API version 1 的會議摘要新增可選 `diarization_status={phase,stop_reason,last_error,diarization}`，
 取自既有 status 欄位，讓歷史同時顯示原稿完成狀態與最近辨識完成／失敗／取消。課堂及尚未辨識的 session 不帶此欄位；
 舊 reader 可忽略附加欄位。正式 UI 寫入 API／控制仍未啟用，唯讀歷史可顯示這個結果。
 
 辨識 manifest 的原子切換是產物發布點：已切換 `diarization.current.json` 或引擎已成功返回後，
-晚到的 Ctrl+C／stop_force 不再把完成結果改成 aborted，成功作業維持 done／exit 0。
+一般晚到的 Ctrl+C／stop_force 不再把完成結果改成 aborted，成功作業維持 done／exit 0；收尾期間二次 Ctrl+C 的 process exit 特例見下段。
 呼叫端比較本次執行前後的 manifest，涵蓋原子切換至成功返回之間的短暫區間；發布前取消仍沿既有 aborted 語義。
 編排層 `verify_meeting_source` 與引擎 `_validate` 各自計算 SHA-256 是刻意保留的兩道邊界檢查，
 後者再次偵測驗證到推論之間的來源變更，未修改引擎介面。
 
-收尾的 status 寫入與 cleanup 各自防護，任一失敗回作業錯誤 exit 1；鎖釋放與 signal 還原不依賴前面的 status 寫入成功。
+收尾的 status 寫入與 cleanup 各自防護，原本成功而收尾失敗時仍回作業錯誤 exit 1；已有錯誤代碼時保留原錯誤，
+後續收尾例外僅附加到本機 `session.log`，不覆寫 envelope 或 status 的主錯誤。
+採用 close 規則 D(a)：terminal phase 已發布後，`status.close()` 失敗僅記 session.log，保持已發布 outcome 與 exit code。
+鎖釋放與 signal 還原不依賴前面的 status 寫入成功。
+
+收尾期間維持停止 stop 檔 watcher，不再處理 stop／stop_force 檔，避免與正常收尾競爭發布 terminal phase。
+Ctrl+C 仍計數：第一次可讓正常收尾繼續，第二次立即 kill 本次擁有的 server、釋放鎖並還原 signal，以 130 結束 CLI。
+這是強制結束「收尾行程」，不撤銷已決定的作業結果：原 outcome 為 done 或辨識 manifest 已發布時，
+status／envelope 仍為 done（`accepted:true,outcome:"done"`），process exit 為 130，不新增 aborted 或取消事件。
+已有 failed／aborted terminal phase 同樣保留；failed 仍回既有錯誤 envelope，另以 process exit 130 表示收尾受中斷。
+此特例不改變第一輪的匯入取消、現場正常停止、辨識欄位保留與 manifest 發布規則。
 CLI 僅在參數／設定載入階段把欄位型別錯誤歸類為 input_invalid，工作中的非預期錯誤不回 exit 2。
 設定錯誤 message 只列出可辨識的鍵名，不回吐設定值、音訊文字或憑證。

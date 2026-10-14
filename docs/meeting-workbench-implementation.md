@@ -162,3 +162,16 @@ status schema 不擴張，正式 UI 控制仍停用。收尾錯誤必釋放鎖�
 設定快照優先、長音檔解碼 timeout 與雙重雜湊檢查詳見正式契約「歷史、辨識結果與取消競態」。
 新增 Automated／Mock tests 覆蓋匯入 stop／SIGINT、辨識成功／失敗／取消的歷史、收尾寫入失敗、
 manifest 發布競態、來源 symlink／竄改、HTTP 唯讀 response 及前端原稿／辨識結果並存。
+
+
+### PR #95 第二輪審核修正（A–D）
+
+- A：UI `has_recording` 改為 metadata／路徑／檔案大小的顯示檢查，不開啟來源音檔、不驗內容雜湊；
+  完整性由正式辨識入口及引擎把關。session API／SSE 的磁碟讀取移至執行緒。同大小竄改測試改為顯示 true，並保留大小錯誤／symlink／越界／缺檔的 false 測試。
+- B：已有主錯誤時，收尾錯誤只附加 session.log，不取代主錯誤；成功後收尾失敗仍回 exit 1。
+- C：收尾停用 stop 檔 watcher，但第二次 Ctrl+C 可快速退出並回收本次擁有的 server、鎖及 signal handler。
+  process exit 130 不撤銷已決定的結果；完成仍呈現 done，不另發 aborted。語義詳見正式契約。
+- D：選擇 close 失敗僅記 log，保留已發布 terminal phase／envelope／exit code。
+
+Automated／Mock tests 使用真實子行程模擬 30 秒收尾阻塞，兩次 SIGINT 後須於 3 秒內退出、保留單一 terminal phase；
+另驗證原錯誤優先、close 失敗一致性、UI 不讀取音檔及 API／SSE 讀取執行緒。未變更引擎介面或狀態檔 schema，會議仍為實驗中。
