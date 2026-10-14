@@ -148,7 +148,8 @@ Parrot 驅動。只有驅動 host 在執行，未觀察到可退出的 Backgroun
 - PCM 透過帶原始 capture PTS 的 Matroska pipe 交給既有 ffmpeg，輸出仍是 16 kHz PCM 與
   原有 Opus 存檔。**不使用無時間戳 raw PCM 作輸入**，以免把真正遺失掩蓋成連續的合成時間。
   合成測試刻意加入 128 ms 缺口，編成 Opus 後 `probe_capture` 仍量到 0.128 秒、一個缺口。
-- 需要 Xcode Command Line Tools 的 `swiftc`。`lec doctor` 增加這項提示；每次錄音在獨立
+- 需要 Xcode Command Line Tools 的 `swiftc`；缺少時 `lec doctor` 顯示 FAIL，請先執行
+  `xcode-select --install` 並完成安裝。每次錄音在獨立
   暫存目錄編譯 helper，正常收尾刪除原始碼、binary 與 module cache。不加新設定鍵。
   編譯／啟動失敗明確回報，**不退回已知會掉音訊的 ffmpeg avfoundation 擷取**。
 - `lec stop`／Ctrl+C 仍走原協定：停止檔或 signal handler 要求 helper 停止來源，等 FIFO
@@ -159,6 +160,46 @@ Parrot 驅動。只有驅動 host 在執行，未觀察到可退出的 Backgroun
   上游 native helper 失敗也令既有 `ffmpeg_failed` 為 true，即使 ffmpeg 封裝 EOF 後退出 0；另記錄原生錯誤。
 - Linux pulse、Windows dshow、檔案轉錄、裝置音量測試及其他擷取呼叫保留既有路徑。
   本次沒有改動會議功能；本節的單來源驗證不能套用到其他路徑。
+
+### swiftc 檢查與相容性（Issue #89）
+
+只在 macOS 將缺少 swiftc 從 WARN 改為 FAIL；已有 swiftc 為 OK。
+Linux／Windows 不新增此項，其他工具的必要／選用判斷保持原樣。
+這與原生錄音缺 swiftc 時立即失敗、且不退回 ffmpeg AVFoundation 的行為一致。
+README 與 mac_setup.command 提示安裝 Command Line Tools；不自動安裝，也不改 setup 流程。
+macOS／Windows 仍標示「實驗中」。
+
+`lec doctor` 的既有規則是「有任一 FAIL 就 exit 1，否則 exit 0」。因此 macOS
+只有缺 swiftc、沒有其他 FAIL 時，文字與 `--json` 模式的退出碼均由 0 變成 1。
+命令、參數與判定規則不變；JSON 仍是 `[{status, name, detail}, ...]`，不新增鍵或版本。
+依賴 exit 0 的環境健康檢查會正確判定此環境尚不能原生錄音；只做檔案轉錄也會收到此診斷。
+
+已檢查呼叫端：UI 的 doctor client 接受 exit 0／1 並讀取同一 JSON 清單；
+UI 啟動沒有 doctor 的 FAIL 閘門。setup.py、setup_engines.py、upgrade.py 只印出
+下一步執行 doctor 的提示，不依賴「沒有 FAIL」。mac_setup.command 仍傳回 setup.py 的退出碼。
+未修改 CLI／UI／設定或狀態 schema。
+
+Manual test（本台 arm64 Mac）：執行 `./lec doctor` 的相關原文如下。
+
+```text
+✔ Python              3.14.7
+⚠ 作業系統            Darwin 27.0.0（macos）｜實驗中
+✔ 錄音後端            avfoundation
+✔ swiftc              /usr/bin/swiftc
+```
+
+本次隔離 worktree 未放引擎／模型，另有 4 個既存環境錯誤、3 個警告，文字與 JSON 模式
+都 exit 1；swiftc 項本身為 OK。`--json` 共 23 項，全部仍只有 status／name／detail 三個鍵。
+缺 swiftc 的 FAIL 與提示、只有這一項 FAIL 時的 exit 1／JSON 相容性由 Mock test 驗證；
+沒有移除本機 Command Line Tools，也沒有把缺 swiftc 情境當成 Hardware test。
+
+Automated／Mock test：54 項 doctor 目標測試與既有 UI doctor exit 1 相容性測試通過。
+本 PR 完整 `python3 -m unittest` 執行 1045 項：12 skipped，只有既有 UI 測試
+`test_wildcard_accepts_two_local_addresses_and_rejects_forged_host` 因 `127.0.0.2`
+ConnectTimeout 失敗。未修改的 base（59a5d7a）單獨重跑同項仍失敗；沒有修改 UI 繞過它。
+Static validation：Python 編譯、`bash -n mac_setup.command` 與完整 diff 檢查通過。
+Not tested：Intel Mac、實際未安裝 Command Line Tools 的 Mac、Linux／Windows 真機；
+Linux／Windows 無 swiftc 項及其餘診斷狀態不變已由 Mock test 驗證。
 
 ### 來源選擇（PR #86 審查 A）
 
