@@ -17,10 +17,41 @@
 - 日期是台北時間（UTC+8）的合併日期。
 - 這份檔案由 maintainer 累積一批 PR 後交給 Antigravity 更新，再由 Claude 復核。流程和提示詞見 [docs/changelog-update.md](docs/changelog-update.md)。
 
+## v1.8：會議 CLI 與 macOS 錄音修正
+
+`lec meeting run`／`lec meeting diarize` 接上後，會議第一次能從頭跑到尾（實驗中，只有 CLI）。
+
+| 版本 | 合併日期 | PR | 內容 |
+|---|---|---|---|
+| v1.8.02 | 2026-10-15 | [#95](https://github.com/RichardstGG/lecture-notes/pull/95) | 會議 CLI：錄音、匯入、會後發言者辨識 |
+| v1.8.01 | 2026-10-14 | [#93](https://github.com/RichardstGG/lecture-notes/pull/93) | macOS 缺 swiftc 時 doctor 回報失敗 |
+| v1.8.00 | 2026-10-14 | [#86](https://github.com/RichardstGG/lecture-notes/pull/86) | macOS 錄音不再掉音訊（原生擷取） |
+
+## v1.7：工作鎖、狀態 schema 2 與跨平台相容性
+
+| 版本 | 合併日期 | PR | 內容 |
+|---|---|---|---|
+| v1.7.11 | 2026-10-12 | [#85](https://github.com/RichardstGG/lecture-notes/pull/85) | 會議文件對齊已出貨狀態 |
+| v1.7.10 | 2026-10-12 | [#81](https://github.com/RichardstGG/lecture-notes/pull/81) | 子行程輸出不再依賴系統預設編碼 |
+| v1.7.09 | 2026-10-12 | [#80](https://github.com/RichardstGG/lecture-notes/pull/80) | Windows 檔案被占用時寫檔會重試 |
+| v1.7.08 | 2026-10-12 | [#82](https://github.com/RichardstGG/lecture-notes/pull/82) | macOS 掉音訊的調查紀錄 |
+| v1.7.07 | 2026-10-12 | [#83](https://github.com/RichardstGG/lecture-notes/pull/83) | Windows 測試可攜性守則與診斷紀錄 |
+| v1.7.06 | 2026-10-12 | [#84](https://github.com/RichardstGG/lecture-notes/pull/84) | doctor 檢查發言者辨識環境 |
+| v1.7.05 | 2026-10-09 | [#79](https://github.com/RichardstGG/lecture-notes/pull/79) | capture.json 路徑一律以 / 分隔 |
+| v1.7.04 | 2026-10-09 | [#78](https://github.com/RichardstGG/lecture-notes/pull/78) | 測試不再假設 POSIX／UTF-8／短路徑 |
+| v1.7.03 | 2026-10-09 | [#75](https://github.com/RichardstGG/lecture-notes/pull/75) | 原子工作鎖與 status／run schema 2 |
+| v1.7.02 | 2026-10-09 | [#74](https://github.com/RichardstGG/lecture-notes/pull/74) | UI session 契約測試在 Windows 穩定 |
+| v1.7.01 | 2026-10-09 | [#73](https://github.com/RichardstGG/lecture-notes/pull/73) | 模型與上游契約測試可在 Windows 執行 |
+| v1.7.00 | 2026-10-09 | [#72](https://github.com/RichardstGG/lecture-notes/pull/72) | Windows 測試站：中斷的摘要與主控台隔離 |
+
 ## v1.6：會議雙音源與 Windows 安裝
 
 | 版本 | 合併日期 | PR | 內容 |
 |---|---|---|---|
+| v1.6.09 | 2026-10-08 | [#71](https://github.com/RichardstGG/lecture-notes/pull/71) | README 拆成三部分，安裝步驟依平台獨立 |
+| v1.6.08 | 2026-10-08 | [#70](https://github.com/RichardstGG/lecture-notes/pull/70) | reviewer 所有權清單補進 main |
+| v1.6.07 | 2026-10-08 | [#69](https://github.com/RichardstGG/lecture-notes/pull/69) | reviewer 所有權清單對齊（合進 #68 的分支，由 #70 帶進 main） |
+| v1.6.06 | 2026-10-08 | [#68](https://github.com/RichardstGG/lecture-notes/pull/68) | 版本歷史與 CHANGELOG 更新流程 |
 | v1.6.05 | 2026-10-08 | [#67](https://github.com/RichardstGG/lecture-notes/pull/67) | 會議設定與資料層契約 |
 | v1.6.04 | 2026-10-08 | [#66](https://github.com/RichardstGG/lecture-notes/pull/66) | 發言者辨識評分器（DER／JER） |
 | v1.6.03 | 2026-10-08 | [#65](https://github.com/RichardstGG/lecture-notes/pull/65) | Windows 一鍵安裝 |
