@@ -5,6 +5,8 @@
 """
 import ctypes
 import io
+import json
+import math
 import os
 import platform as _pf
 import re
@@ -942,6 +944,7 @@ class MacOSCaptureProcess:
         self.proc, self.helper = proc, helper
         self.cache, self.diagnostics = cache, diagnostics
         self.capture_problem = problem
+        self.capture_report = None
         self.stdout = proc.stdout if proc else io.BytesIO()
         self.pid = proc.pid if proc else None
         self.returncode = None
@@ -978,10 +981,25 @@ class MacOSCaptureProcess:
             except subprocess.TimeoutExpired:
                 self.helper.kill()
                 code = self.helper.wait()
+            detail = ""
+            if self.diagnostics:
+                try:
+                    self.diagnostics.seek(0, io.SEEK_END)
+                    self.diagnostics.seek(max(0, self.diagnostics.tell() - 65536))
+                    detail = self.diagnostics.read().decode("utf-8", "replace").strip()
+                    lines = [line.removeprefix("native capture: ") for line in detail.splitlines()
+                             if line.startswith("native capture: ")]
+                    report = json.loads(lines[-1]) if lines else None
+                    fields = ("audio_seconds", "pts_span_seconds", "callbacks", "gap_count",
+                              "lost_seconds", "wall_seconds")
+                    if (isinstance(report, dict) and isinstance(report.get("error"), str)
+                            and all(type(report.get(k)) in (int, float)
+                                    and math.isfinite(report[k]) and report[k] >= 0 for k in fields)):
+                        self.capture_report = report
+                except (OSError, ValueError, TypeError, OverflowError):
+                    pass  # kill／截斷／缺少報告不能掩蓋真實的子行程退出碼
             if code != 0 and not (self._stop_requested and code in (-signal.SIGINT, -signal.SIGTERM)):
-                self.diagnostics.seek(0)
-                detail = self.diagnostics.read(2048).decode("utf-8", "replace").strip()
-                self.capture_problem = f"helper 結束代碼 {code}：{detail or '沒有診斷資訊'}"
+                self.capture_problem = f"helper 結束代碼 {code}：{detail[:2048] or '沒有診斷資訊'}"
         if self.diagnostics:
             self.diagnostics.close()
         if self.cache:
@@ -993,6 +1011,11 @@ class MacOSCaptureProcess:
 def native_capture_problem(proc):
     """一般 Popen 沒有 native helper；不要改 Linux/dshow 的失敗判斷。"""
     return proc.capture_problem if isinstance(proc, MacOSCaptureProcess) else None
+
+
+def native_capture_report(proc):
+    """只有原生 wrapper 提供報告，普通 Popen／mock 不新增行為。"""
+    return proc.capture_report if isinstance(proc, MacOSCaptureProcess) else None
 
 
 def start_live_capture(cmd, source, backend=None):

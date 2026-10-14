@@ -163,14 +163,27 @@ Parrot 驅動。只有驅動 host 在執行，未觀察到可退出的 Backgroun
 ### 來源選擇（PR #86 審查 A）
 
 單來源原生擷取不會把未知名稱／編號靜默轉成第一個裝置：在編譯／啟動 helper 前
-回報可用裝置名稱。明確指定虛擬装置仍可使用；完整性檢查不能證明音量或音源正確。
+回報可用裝置名稱。明確指定虛擬裝置仍可使用；完整性檢查不能證明音量或音源正確。
 `default`／未設定略過 transport 為 Virtual／Aggregate／AutoAggregate 的項目，
 也排除名稱含 Background Music 的項目；目前 ffmpeg 枚舉沒有 transport，使用名稱規則。
-若没有可選項目則明確失敗，不猜測其他虛擬裝置名稱。成功啟動會把實際裝置名稱寫入 session.log。
+若沒有可選項目則明確失敗，不猜測其他虛擬裝置名稱。成功啟動會把實際裝置名稱寫入 session.log。
 
 `default_source("avfoundation")` 同樣使用此規則，影響其既有呼叫者（裝置查詢、doctor、
 預設來源解析）的 macOS 預設選擇／顯示；CLI、設定、事件與狀態 schema 不變。
 pulse 的系統預設查詢與 dshow 的首項選擇保持原行為。
+
+### 原生擷取報告（PR #86 審查 B）
+
+`MacOSCaptureProcess.wait()` 在成功或失敗路徑都解析 stderr 最後一行
+`native capture: {...}`，保留為 `capture_report`；缺少／截斷／不合法報告不讓 wait 拋例外，
+也不改寫 ffmpeg 真實退出碼。收尾會將 audio_seconds、pts_span_seconds、callbacks、gap_count、
+lost_seconds、wall_seconds、error 的原始值寫入 session.log，並放進既有
+`capture_integrity` 事件的 `detail.native_capture`。頂層 probe 數字、run 回傳值、
+status.json 與 events.jsonl schema 版本均不變。
+
+原生 PTS 缺口不受 Ogg 頁界呈現影響：只要 gap_count > 0 就警告；遺失比例
+lost_seconds / pts_span_seconds 達 0.5% 為警告，達 2% 為錯誤並記錄 status.error，
+與 probe_capture 同門檻。未保留錄音／ffprobe 無報告時仍寫原生 log 與警告，但不偽造存檔事件。
 
 ### 實際 `lec` 驗證
 

@@ -9,6 +9,7 @@ ffmpeg 持續把音訊以 raw PCM 送進來 → 以能量 VAD 在「停頓處」
 transcript.md 留下看得見的標記。run() 的回傳值也會帶上缺口與 ffmpeg 結束代碼。
 """
 import array
+import json
 import math
 import queue
 import re
@@ -753,6 +754,7 @@ class Transcriber:
                 self._update(elapsed=round(self.chunker.total_seconds, 1), queue=self.q.qsize())
         reader.join(timeout=5)
         capture_report = None
+        native_report = None
         if self.capture_sources:
             # 沒有單一 ffmpeg：「失敗」= 一開始就沒能開始，或兩路都沒撐到最後。
             # 只有一路故障算降級（degraded），錄音本身是成功的，細節在 capture_session。
@@ -768,6 +770,7 @@ class Transcriber:
             rc = self.proc.wait()
             self.ffmpeg_returncode = rc
             ffmpeg_failed = rc not in (0, 255, -2, -15) and not self.stopping
+            native_report = P.native_capture_report(self.proc)
             native_problem = P.native_capture_problem(self.proc)
             if native_problem:
                 ffmpeg_failed = True
@@ -802,7 +805,7 @@ class Transcriber:
                 f"但{why}，錄音或音檔可能不完整")
         else:
             log(f"✔ 轉錄完成：總長 {hms(total)}，轉錄 {speed:.1f}x 速")
-        capture = self._check_capture()
+        capture = self._check_capture(native_report)
         if self.capture_sources:
             self._report_capture_artifacts(capture_report)
         self._update(elapsed=round(total, 1), queue=0, sections_total=self.writer.sections)
@@ -816,8 +819,21 @@ class Transcriber:
             result["degraded"] = bool(capture_report.get("degraded"))
         return result
 
-    def _check_capture(self):
-        """錄音存檔的完整性。ffmpeg 丟音訊時結束代碼仍是 0，所以得自己量。"""
+    def _check_capture(self, native_report=None):
+        """錄音存檔與原生 PTS 的完整性；helper 成功退出也保留診斷。"""
+        if native_report is not None:
+            log("macOS 原生擷取報告：" + json.dumps(native_report, ensure_ascii=False, sort_keys=True))
+            span = native_report["pts_span_seconds"]
+            loss = native_report["lost_seconds"]
+            ratio = loss / span if span else (1.0 if loss else 0.0)
+            msg = (f"macOS 原生擷取有 {native_report['gap_count']} 個空隙，"
+                   f"共 {loss:.3f} 秒（{100 * ratio:.2f}%）")
+            if ratio >= CAPTURE_LOSS_ERROR:
+                log(f"✖ {msg}")
+                if self.status:
+                    self.status.error(msg)
+            elif native_report["gap_count"] > 0 or ratio >= CAPTURE_LOSS_WARN:
+                log(f"⚠ {msg}")
         if not self.recording_path:
             return None
         report = probe_capture(self.recording_path)
@@ -839,5 +855,6 @@ class Transcriber:
             log(f"⚠ 錄音存檔有 {report['gap_count']} 個空隙，"
                 f"共 {report['lost_seconds']:.1f} 秒（{100 * report['lost_ratio']:.2f}%）")
         if self.status:
-            self.status.event("capture_integrity", **report)
+            detail = {"detail": {"native_capture": native_report}} if native_report is not None else {}
+            self.status.event("capture_integrity", **report, **detail)
         return report

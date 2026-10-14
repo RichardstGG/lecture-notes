@@ -3,6 +3,7 @@
 Mock tests 不代表麥克風驗證；Swift/ffmpeg interoperability 使用合成 PCM。
 """
 import io
+import json
 from pathlib import Path
 import shutil
 import signal
@@ -66,8 +67,37 @@ class CaptureProcessTests(unittest.TestCase):
         self.assertEqual(proc.wait(), 0)
         self.assertTrue(proc.diagnostics.closed)
 
+    def test_success_report_keeps_the_last_native_json_line_after_wait(self):
+        report = {"audio_seconds": 99.0, "pts_span_seconds": 100.0, "callbacks": 100,
+                  "gap_count": 1, "lost_seconds": 1.0, "wall_seconds": 101.0, "error": ""}
+        proc = self.make_process()
+        proc.diagnostics = io.BytesIO(("unrelated stderr\nnative capture: {}\n"
+                                      + "native capture: " + json.dumps(report) + "\n").encode())
+        self.assertEqual(proc.wait(), 0)
+        self.assertEqual(P.native_capture_report(proc), report)
+        self.assertIsNone(P.native_capture_problem(proc))
+        self.assertTrue(proc.diagnostics.closed)
+        self.assertEqual(proc.wait(), 0)
+        self.assertEqual(proc.capture_report, report)
+
+    def test_absent_truncated_or_invalid_report_does_not_change_wait_result(self):
+        for diagnostics in (b"", b"native capture: {", b"native capture: []",
+                            b'native capture: {"gap_count": "oops"}', b"native capture: null"):
+            with self.subTest(diagnostics=diagnostics):
+                proc = self.make_process()
+                proc.diagnostics = io.BytesIO(diagnostics)
+                self.assertEqual(proc.wait(), 0)
+                self.assertIsNone(proc.capture_report)
+                self.assertIsNone(proc.capture_problem)
+        proc = self.make_process(helper_code=-9)
+        proc.diagnostics = None
+        self.assertEqual(proc.wait(), 0)
+        self.assertIsNone(proc.capture_report)
+        self.assertIn("沒有診斷資訊", proc.capture_problem)
+
     def test_non_native_process_has_no_native_error(self):
         self.assertIsNone(P.native_capture_problem(mock.Mock()))
+        self.assertIsNone(P.native_capture_report(mock.Mock()))
 
 
 class StartCaptureTests(unittest.TestCase):
