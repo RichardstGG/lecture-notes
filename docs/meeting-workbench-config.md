@@ -38,7 +38,7 @@ id 為不含副檔名的可攜單一檔名；拒絕路徑分隔符、絕對路�
 - `make_meeting_session_dir(cfg)` 在 output_root/meeting_output_root 下排他建立新目錄。default 為 `meetings/<safe name>_<local YYYYMMDD_HHMMSS>`；同名追加 `-2`、`-3`，即使原目錄為空也不重用。檔案／符號連結碰撞也不覆寫。
 - meeting_output_root 允許巢狀相對路徑（兩種斜線均可），拒絕絕對路徑、Windows drive、`..`、空／不合法元件；meeting 子目錄不能是符號連結。meeting_session_name 只支援 `{meeting}`、`{date:...}`，產出單層檔名，使用既有 safe_name。課堂 make_session_dir 行為不變。
 
-函式只分配目錄，尚未由 meeting run 呼叫；不是已啟動的錄音。狀態／鎖仍 schema 1，原子單工作鎖與 status schema 2 在另一個里程碑，不能把本次目錄並發測試當作工作鎖驗證。
+函式只分配目錄，尚未由 meeting run 呼叫；不是已啟動的錄音。目前 main 已在另一個里程碑提供 status／run writer schema 2、events schema 1 及 `run.lock` 原子單工作鎖，詳見 [鎖與狀態](meeting-workbench-lock-status.md)。目錄並發測試與工作鎖競跑測試驗證不同契約，不能相互替代。
 
 ## 文件與最新程式的差異
 
@@ -50,6 +50,6 @@ id 為不含副檔名的可攜單一檔名；拒絕路徑分隔符、絕對路�
 
 契約測試：同名課堂／會議隔離、合併順序、強制關閉摘要、參數型別／邊界、未知類型保留、CLI JSON／exit、模型路徑、輸出安全、空目錄碰撞及四個獨立行程同時分配不同目錄。測試不使用麥克風、不安裝套件。
 
-後續依序為鎖／狀態、單來源 session 與來源保存、辨識編排、API 與真資料 UI，最後獨立接雙音源。依 AGENTS 不疊依賴未合併的 PR。
+鎖／狀態基礎已完成；後續依序為單來源 session 與來源保存、辨識編排、API 與真資料控制 UI，最後獨立接雙音源。現有唯讀歷史與雙稿 UI 不等於控制流程已完成。依 AGENTS 不疊依賴未合併的 PR。
 
 辨識準確度 **Not tested**：沒有乾淨多人樣本及人工標註；唯一真實會議錄音有 20.2% 遺失，不能作驗收依據。雙音源硬體、macOS／Windows 引擎真機仍 **Not tested**。min_turn_seconds、S00 信賴度、prompt 回吐過濾等品質門檻待樣本，不宣稱「會議功能可用」。本 PR 的 Windows basic 只代表設定／CLI 等自動測試，與錄音或辨識硬體驗收不同。
