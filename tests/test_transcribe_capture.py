@@ -213,8 +213,8 @@ class _BlockingStdout:
 class DrainTests(unittest.TestCase):
     """_drain 只負責把 pipe 讀乾；VAD 與 status 不在讀取路徑上。
 
-    這是 macOS 掉音訊的根因修復：以前三件事在同一個迴圈，任何停頓都會
-    讓 ffmpeg 阻塞，進而讓作業系統的擷取緩衝溢出。
+    這可隔離 Python 下游停頓，並非 macOS 掉音訊的根因修復：直接用 ffmpeg
+    錄 WAV 也會遺失；原生 callback 與 demux 輪詢的對照見平台文件。
     """
 
     def _drain_all(self, stdout):
