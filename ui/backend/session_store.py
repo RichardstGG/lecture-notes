@@ -1,5 +1,6 @@
 """Read-only access to completed and active session files."""
 import json
+import math
 import re
 import tomllib
 from dataclasses import dataclass
@@ -132,6 +133,54 @@ class SessionStore:
             pass
         return None
 
+    def _meeting_source(self, path):
+        """Display availability only; execution validates the actual audio hash."""
+        metadata = _read_json(path / "source.json")
+        name, size, digest = (metadata.get(key) for key in ("path", "size_bytes", "sha256"))
+        duration = metadata.get("duration_seconds")
+        if (type(metadata.get("schema_version")) is not int or metadata["schema_version"] != 1
+                or metadata.get("kind") not in ("recording", "import")
+                or not isinstance(name, str) or not re.fullmatch(r"source_audio\.[A-Za-z0-9]+", name)
+                or type(size) is not int or size <= 0
+                or not isinstance(digest, str) or not re.fullmatch(r"[a-f0-9]{64}", digest)
+                or type(duration) not in (float, int) or not math.isfinite(duration) or duration <= 0
+                or not isinstance(metadata.get("original_name"), str)
+                or not isinstance(metadata.get("created_at"), str)
+                or type(metadata.get("requested_speakers")) is not int
+                or not 1 <= metadata["requested_speakers"] <= 30):
+            return None
+        source = path / name
+        if source.is_symlink() or not source.is_file():
+            return None
+        try:
+            stat = source.stat()
+            if stat.st_size != size:
+                return None
+            return metadata
+        except OSError:
+            return None
+
+    @staticmethod
+    def _original_meeting_phase(path):
+        # The first run's terminal phase precedes all diarization attempts. Its
+        # existing event carries the original outcome, including partial imports.
+        events = path / "events.jsonl"
+        if events.is_symlink():
+            return None
+        try:
+            with events.open(encoding="utf-8") as stream:
+                for line in stream:
+                    try:
+                        event = json.loads(line)
+                    except ValueError:
+                        continue
+                    if (isinstance(event, dict) and event.get("type") == "phase"
+                            and event.get("phase") in ("done", "failed", "aborted")):
+                        return event["phase"]
+        except (OSError, UnicodeError):
+            pass
+        return None
+
     def _summary(self, path):
         status = _read_json(path / "status.json")
         work_type = status.get("work_type") or "lecture"
@@ -159,7 +208,8 @@ class SessionStore:
         else:
             newest = oldest = path.stat().st_mtime
         recordings = list(path.glob("recording_*.ogg"))
-        return {
+        source = self._meeting_source(path) if work_type == "meeting" else None
+        summary = {
             "id": path.relative_to(self.output_root).as_posix(),
             "course": self._course_name(path, status, work_type),
             "work_type": work_type,
@@ -174,10 +224,19 @@ class SessionStore:
                                and not (path / "transcript.md").is_symlink()),
             "has_notes": ((path / "notes.md").is_file()
                           and not (path / "notes.md").is_symlink()),
-            "has_recording": bool(recordings),
+            "has_recording": bool(source) if work_type == "meeting" else bool(recordings),
             "has_speaker_transcript": (path / "diarization.current.json").is_file()
                                       and not (path / "diarization.current.json").is_symlink(),
         }
+        if work_type == "meeting" and status.get("mode") == "diarize":
+            # Raw status remains the current operation for lec status/SSE. The
+            # library presents the capture outcome separately from that attempt.
+            summary["phase"] = self._original_meeting_phase(path)
+            kind = _read_json(path / "source.json").get("kind")
+            summary["mode"] = {"import": "file", "recording": "live"}.get(kind)
+            summary["diarization_status"] = {key: status.get(key) for key in (
+                "phase", "stop_reason", "last_error", "diarization")}
+        return summary
 
     def _speaker_transcript(self, path):
         manifest_path = path / "diarization.current.json"

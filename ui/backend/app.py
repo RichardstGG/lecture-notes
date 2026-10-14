@@ -77,7 +77,7 @@ async def _session_events(
     while (not (shutdown_event and shutdown_event.is_set())
            and not await request.is_disconnected()):
         try:
-            current = initial if initial is not None else sessions.get(session_id)
+            current = initial if initial is not None else await asyncio.to_thread(sessions.get, session_id)
             initial = None
             if previous is None:
                 yield _sse("snapshot", current)
@@ -477,7 +477,7 @@ def create_app(
         responses={500: {"model": ApiErrorResponse}},
     )
     async def session_list(request: Request):
-        return request.app.state.sessions.list()
+        return await asyncio.to_thread(request.app.state.sessions.list)
 
     @app.get(
         "/api/v1/sessions/{session_id:path}/term-candidates",
@@ -511,7 +511,7 @@ def create_app(
                    400: {"model": ApiErrorResponse}, 404: {"model": ApiErrorResponse}},
     )
     async def session_stream(session_id: str, request: Request):
-        initial = request.app.state.sessions.get(session_id)
+        initial = await asyncio.to_thread(request.app.state.sessions.get, session_id)
         stream = _session_events(
             request, request.app.state.sessions, session_id,
             request.app.state.settings.status_poll_interval, initial=initial,
@@ -529,7 +529,7 @@ def create_app(
                    413: {"model": ApiErrorResponse}, 500: {"model": ApiErrorResponse}},
     )
     async def session_detail(session_id: str, request: Request):
-        return request.app.state.sessions.get(session_id)
+        return await asyncio.to_thread(request.app.state.sessions.get, session_id)
 
     @app.get(
         "/api/v1/status/stream", response_class=StreamingResponse,

@@ -12,6 +12,8 @@ interface Props {
   onSelect: (id: string) => void;
 }
 
+const outcomeLabels: Record<string, string> = { done: "完成", failed: "失敗", aborted: "已取消" };
+
 const stageLabels: Record<string, string> = {
   segmentation: "發言者辨識",
   retranscription: "重新轉錄",
@@ -80,7 +82,9 @@ export function MeetingSessionPanel({ active, runtime, sessions, selectedId, onS
           {sessions.map((session) => <button key={session.id} type="button" className={selectedId === session.id ? "active" : ""}
             aria-pressed={selectedId === session.id} onClick={() => onSelect(session.id)}>
             <strong>{session.course || session.id}</strong>
-            <span>{formatDate(session.started_at)} · {session.has_speaker_transcript ? "已有發言者逐字稿" : "尚未辨識發言者"}</span>
+            <span>{formatDate(session.started_at)} · {formatDuration(session.elapsed)} · 原稿{session.phase ? outcomeLabels[session.phase] || "處理中" : "狀態未知"}</span>
+            {session.diarization_status && <span>最近辨識：{outcomeLabels[session.diarization_status.phase || ""] || "處理中"}{session.diarization_status.last_error ? ` · ${session.diarization_status.last_error}` : ""}</span>}
+            <span> {session.has_speaker_transcript ? "已有發言者逐字稿" : "尚未辨識發言者"}</span>
           </button>)}
         </div>
         {error && <p className="inline-error" role="alert">{error}</p>}
