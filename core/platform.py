@@ -4,6 +4,7 @@
 不要自己判斷作業系統。
 """
 import ctypes
+import io
 import os
 import platform as _pf
 import re
@@ -11,6 +12,7 @@ import shutil
 import signal
 import subprocess
 import sys
+import tempfile
 import time
 from pathlib import Path
 
@@ -725,11 +727,309 @@ def ffmpeg_input(source, backend=None):
                 break
         if idx is None:
             idx = source if str(source).isdigit() else 0
-        # thread_queue_size 要夠大：AVFoundation 的擷取緩衝一滿就直接丟音訊，
-        # 而且連 keep_recording 的存檔一起丟（實機量到每秒固定掉約 0.2 秒，
-        # 見 docs/platform-macos.md「擷取掉音訊」）。512 個封包不足以吸收
-        # 讀取端偶發的數百毫秒停頓。
+        # 這是 demux 後的佇列，不能防止 avfoundation 單格暫存覆寫音訊。
+        # 課堂單來源錄音透過 start_live_capture 使用原生 callback；其他呼叫者
+        # 保留既有參數。實機證據與適用範圍見 docs/platform-macos.md。
         return ["-f", "avfoundation", "-thread_queue_size", "4096", "-i", f":{idx}"]
     if backend == "dshow":
         return ["-f", "dshow", "-thread_queue_size", "4096", "-i", f"audio={source}"]
     raise ValueError(f"未知的錄音後端：{backend}")
+
+
+# 原生 callback 保存每個 PCM buffer；Matroska 保留 capture PTS，避免用 raw
+# PCM 的合成時間戳掩蓋真正的擷取遺失。只由課堂單來源即時錄音使用。
+_MACOS_CAPTURE_SWIFT = r'''
+import AVFoundation
+import Foundation
+import CoreMedia
+import Darwin
+
+func bytes(_ value: UInt64, count: Int? = nil) -> Data {
+    let n = count ?? max(1, (64 - value.leadingZeroBitCount + 7) / 8)
+    return Data((0..<n).reversed().map { UInt8(truncatingIfNeeded: value >> ($0 * 8)) })
+}
+func size(_ value: Int) -> Data {
+    for n in 1...8 where UInt64(value) < (UInt64(1) << (7*n)) - 1 {
+        return bytes(UInt64(value) | (UInt64(1) << (7*n)), count: n)
+    }
+    fatalError("element too large")
+}
+func element(_ id: UInt64, _ payload: Data) -> Data { bytes(id) + size(payload.count) + payload }
+func uint(_ id: UInt64, _ value: UInt64) -> Data { element(id, bytes(value)) }
+func text(_ id: UInt64, _ value: String) -> Data { element(id, Data(value.utf8)) }
+func interleave(_ data: Data, frames: Int, channels: Int, width: Int) -> Data {
+    var packed = Data(count: data.count)
+    data.withUnsafeBytes { src in
+        packed.withUnsafeMutableBytes { dst in
+            for s in 0..<frames { for c in 0..<channels {
+                dst.baseAddress!.advanced(by: (s*channels+c)*width).copyMemory(
+                    from: src.baseAddress!.advanced(by: (c*frames+s)*width), byteCount: width)
+            } }
+        }
+    }
+    return packed
+}
+func header(rate: Double, channels: UInt64, bits: UInt64, codec: String) -> Data {
+    let ebml = uint(0x4286, 1) + uint(0x42F7, 1) + uint(0x42F2, 4) + uint(0x42F3, 8)
+        + text(0x4282, "matroska") + uint(0x4287, 4) + uint(0x4285, 2)
+    let info = uint(0x2AD7B1, 1000) + text(0x4D80, "lec-native") + text(0x5741, "lec-native")
+    let audio = element(0xB5, bytes(rate.bitPattern, count: 8)) + uint(0x9F, channels) + uint(0x6264, bits)
+    let track = uint(0xD7, 1) + uint(0x73C5, 1) + uint(0x83, 2) + text(0x86, codec) + element(0xE1, audio)
+    return element(0x1A45DFA3, ebml) + bytes(0x18538067) + Data([1,255,255,255,255,255,255,255])
+        + element(0x1549A966, info) + element(0x1654AE6B, element(0xAE, track))
+}
+
+final class Receiver: NSObject, AVCaptureAudioDataOutputSampleBufferDelegate {
+    let writer = DispatchQueue(label: "lec-native-writer")
+    let lock = NSLock()
+    var pending = 0
+    var problem: String? = nil
+    var firstPTS: Double? = nil
+    var lastEnd: Double = 0
+    var audioSeconds = 0.0
+    var gaps = 0
+    var lostSeconds = 0.0
+    var callbacks = 0
+    var received = false
+    var formatKey: String? = nil
+    func failure(_ text: String) { lock.lock(); if problem == nil { problem = text }; lock.unlock() }
+    func error() -> String? { lock.lock(); defer { lock.unlock() }; return problem }
+    func hasAudio() -> Bool { lock.lock(); defer { lock.unlock() }; return received }
+    func finishWriting() {
+        // 錯誤時不等待已塞住的 writer；程序退出會關閉 pipe，讓上游失敗可被觀察。
+        if error() == nil { writer.sync {} }
+    }
+    func enqueue(_ data: Data) {
+        lock.lock()
+        if pending + data.count > 32*1024*1024 { problem = "PCM writer backlog exceeds 32 MiB"; lock.unlock(); return }
+        pending += data.count
+        lock.unlock()
+        writer.async {
+            do { try FileHandle.standardOutput.write(contentsOf: data) }
+            catch { self.failure("PCM pipe write failed") }
+            self.lock.lock(); self.pending -= data.count; self.lock.unlock()
+        }
+    }
+    func captureOutput(_ output: AVCaptureOutput, didOutput sample: CMSampleBuffer, from connection: AVCaptureConnection) {
+        guard error() == nil else { return }
+        guard let desc = CMSampleBufferGetFormatDescription(sample),
+              let asbd = CMAudioFormatDescriptionGetStreamBasicDescription(desc),
+              let block = CMSampleBufferGetDataBuffer(sample) else { failure("missing PCM format or data"); return }
+        let f = asbd.pointee
+        guard f.mFormatID == kAudioFormatLinearPCM,
+              f.mFormatFlags & kAudioFormatFlagIsBigEndian == 0 else { failure("unsupported PCM layout"); return }
+        let float = f.mFormatFlags & kAudioFormatFlagIsFloat != 0
+        guard (float && f.mBitsPerChannel == 32) || (!float && f.mFormatFlags & kAudioFormatFlagIsSignedInteger != 0 && [16,24,32].contains(f.mBitsPerChannel)) else {
+            failure("unsupported PCM sample representation"); return
+        }
+        let pts = CMTimeGetSeconds(CMSampleBufferGetPresentationTimeStamp(sample))
+        let count = CMSampleBufferGetNumSamples(sample)
+        guard pts.isFinite, f.mSampleRate > 0, count > 0 else { failure("invalid PCM timestamp"); return }
+        let duration = Double(count) / f.mSampleRate
+        let key = "\(f.mSampleRate)/\(f.mChannelsPerFrame)/\(f.mBitsPerChannel)/\(float)"
+        if let old = formatKey, old != key { failure("PCM format changed during recording"); return }
+        formatKey = key
+        if firstPTS == nil {
+            firstPTS = pts
+            enqueue(header(rate: f.mSampleRate, channels: UInt64(f.mChannelsPerFrame),
+                           bits: UInt64(f.mBitsPerChannel), codec: float ? "A_PCM/FLOAT/IEEE" : "A_PCM/INT/LIT"))
+        } else if pts < lastEnd - 0.001 { failure("PCM timestamp moved backwards"); return }
+        else if pts - lastEnd > 0.001 { gaps += 1; lostSeconds += pts - lastEnd }
+        let tick = (pts - firstPTS!) * 1000000
+        guard tick >= 0 else { failure("PCM timestamp moved backwards"); return }
+        let length = CMBlockBufferGetDataLength(block)
+        var data = Data(count: length)
+        let status = data.withUnsafeMutableBytes { CMBlockBufferCopyDataBytes(block, atOffset: 0, dataLength: length, destination: $0.baseAddress!) }
+        guard status == noErr else { failure("PCM copy failed"); return }
+        let width = Int(f.mBitsPerChannel / 8)
+        let channels = Int(f.mChannelsPerFrame)
+        guard length == count * channels * width else { failure("unexpected PCM byte count"); return }
+        if channels > 1 && f.mFormatFlags & kAudioFormatFlagIsNonInterleaved != 0 {
+            data = interleave(data, frames: count, channels: channels, width: width)
+        }
+        let blockPayload = Data([0x81,0,0,0x80]) + data
+        enqueue(element(0x1F43B675, uint(0xE7, UInt64(tick.rounded())) + element(0xA3, blockPayload)))
+        lastEnd = pts + duration; audioSeconds += duration; callbacks += 1
+        lock.lock(); received = true; lock.unlock()
+    }
+}
+
+let target = CommandLine.arguments[1]
+let devices: [AVCaptureDevice]
+if #available(macOS 14.0, *) {
+    devices = AVCaptureDevice.DiscoverySession(deviceTypes: [.microphone], mediaType: .audio, position: .unspecified).devices
+} else { devices = AVCaptureDevice.devices(for: .audio) }
+guard let device = devices.first(where: { $0.localizedName == target }) else { fputs("native capture: input device unavailable\n", stderr); exit(1) }
+if AVCaptureDevice.authorizationStatus(for: .audio) == .notDetermined {
+    let permission = DispatchSemaphore(value: 0)
+    AVCaptureDevice.requestAccess(for: .audio) { _ in permission.signal() }
+    _ = permission.wait(timeout: .now() + 30)
+}
+guard AVCaptureDevice.authorizationStatus(for: .audio) == .authorized else {
+    fputs("native capture: microphone permission unavailable; allow the calling app in System Settings > Privacy & Security > Microphone\n", stderr)
+    exit(1)
+}
+let session = AVCaptureSession()
+let input = try AVCaptureDeviceInput(device: device)
+guard session.canAddInput(input) else { fatalError("input unavailable") }
+session.addInput(input)
+let output = AVCaptureAudioDataOutput()
+let receiver = Receiver()
+let queue = DispatchQueue(label: "lec-native-callback")
+output.setSampleBufferDelegate(receiver, queue: queue)
+guard session.canAddOutput(output) else { fatalError("output unavailable") }
+session.addOutput(output)
+signal(SIGPIPE, SIG_IGN)
+signal(SIGINT, SIG_IGN); signal(SIGTERM, SIG_IGN)
+var stopping = false
+let signals = [SIGINT, SIGTERM].map { sig -> DispatchSourceSignal in
+    let source = DispatchSource.makeSignalSource(signal: sig, queue: .main)
+    source.setEventHandler { stopping = true }; source.resume(); return source
+}
+let parent = getppid()
+let parentWatch = DispatchSource.makeTimerSource(queue: .global())
+parentWatch.schedule(deadline: .now(), repeating: 0.25)
+parentWatch.setEventHandler { if getppid() != parent { exit(1) } }
+parentWatch.resume()
+session.startRunning()
+let start = ProcessInfo.processInfo.systemUptime
+let limit = Double.infinity
+while !stopping && receiver.error() == nil && ProcessInfo.processInfo.systemUptime - start < limit {
+    if ProcessInfo.processInfo.systemUptime - start > 30 && !receiver.hasAudio() {
+        receiver.failure("no PCM received within 30 seconds")
+    }
+    RunLoop.current.run(until: Date(timeIntervalSinceNow: 0.01))
+}
+session.stopRunning()
+queue.sync {}
+receiver.finishWriting()
+let report: [String: Any] = ["audio_seconds": receiver.audioSeconds,
+    "pts_span_seconds": receiver.lastEnd - (receiver.firstPTS ?? receiver.lastEnd),
+    "callbacks": receiver.callbacks, "gap_count": receiver.gaps, "lost_seconds": receiver.lostSeconds,
+    "wall_seconds": ProcessInfo.processInfo.systemUptime - start, "error": receiver.error() ?? ""]
+let json = try JSONSerialization.data(withJSONObject: report, options: [.sortedKeys])
+FileHandle.standardError.write(Data("native capture: ".utf8) + json + Data("\n".utf8))
+withExtendedLifetime(signals) {}
+withExtendedLifetime(parentWatch) {}
+exit(receiver.error() == nil && receiver.callbacks > 0 ? 0 : 1)
+
+'''
+
+
+class MacOSCaptureProcess:
+    """單來源擷取的兩個子行程。SIGINT 先停止來源，PCM/Opus 由 EOF 正常收尾。
+
+    ffmpeg 的 returncode 維持原值；helper 的失敗另由 capture_problem 回報。
+    編譯或啟動失敗時 stdout 為 EOF、wait() 為 None（尚未啟動 ffmpeg）。
+    """
+
+    def __init__(self, proc=None, helper=None, cache=None, diagnostics=None, problem=None):
+        self.proc, self.helper = proc, helper
+        self.cache, self.diagnostics = cache, diagnostics
+        self.capture_problem = problem
+        self.stdout = proc.stdout if proc else io.BytesIO()
+        self.pid = proc.pid if proc else None
+        self.returncode = None
+        self._closed = False
+        self._stop_requested = False
+
+    def poll(self):
+        return self.proc.poll() if self.proc else 1
+
+    def send_signal(self, sig):
+        self._stop_requested = True
+        if self.helper and self.helper.poll() is None:
+            self.helper.send_signal(sig)
+
+    def terminate(self):
+        for child in (self.helper, self.proc):
+            if child and child.poll() is None:
+                child.terminate()
+
+    def kill(self):
+        for child in (self.helper, self.proc):
+            if child and child.poll() is None:
+                child.kill()
+
+    def wait(self, timeout=None):
+        if self._closed:
+            return self.returncode
+        self.returncode = self.proc.wait(timeout=timeout) if self.proc else None
+        if self.helper:
+            if self.helper.poll() is None:
+                self.helper.terminate()
+            try:
+                code = self.helper.wait(timeout=5)
+            except subprocess.TimeoutExpired:
+                self.helper.kill()
+                code = self.helper.wait()
+            if code != 0 and not (self._stop_requested and code in (-signal.SIGINT, -signal.SIGTERM)):
+                self.diagnostics.seek(0)
+                detail = self.diagnostics.read(2048).decode("utf-8", "replace").strip()
+                self.capture_problem = f"helper 結束代碼 {code}：{detail or '沒有診斷資訊'}"
+        if self.diagnostics:
+            self.diagnostics.close()
+        if self.cache:
+            self.cache.cleanup()
+        self._closed = True
+        return self.returncode
+
+
+def native_capture_problem(proc):
+    """一般 Popen 沒有 native helper；不要改 Linux/dshow 的失敗判斷。"""
+    return proc.capture_problem if isinstance(proc, MacOSCaptureProcess) else None
+
+
+def start_live_capture(cmd, source, backend=None):
+    """啟動課堂單來源錄音；macOS avfoundation 避開 ffmpeg 的單格暫存擷取。
+
+    cmd 是既有 ffmpeg 輸入＋輸出 argv。僅替換輸入為帶原始 PTS 的 Matroska
+    pipe；輸出、來源設定、停止檔協定、Linux pulse 與 Windows dshow 皆保留。
+    Swift 原始碼、binary 與 module cache 每次放在獨立暫存目錄，正常收尾刪除。
+    """
+    if NAME != "macos" or audio_backend(backend) != "avfoundation":
+        return subprocess.Popen(cmd, stdout=subprocess.PIPE, **spawn_kwargs())
+    cache = diagnostics = helper = proc = None
+    try:
+        compiler = shutil.which("swiftc")
+        if not compiler:
+            raise OSError("macOS 原生擷取需要 swiftc；請安裝 Xcode Command Line Tools（xcode-select --install）")
+        rows = _avfoundation_sources()
+        row = next((r for r in rows if str(source) in (r["id"], r["name"])), None)
+        if row is None and not str(source).isdigit():
+            row = rows[0] if rows else None     # 與既有 ffmpeg_input 的 fallback 一致
+        if row is None:
+            raise OSError("找不到指定的 macOS 錄音來源；請重新執行 lec devices")
+        cache = tempfile.TemporaryDirectory(prefix="lec-macos-capture-")
+        root = Path(cache.name)
+        swift, binary = root / "capture.swift", root / "capture"
+        swift.write_text(_MACOS_CAPTURE_SWIFT, encoding="utf-8")
+        build = subprocess.run(
+            [compiler, "-module-cache-path", str(root / "modules"), str(swift), "-o", str(binary)],
+            capture_output=True, timeout=120,
+        )
+        if build.returncode:
+            detail = build.stderr.decode("utf-8", "replace").strip()[-1000:]
+            raise OSError(f"macOS 原生擷取 helper 編譯失敗：{detail}")
+        diagnostics = tempfile.TemporaryFile()
+        helper = subprocess.Popen([str(binary), row["name"]], stdin=subprocess.DEVNULL,
+                                  stdout=subprocess.PIPE, stderr=diagnostics, **spawn_kwargs())
+        first_format = cmd.index("-f")
+        input_end = cmd.index("-i", first_format) + 2
+        native_cmd = [*cmd[:first_format], "-f", "matroska", "-i", "pipe:0", *cmd[input_end:]]
+        try:
+            proc = subprocess.Popen(native_cmd, stdin=helper.stdout, stdout=subprocess.PIPE,
+                                    **spawn_kwargs())
+        finally:
+            helper.stdout.close()    # 不保留 pipe 的額外讀取端，ffmpeg 關閉時 helper 才能收到 EPIPE
+        return MacOSCaptureProcess(proc, helper, cache, diagnostics)
+    except (OSError, subprocess.TimeoutExpired, ValueError) as exc:
+        if helper:
+            if helper.poll() is None:
+                helper.kill()
+            helper.wait()
+        if diagnostics:
+            diagnostics.close()
+        if cache:
+            cache.cleanup()
+        return MacOSCaptureProcess(problem=str(exc))
