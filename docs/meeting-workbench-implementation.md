@@ -54,7 +54,12 @@
   `source_sha256`（空字串＝不驗；非空且不符就丟 `source_hash_mismatch`）、`meeting_name`、
   `requested_speakers`（1..30 的 int，bool 與 0 都算 `input_invalid`）、兩個模型路徑。
   其餘欄位有預設值：`cluster_threshold=0.5`、`segmentation_window_shift=0.1`、`threads=8`、
-  `whisper_server="http://127.0.0.1:8178"`、`opencc=True`。
+  `whisper_server="http://127.0.0.1:8178"`、`opencc=True`、`max_asr_seconds=28.0`。
+- **單次送 whisper 的音訊不超過 `max_asr_seconds`（含 pad，允許 1–30 秒）。** 同一人合併後的區間可以
+  遠超過 30 秒；引擎層在每段後半找最安靜的 300ms，從中間切開再送，規則與課堂 VAD 沒有靜音時的退路相同。
+  沒加上限之前，8 分鐘樣本裡一段 70.8 秒的區間被 whisper 解成 byte-level 錯字（「，」→「Ｂ」共 13 處）
+  並吐出無效 UTF-8；只看單一 30ms frame 的切法又曾把「李奇」切成兩半。上限記在 `speakers.json` 的
+  `engine.params.max_asr_seconds`，也會出現在 `diarization.request.json`。
 - **whisper-server 必須先在跑**，引擎層不啟動它（server 生命週期屬 session 編排）。
   沿用正式流程啟動它的參數即可，不需要 `-dtw`；引擎層用 `verbose_json` 取 whisper 自己的區段時間。
 - **`progress(event)`** 收到 `{stage, processed_seconds, total_seconds, speakers_found}`。
@@ -91,7 +96,13 @@
 
 **已知成本**：重新轉錄逐區間送 whisper，每個請求不論多短都填滿 30 秒視窗，所以約為會議長度的 0.65 倍
 （87.7 分鐘會議約 57 分鐘）。把同一人的相鄰區間打包到接近 28 秒可大幅降低，但要先確認不影響時間戳，
-故延後到品質確認之後。
+故延後到品質確認之後。長區間切片後請求數變多（8 分鐘樣本 16 → 26 次），總耗時實測沒有明顯變化（約 150 秒）。
+
+**2026-10-15 流程冒煙測試（Manual test，Linux／Vulkan，不是品質驗收）**：`samples/test8min.ogg`（單人課堂）
+走 `lec meeting run --file` → `lec meeting diarize --speakers 2`。原稿 SRT 與 `samples/expected` 位元組相同；
+辨識約 150 秒，`actual_speakers=1`（單人錄音沒有硬湊第二位）；兩次重跑輸出逐字相同，原稿與來源雜湊不變。
+仍有 whisper 自身的零星錯字（例如英文「owner」轉成「ёнner」），以及 whisper 在同一片音訊內斷句時把句號
+留到下一行開頭。乾淨多人會議的準確度仍未驗證。
 
 ## 雙來源錄音引擎層現況（Claude）
 
