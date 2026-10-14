@@ -140,12 +140,13 @@ class StartCaptureTests(unittest.TestCase):
              mock.patch.object(P.subprocess, "Popen", side_effect=[helper, ffmpeg]) as popen:
             result = P.start_live_capture(self.CMD, "1", "avfoundation")
         root = Path(result.cache.name)
+        self.addCleanup(result.cache.cleanup)     # 中途斷言失敗也不留下暫存目錄
         self.assertEqual(popen.call_args_list[0].args[0][1], self.ROWS[0]["name"])
         expected = self.CMD[:5] + ["-f", "matroska", "-i", "pipe:0"] + self.CMD[11:]
         self.assertEqual(popen.call_args_list[1].args[0], expected)
         self.assertTrue(helper.stdout.closed)
         self.assertEqual(build.call_args.args[0][1:3], ["-module-cache-path", str(root / "modules")])
-        self.assertEqual((root / "capture.swift").read_text(), P._MACOS_CAPTURE_SWIFT)
+        self.assertEqual((root / "capture.swift").read_text(encoding="utf-8"), P._MACOS_CAPTURE_SWIFT)
         self.assertEqual(result.wait(), 0)
         self.assertFalse(root.exists())
 

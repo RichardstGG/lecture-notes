@@ -191,14 +191,18 @@ class KillTests(unittest.TestCase):
             calls.append(sig)
             raise PermissionError
 
+        # Windows 的 os 沒有 WNOHANG／killpg：這裡模擬 POSIX 路徑，常數也要一併補上
         with mock.patch.object(P, "IS_WINDOWS", False), \
                 mock.patch.object(P.signal, "SIGKILL", SIGKILL, create=True), \
+                mock.patch.object(P.os, "WNOHANG", 1, create=True), \
                 mock.patch.object(P.os, "killpg", create=True, side_effect=fake_killpg), \
                 mock.patch.object(P.os, "kill") as kill, \
                 mock.patch.object(P, "pid_alive", return_value=False), \
-                mock.patch.object(P.os, "waitpid", side_effect=ChildProcessError):
+                mock.patch.object(P.os, "waitpid", side_effect=ChildProcessError) as waitpid:
             P.kill_tree(123, timeout=1)
-            self.assertTrue(kill.called, "killpg 沒權限時應該 fallback 到 os.kill")
+            kill.assert_called_once_with(123, signal.SIGTERM)
+            waitpid.assert_called_once_with(123, 1)
+        self.assertEqual(calls, [signal.SIGTERM], "SIGTERM 後行程已結束，不該再升級到 SIGKILL")
 
     def test_posix_kill_now_sends_sigkill(self):
         with mock.patch.object(P, "IS_WINDOWS", False), \
