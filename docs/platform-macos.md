@@ -202,11 +202,11 @@ lost_seconds / pts_span_seconds 達 0.5% 為警告，達 2% 為錯誤並記錄 s
 
 長測使用相同的正常 PCM／PTS 擷取路徑；錄音期間另外補了 writer 已失敗時不等待塞住 pipe 的
 收尾保護。這項失敗路徑以合成堵塞 pipe 測試驗證，不當作麥克風硬體證據。
-最後提交版本的額外短測（Hardware test）：音訊／跨距 62.247 秒、遺失與缺口皆 0，完整頁 62 頁，
+原始修復提交版本的額外短測（Hardware test）：音訊／跨距 62.247 秒、遺失與缺口皆 0，完整頁 62 頁，
 封包中位數 50、多出時間中位數 0 ms；stop 時 elapsed 60.3 秒、牆鐘 66.672350 秒，總牆鐘
 71.065830 秒。完整性事件有寫入、退出 0、done、errors 0，無本次子行程殘留。
 
-Automated / Mock test：93 項平台、擷取完整性、轉錄失敗與 doctor 目標測試通過，包含 Swift／ffmpeg
+Automated / Mock test（A／B 後）：102 項平台、擷取完整性、轉錄失敗與 doctor 目標測試通過，包含 Swift／ffmpeg
 合成 PCM 時間戳互通、planar 交錯與堵塞 pipe 的失敗收尾。Static validation：Python 編譯與 diff 檢查通過。
 Manual test：`lec doctor` 仍顯示 macOS 實驗中，能找到 swiftc；CLI help／停止參數不變。
 
@@ -218,8 +218,9 @@ A／B 後重新執行完整 `python3 -m unittest`：1042 項中有 1 個既有 U
 在支援這兩個 loopback 位址的 Linux／Windows 環境執行 `python3 -m unittest`。
 macOS 另外需使用 canonical `TMPDIR=/private/tmp`，避免既有會議測試的 `/var` symlink 路徑斷言差異。
 
-Windows basic／microphone：**Not tested，待測試站結果**。需以 primary repository 的 trusted branch
-與完整 SHA 派送；microphone 另需 PC 使用者開啟有效測試時段。PR 記錄派送與摘要結果，
+Windows basic／microphone：**Not tested**。固定 main workflow 僅接受 repository owner 派送，
+WRITE contributor 的派送會 skipped，不代表 PC 已執行測試。需由 owner 以 primary repository 的
+trusted branch 與完整 SHA 派送；microphone 另需 PC 使用者開啟有效測試時段。PR 記錄派送與摘要結果，
 未取得對應 SHA／request ID 的通過摘要前不得視為通過。Linux 真機、其他 Mac、USB／iPhone、
 ffmpeg@7、闔蓋／休眠與 TCC 拒絕情境都未在此修復驗證；不據此宣稱跨平台硬體全面支援。
 
