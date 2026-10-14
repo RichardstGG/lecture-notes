@@ -679,6 +679,18 @@ def sink_activity(backend=None):
     return counts
 
 
+def _macos_default_source(rows):
+    """優先實體輸入；ffmpeg 清單沒有 transport 時排除已知 Background Music。"""
+    for row in rows:
+        transport = str(row.get("transport") or "").strip().casefold()
+        if transport in {"virtual", "aggregate", "autoaggregate"}:
+            continue
+        if "background music" in row["name"].casefold():
+            continue
+        return row
+    return None
+
+
 def default_source(backend=None):
     backend = audio_backend(backend)
     if backend == "pulse":
@@ -695,6 +707,9 @@ def default_source(backend=None):
             return None
         return result.stdout.strip() or None
     rows = list_sources(backend) or []
+    if backend == "avfoundation":
+        row = _macos_default_source(rows)
+        return row["id"] if row else None
     return rows[0]["id"] if rows else None
 
 
@@ -995,11 +1010,15 @@ def start_live_capture(cmd, source, backend=None):
         if not compiler:
             raise OSError("macOS 原生擷取需要 swiftc；請安裝 Xcode Command Line Tools（xcode-select --install）")
         rows = _avfoundation_sources()
-        row = next((r for r in rows if str(source) in (r["id"], r["name"])), None)
-        if row is None and not str(source).isdigit():
-            row = rows[0] if rows else None     # 與既有 ffmpeg_input 的 fallback 一致
+        if source in (None, "", "default"):
+            row = _macos_default_source(rows)
+        else:
+            row = next((r for r in rows if str(source) in
+                        (str(r["id"]), r["name"], str(r.get("index")))), None)
         if row is None:
-            raise OSError("找不到指定的 macOS 錄音來源；請重新執行 lec devices")
+            available = "、".join(r["name"] for r in rows) or "（無）"
+            raise OSError(f"找不到指定的 macOS 錄音來源 {source!r}；可用裝置：{available}；"
+                          "請重新執行 lec devices 或明確指定來源")
         cache = tempfile.TemporaryDirectory(prefix="lec-macos-capture-")
         root = Path(cache.name)
         swift, binary = root / "capture.swift", root / "capture"
@@ -1022,6 +1041,8 @@ def start_live_capture(cmd, source, backend=None):
                                     **spawn_kwargs())
         finally:
             helper.stdout.close()    # 不保留 pipe 的額外讀取端，ffmpeg 關閉時 helper 才能收到 EPIPE
+        from .util import log
+        log(f"🎙 macOS 原生擷取來源：{row['name']}")
         return MacOSCaptureProcess(proc, helper, cache, diagnostics)
     except (OSError, subprocess.TimeoutExpired, ValueError) as exc:
         if helper:

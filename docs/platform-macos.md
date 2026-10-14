@@ -160,6 +160,18 @@ Parrot 驅動。只有驅動 host 在執行，未觀察到可退出的 Backgroun
 - Linux pulse、Windows dshow、檔案轉錄、裝置音量測試及其他擷取呼叫保留既有路徑。
   本次沒有改動會議功能；本節的單來源驗證不能套用到其他路徑。
 
+### 來源選擇（PR #86 審查 A）
+
+單來源原生擷取不會把未知名稱／編號靜默轉成第一個裝置：在編譯／啟動 helper 前
+回報可用裝置名稱。明確指定虛擬装置仍可使用；完整性檢查不能證明音量或音源正確。
+`default`／未設定略過 transport 為 Virtual／Aggregate／AutoAggregate 的項目，
+也排除名稱含 Background Music 的項目；目前 ffmpeg 枚舉沒有 transport，使用名稱規則。
+若没有可選項目則明確失敗，不猜測其他虛擬裝置名稱。成功啟動會把實際裝置名稱寫入 session.log。
+
+`default_source("avfoundation")` 同樣使用此規則，影響其既有呼叫者（裝置查詢、doctor、
+預設來源解析）的 macOS 預設選擇／顯示；CLI、設定、事件與狀態 schema 不變。
+pulse 的系統預設查詢與 dshow 的首項選擇保持原行為。
+
 ### 實際 `lec` 驗證
 
 短測（Hardware test）：錄音 61.937 秒，audio/span 同長、lost_ratio 0、gap_count 0，

@@ -119,6 +119,69 @@ class StartCaptureTests(unittest.TestCase):
         self.assertEqual(result.wait(), 0)
         self.assertFalse(root.exists())
 
+    def test_unknown_source_fails_without_compiling_or_starting_helper(self):
+        for source in ("不存在", "99", 99):
+            with self.subTest(source=source), \
+                 mock.patch.object(P, "NAME", "macos"), \
+                 mock.patch.object(P.shutil, "which", return_value="swiftc"), \
+                 mock.patch.object(P, "_avfoundation_sources", return_value=self.ROWS), \
+                 mock.patch.object(P.subprocess, "run") as build, \
+                 mock.patch.object(P.subprocess, "Popen") as popen:
+                result = P.start_live_capture(self.CMD, source, "avfoundation")
+            self.assertIn(self.ROWS[0]["name"], P.native_capture_problem(result))
+            self.assertIn("可用裝置", P.native_capture_problem(result))
+            self.assertIsNone(result.wait())
+            build.assert_not_called()
+            popen.assert_not_called()
+
+    def test_default_skips_virtual_devices_and_logs_actual_source(self):
+        rows = [{"id": "bgm", "name": "Background Music", "index": 0}, *self.ROWS]
+        for source in (None, "", "default"):
+            helper = mock.Mock(stdout=io.BytesIO())
+            helper.poll.return_value = helper.wait.return_value = 0
+            ffmpeg = mock.Mock(stdout=io.BytesIO())
+            ffmpeg.wait.return_value = 0
+            with self.subTest(source=source), \
+                 mock.patch.object(P, "NAME", "macos"), \
+                 mock.patch.object(P.shutil, "which", return_value="swiftc"), \
+                 mock.patch.object(P, "_avfoundation_sources", return_value=rows), \
+                 mock.patch.object(P.subprocess, "run", return_value=mock.Mock(returncode=0)), \
+                 mock.patch.object(P.subprocess, "Popen", side_effect=[helper, ffmpeg]) as popen, \
+                 mock.patch("core.util.log") as log:
+                result = P.start_live_capture(self.CMD, source, "avfoundation")
+                result.wait()
+            self.assertEqual(popen.call_args_list[0].args[0][1], self.ROWS[0]["name"])
+            log.assert_called_once_with(f"🎙 macOS 原生擷取來源：{self.ROWS[0]['name']}")
+
+    def test_default_source_filters_transport_and_known_names_only_on_avfoundation(self):
+        rows = [{"id": "virtual", "name": "Loopback", "transport": "Virtual"},
+                {"id": "bgm", "name": "Background Music (UI Sounds)"},
+                {"id": "mic", "name": "Built-in microphone", "transport": "Built-in"}]
+        with mock.patch.object(P, "list_sources", return_value=rows):
+            self.assertEqual(P.default_source("avfoundation"), "mic")
+            self.assertEqual(P.resolve_source("default", "avfoundation"), "mic")
+            self.assertEqual(P.default_source("dshow"), "virtual")
+        with mock.patch.object(P, "list_sources", return_value=rows[:2]):
+            self.assertIsNone(P.default_source("avfoundation"))
+        self.assertIsNone(P._macos_default_source([]))
+
+    def test_explicit_virtual_device_and_numeric_index_remain_selectable(self):
+        rows = [{"id": "Background Music", "name": "Background Music", "index": 0}]
+        for source in ("Background Music", "0", 0):
+            helper = mock.Mock(stdout=io.BytesIO())
+            helper.poll.return_value = helper.wait.return_value = 0
+            ffmpeg = mock.Mock(stdout=io.BytesIO())
+            ffmpeg.wait.return_value = 0
+            with self.subTest(source=source), \
+                 mock.patch.object(P, "NAME", "macos"), \
+                 mock.patch.object(P.shutil, "which", return_value="swiftc"), \
+                 mock.patch.object(P, "_avfoundation_sources", return_value=rows), \
+                 mock.patch.object(P.subprocess, "run", return_value=mock.Mock(returncode=0)), \
+                 mock.patch.object(P.subprocess, "Popen", side_effect=[helper, ffmpeg]) as popen:
+                result = P.start_live_capture(self.CMD, source, "avfoundation")
+                result.wait()
+            self.assertEqual(popen.call_args_list[0].args[0][1], "Background Music")
+
     def test_compile_failure_is_reported_and_does_not_start_a_microphone(self):
         with mock.patch.object(P, "NAME", "macos"), \
              mock.patch.object(P.shutil, "which", return_value="swiftc"), \
