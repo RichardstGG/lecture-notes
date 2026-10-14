@@ -145,7 +145,7 @@ class StartCaptureTests(unittest.TestCase):
         self.assertEqual(popen.call_args_list[1].args[0], expected)
         self.assertTrue(helper.stdout.closed)
         self.assertEqual(build.call_args.args[0][1:3], ["-module-cache-path", str(root / "modules")])
-        self.assertEqual((root / "capture.swift").read_text(), P._MACOS_CAPTURE_SWIFT)
+        self.assertEqual((root / "capture.swift").read_text(encoding="utf-8"), P._MACOS_CAPTURE_SWIFT)
         self.assertEqual(result.wait(), 0)
         self.assertFalse(root.exists())
 
