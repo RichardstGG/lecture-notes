@@ -232,7 +232,7 @@ def cmd_meeting(args):
     try:
         # Engine log output can include ASR text. JSON jobs keep it in local
         # session logs, and emit only the public envelope on stdout.
-        with open(os.devnull, "w") as quiet:
+        with open(os.devnull, "w", encoding="utf-8") as quiet:
             with contextlib.redirect_stdout(quiet) if args.json else contextlib.nullcontext():
                 code = job.run()
     except MeetingJobError as exc:

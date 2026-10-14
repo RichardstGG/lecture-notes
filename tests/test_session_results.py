@@ -53,8 +53,8 @@ class SessionResultTests(unittest.TestCase):
                 args = ['run', 'test'] + ([] if live else ['--file', str(source)])
                 code = cli.main(args)
                 run = runs[0]
-                status = json.loads((run.dir / 'status.json').read_text())
-                events = [json.loads(line) for line in (run.dir / 'events.jsonl').read_text().splitlines()]
+                status = json.loads((run.dir / 'status.json').read_text(encoding='utf-8'))
+                events = [json.loads(line) for line in (run.dir / 'events.jsonl').read_text(encoding='utf-8').splitlines()]
                 self.assertFalse((root / 'state' / 'run.json').exists())
                 whisper.return_value.stop.assert_called()
                 if result['ffmpeg_failed'] and result['duration'] == 0:

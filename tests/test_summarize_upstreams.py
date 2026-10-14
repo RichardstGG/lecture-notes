@@ -94,7 +94,7 @@ class UpstreamTransportTests(unittest.TestCase):
         sections = parse_sections('## 00:00:00\nSome transcript')
         with patch('core.summarize.log') as log:
             self.s.process(sections, sections)
-        text = self.s.jsonl.read_text() + self.s.notes_md.read_text() + str(log.call_args_list)
+        text = self.s.jsonl.read_text(encoding='utf-8') + self.s.notes_md.read_text(encoding='utf-8') + str(log.call_args_list)
         self.assertIn('HTTP 401', text)
         self.assertNotIn('secret-token', text)
         self.assertNotIn('private.invalid', text)
@@ -121,7 +121,7 @@ class UpstreamTransportTests(unittest.TestCase):
         self.responses.append((200, response, {}))
         sections = parse_sections('## 00:00:00\nSome transcript')
         self.s.process(sections, sections)
-        self.assertEqual(json.loads(self.s.jsonl.read_text())['status'], 'ok')
+        self.assertEqual(json.loads(self.s.jsonl.read_text(encoding='utf-8'))['status'], 'ok')
 
     def test_redirect_is_not_followed(self):
         self.responses.append((307, {}, {'Location': '/steal'}))

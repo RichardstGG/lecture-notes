@@ -13,7 +13,7 @@ import sys
 import threading
 import time
 from datetime import datetime
-from pathlib import Path
+from pathlib import Path, PureWindowsPath
 
 from . import platform as P
 from .config import ConfigError, meeting_output_parts
@@ -62,6 +62,22 @@ def make_session_dir(cfg):
     return d
 
 
+def _meeting_path_is_within(path, root):
+    """Compare resolved paths without Windows' optional extended-length prefix."""
+    def identity(value):
+        if isinstance(value, PureWindowsPath):
+            text = str(value)
+            if text.startswith("\\\\?\\"):
+                tail = text[4:]
+                if tail[:4].upper() == "UNC\\":
+                    return type(value)("\\\\" + tail[4:])
+                if re.match(r"^[A-Za-z]:\\", tail):
+                    return type(value)(tail)
+        return value
+
+    return identity(path).is_relative_to(identity(root))
+
+
 def make_meeting_session_dir(cfg):
     """Allocate a fresh directory, including when an existing collision is empty."""
     root = cfg.path(cfg["paths"]["output_root"]).resolve()
@@ -72,7 +88,7 @@ def make_meeting_session_dir(cfg):
         parent = parent / part
         if parent.is_symlink():
             raise ConfigError("會議輸出路徑不可包含符號連結")
-    if not parent.resolve().is_relative_to(root):
+    if not _meeting_path_is_within(parent.resolve(), root):
         raise ConfigError("會議輸出路徑不可超出 output_root")
     name = cfg.meeting_directory_name(datetime.now())
     parent.mkdir(parents=True, exist_ok=True)
