@@ -169,6 +169,7 @@ def run(course=None, sets=(), mic=False):
         tools += [("pactl", False, "列出麥克風"), ("systemd-inhibit", False, "上課時阻止休眠")]
     elif P.NAME == "macos":
         tools += [("caffeinate", False, "上課時阻止休眠")]
+        tools += [("swiftc", False, "macOS 課堂單來源原生擷取；缺少時請執行 xcode-select --install")]
     for cmd, need, why in tools:
         p = shutil.which(cmd)
         add(OK if p else (FAIL if need else WARN), cmd, p or f"找不到（{why}）")
