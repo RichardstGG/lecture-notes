@@ -90,6 +90,12 @@
 共同需求：Python 3.11+、ffmpeg、git、cmake，以及 C++ 編譯環境（Windows 沒有編譯環境時可用預編譯檔）。
 Web UI 另需 Node.js 22.22+。
 
+macOS 另需 Xcode Command Line Tools（提供 `swiftc`）：課堂即時錄音的原生擷取要在本機編譯一個小的 Swift helper，缺少時 `lec doctor` 會顯示 ✖，錄音也不會啟動。安裝：
+
+```bash
+xcode-select --install
+```
+
 Linux 為正式支援；macOS、Windows 仍是 beta，大部分行為只有 mock 與靜態驗證，在真機驗證前不要當成「已支援」。
 各平台的安裝步驟見「開始使用」；細節與已知限制：[Linux](docs/platform-linux.md)、[macOS](docs/platform-macos.md)、[Windows](docs/platform-windows.md)。
 
