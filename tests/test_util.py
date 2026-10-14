@@ -17,6 +17,8 @@ import random
 import subprocess
 import tempfile
 import threading
+import time
+import traceback
 import unittest
 from pathlib import Path
 from unittest import mock
@@ -332,6 +334,8 @@ class AtomicWriteChurnTests(unittest.TestCase):
     「執行緒默默死掉、測試照樣綠燈」。"""
 
     WRITES = 100
+    # 讀者連續遇到占用超過這麼久，就不是「檔案正被換掉」，而是真的讀不到（例如權限錯誤）。
+    READER_BUSY_LIMIT = 2.0
 
     def setUp(self):
         self.tmp = tempfile.TemporaryDirectory()
@@ -339,6 +343,12 @@ class AtomicWriteChurnTests(unittest.TestCase):
         self.target = Path(self.tmp.name) / "status.json"
 
     def test_readers_never_see_a_partial_file_during_real_replace_churn(self):
+        def describe(e):
+            # Windows 測試站只上傳摘要、日誌裡只有 repr；把 errno／winerror／發生位置一起帶回來。
+            return (f"{type(e).__name__} errno={getattr(e, 'errno', None)} "
+                    f"winerror={getattr(e, 'winerror', None)}: {e}\n"
+                    + "".join(traceback.format_exception(e)[-3:]))
+
         self.target.write_text(json.dumps({"elapsed": -1}), encoding="utf-8")
         errors, bad_reads, done = [], [], threading.Event()
         reads = {"ok": 0, "busy": 0}
@@ -348,22 +358,30 @@ class AtomicWriteChurnTests(unittest.TestCase):
                 for i in range(self.WRITES):
                     U.atomic_write(self.target, json.dumps({"phase": "recording", "elapsed": i}))
             except BaseException as e:           # noqa: BLE001 - 要把任何失敗帶回主執行緒
-                errors.append(("writer", e))
+                errors.append(("writer", describe(e)))
             finally:
                 done.set()
 
         def reader():
-            last = -1
+            last, busy_since = -1, None
             try:
                 while not done.is_set():
                     try:
                         text = self.target.read_text(encoding="utf-8")
                     except PermissionError as e:
-                        # 只有 Windows 上「檔案正被換掉」的暫時性占用可以重讀；其他都是真的錯誤。
-                        if not U._is_transient_replace_error(e):
+                        # Windows 上讀者開檔時，若目標正被 os.replace 換掉，open() 會拒絕存取。
+                        # open() 走 C runtime，例外只帶 errno 13、沒有 winerror（os.replace 走 Win32
+                        # API 才有），所以不能套用 replace 端的 _is_transient_replace_error。
+                        # 只在 Windows 上把 EACCES 當成暫時占用重讀，而且有時限：連續占用太久就是真的錯誤。
+                        if not (U._on_windows() and e.errno == errno.EACCES):
+                            raise
+                        busy_since = busy_since or time.monotonic()
+                        if time.monotonic() - busy_since > self.READER_BUSY_LIMIT:
                             raise
                         reads["busy"] += 1
+                        done.wait(0.001)
                         continue
+                    busy_since = None
                     try:
                         elapsed = json.loads(text)["elapsed"]
                     except ValueError as e:
@@ -377,7 +395,7 @@ class AtomicWriteChurnTests(unittest.TestCase):
                     # Windows 上等於人為製造長時間占用，而不是驗證原子性。
                     done.wait(0.001)
             except BaseException as e:           # noqa: BLE001
-                errors.append(("reader", e))
+                errors.append(("reader", describe(e)))
 
         threads = [threading.Thread(target=writer), threading.Thread(target=reader)]
         for t in threads:
