@@ -302,21 +302,28 @@ class AtomicWriteRetryTests(unittest.TestCase):
         #
         # 在真的 Windows 上，讀取端開著檔時 os.replace 也會被系統拒絕，所以：
         # - 退避要真的等（setUp 為了確定性地檢查退避序列，把 sleep 換成了記錄器）；
-        # - 注入的失敗最多連續 3 次，把剩下的重試留給真實的占用；
+        # - 每次寫入最多注入 3 次失敗（只有真的 replace 成功才歸零，真實的失敗不算），
+        #   保證剩下的重試留給真實的占用；
+        # - 讀取端每次讀完停 2ms：零間隔狂讀會讓檔案幾乎一直被開著，與 UI 每 2 秒輪詢差太遠；
         # - 讀取端在 replace 當下開檔可能拿到 PermissionError，那是合法的「暫時打不開」，
         #   不是讀到半個檔，計數後重讀；其他任何例外都帶回主執行緒。
         rng = random.Random(7)
         real = os.replace
-        calls = {"n": 0, "denied": 0, "streak": 0}
+        calls = {"n": 0, "denied": 0, "real_denied": 0, "injected_this_write": 0}
 
         def flaky(src, dst):
             calls["n"] += 1
-            if calls["streak"] < 3 and rng.random() < 0.3:
+            if calls["injected_this_write"] < 3 and rng.random() < 0.3:
                 calls["denied"] += 1
-                calls["streak"] += 1
+                calls["injected_this_write"] += 1
                 raise winerror(rng.choice([5, 32, 33]))
-            calls["streak"] = 0
-            return real(src, dst)
+            try:
+                result = real(src, dst)
+            except PermissionError:
+                calls["real_denied"] += 1        # Windows 真實的占用；讓重試機制處理
+                raise
+            calls["injected_this_write"] = 0
+            return result
 
         self.target.write_text(json.dumps({"elapsed": -1}), encoding="utf-8")
         failures, bad_reads, reader_errors, done = [], [], [], threading.Event()
@@ -341,6 +348,7 @@ class AtomicWriteRetryTests(unittest.TestCase):
                         reads["denied"] += 1
                     except ValueError as e:
                         bad_reads.append(e)
+                    _REAL_SLEEP(0.002)
             except BaseException as e:           # noqa: BLE001 - 執行緒裡的例外不能悄悄消失
                 reader_errors.append(e)
 
@@ -352,7 +360,7 @@ class AtomicWriteRetryTests(unittest.TestCase):
             for t in threads:
                 t.join(timeout=60)
         self.assertFalse(any(t.is_alive() for t in threads), "兩個執行緒都要在時限內結束")
-        self.assertEqual(failures, [])
+        self.assertEqual(failures, [], f"replace 呼叫 {calls}，讀取 {reads}")
         self.assertEqual(reader_errors, [])
         self.assertEqual(bad_reads, [], "原子 replace：讀者只會看到舊檔或新檔")
         self.assertGreater(reads["ok"], 0, "讀取端要真的讀到內容，這個測試才有意義")
