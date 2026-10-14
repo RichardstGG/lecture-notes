@@ -218,6 +218,12 @@ export interface SessionSummary {
   has_notes: boolean;
   has_recording: boolean;
   has_speaker_transcript?: boolean;
+  diarization_status?: {
+    phase?: Phase;
+    stop_reason?: string | null;
+    last_error?: string | null;
+    diarization?: SessionStatus["diarization"];
+  };
 }
 
 export interface ContentFile {

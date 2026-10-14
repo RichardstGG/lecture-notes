@@ -104,6 +104,26 @@ describe("meeting workbench preview", () => {
     expect(within(history).queryByText("S01: 真實發言")).toBeNull();
   });
 
+  it("keeps the original meeting date and shows a failed or cancelled latest diarization", async () => {
+    const { rerender } = render(<MeetingWorkbench runtime={{ schema_version: 2, running: false }} sessions={[
+      { id: "meetings/one", work_type: "meeting", course: "設計會議", started_at: "2026-10-10T09:00:00+08:00", updated_at: "2026-10-14T12:00:00+08:00",
+        phase: "done", mode: "file", elapsed: 123.4, has_transcript: true, has_notes: false, has_recording: true,
+        has_speaker_transcript: true, diarization_status: { phase: "failed", last_error: "model_missing" } },
+    ]} />);
+    const history = document.getElementById("meeting-history")!;
+    expect(within(history).getByText(/2:03 · 原稿完成/)).toBeTruthy();
+    expect(within(history).getByText("最近辨識：失敗 · model_missing")).toBeTruthy();
+    expect(within(history).getByText("已有發言者逐字稿")).toBeTruthy();
+    rerender(<MeetingWorkbench runtime={{ schema_version: 2, running: false }} sessions={[
+      { id: "meetings/one", work_type: "meeting", course: "設計會議", started_at: "2026-10-10T09:00:00+08:00", updated_at: "2026-10-14T12:00:00+08:00",
+        phase: "done", mode: "file", elapsed: 123.4, has_transcript: true, has_notes: false, has_recording: true,
+        has_speaker_transcript: true, diarization_status: { phase: "aborted", stop_reason: "user" } },
+    ]} />);
+    expect(within(history).getByText("最近辨識：已取消")).toBeTruthy();
+    expect(within(history).getByText(/2:03 · 原稿完成/)).toBeTruthy();
+    await within(history).findByText("真實原稿");
+  });
+
   it("shows real stage progress and omits a percentage when duration is unknown", async () => {
     render(<MeetingWorkbench runtime={{ schema_version: 2, running: true, work_type: "meeting", mode: "diarize",
       status: { phase: "diarizing", diarization: { stage: "segmentation", processed_seconds: 120, total_seconds: null, requested_speakers: 10, speakers_found: 4 } },

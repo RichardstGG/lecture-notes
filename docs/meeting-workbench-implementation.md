@@ -1,12 +1,12 @@
 # 雙工作台開發規格與交付順序
 
-2026-10-08 鎖與狀態層：status／run writer 已升 schema 2，events 維持 schema 1；所有工作共用持有至結束的原子 OS 鎖，舊檔不回寫。會議錄音與辨識編排尚未接線。詳見 [單工作鎖與狀態相容性](meeting-workbench-lock-status.md)。
+2026-10-08 鎖與狀態層：status／run writer 已升 schema 2，events 維持 schema 1；所有工作共用持有至結束的原子 OS 鎖，舊檔不回寫。會議錄音與辨識編排已於本次 CLI 里程碑接線。詳見 [單工作鎖與狀態相容性](meeting-workbench-lock-status.md)。
 
 2026-10-08 設定與資料層：已加入獨立會議設定載入／驗證、`lec meetings --json`、`lec config --work-type meeting`、work type 快照及排他輸出目錄函式。此設定里程碑未接錄音、辨識編排與 API 控制。詳見 [已實作範圍、CLI schema 與相容性](meeting-workbench-config.md)。
 
 2026-10-06 雙音源增量：已實作設定驗證、能力查詢與安全阻擋，錄音仍未開放；引擎介面、來源 schema 2 與硬體驗收皆明標提案／未測試。詳見 [雙音源契約與 CROSS_AGENT_REQUEST](meeting-workbench-dual-audio.md)。
 
-以 [正式契約](meeting-workbench-contract.md) 為準。本文件列實作切點；目前已完成契約、前端 mock 預覽，以及以現有 session API 讀取真實會議歷史與兩份逐字稿。不得把 mock 預覽當成可錄會議或可執行辨識的功能。
+以 [正式契約](meeting-workbench-contract.md) 為準。本文件列實作切點；目前已完成契約、CLI 編排／持久來源／引擎接線、前端 mock 預覽，以及以現有 session API 讀取真實會議歷史與兩份逐字稿。不得把 mock 預覽當成正式 UI 錄音或辨識控制。CLI 會議功能維持實驗中。
 
 目前前端採分組導航：會議工作台使用淡藍色主題，歷史紀錄與內網共享子選單捲動到既有區塊，會議設定指向「開始一場會議」預覽區塊；本機設定為獨立頁面。切換頁面保留預覽表單與狀態，不啟停背景工作或關閉分享。本次導航調整未新增會議設定持久化、會議摘要選單或引擎。課堂總結方式沿用 PR #53 的上游選取契約；詳見 [工作台 UI 契約](../ui/WORKBENCH.md)。
 
@@ -15,21 +15,21 @@
 | 現有位置 | 已有行為 | 必要變動及驗證 |
 | --- | --- | --- |
 | `core/config.py`、`config/default.toml` | 已提供 work type、獨立 meetings 設定與 diarization 驗證；課堂 `load()` 行為保留 | 執行編排沿用已驗證的設定；保持同名課堂／會議隔離 |
-| `core/cli.py` | `lec run` 同步執行；`status --json` 查單一鎖；會議列表與設定查詢已提供 | 待加 `meeting run`／`meeting diarize` 與 JSON/exit contract；沒有引擎時不可宣稱辨識成功 |
-| `core/session.py` | 建課堂 session、轉錄後可總結；使用 stop 檔輪詢 | meeting 跳過 LLM、來源保存、會後辨識工作；正常停與強停按契約區分 |
-| `core/status.py` | status/run schema 2、event schema 1；持有整段工作的 OS 鎖，四行程競跑測試 | 接線時供 meeting run/diarize 共用；實際引擎取消仍待整合驗證 |
-| `core/transcribe.py` | ffmpeg 16 kHz mono、VAD、whisper、原稿/SRT；`keep_recording` 可關 | 由 Claude 製作持久來源與帶音訊時間戳之重新轉錄介面；禁止字數或 OpenCC 字元位置對齊 |
-| `core/diarize.py`（新）、`core/diarize_worker.py`（新） | 已實作 `diarize_session`；詳見下方「引擎層現況」 | 接 CLI 執行／設定映射／狀態檔屬 Codex；品質門檻值待乾淨樣本 |
-| `core/servers.py` | whisper/llama server | 由 Claude 確認辨識期 server 生命週期，不能影響課堂 |
+| `core/cli.py` | 課堂與會議工作同步執行；會議列表、設定查詢與 JSON/exit contract 已提供 | 正式 UI 控制待品質驗收；沒有引擎時回明確失敗 |
+| `core/session.py` | 會議跳過 LLM、保存來源、編排會後辨識；沿用 stop 檔 | 正常停／強停已有契約測試，真實錄音硬體驗收待完成 |
+| `core/status.py` | status/run schema 2、event schema 1；持有整段工作的 OS 鎖，四行程競跑測試 | meeting run/diarize 已共用；實際硬體取消仍待驗收 |
+| `core/transcribe.py` | ffmpeg 16 kHz mono、VAD、whisper、原稿/SRT；`keep_recording` 可關 | CLI 編排持久來源；引擎按音訊時間戳重新轉錄，禁止字數或 OpenCC 字元位置對齊 |
+| `core/diarize.py`（新）、`core/diarize_worker.py`（新） | 已實作 `diarize_session`；詳見下方「引擎層現況」 | CLI 執行／設定映射／狀態檔已由 Codex 接線；品質門檻值待乾淨樣本 |
+| `core/servers.py` | whisper/llama server | CLI 已沿用 WhisperServer 管理辨識期生命週期，課堂流程不變 |
 | `ui/backend/{app,schemas,session_store,process_control,upload_store}.py` | 課堂 API、upload staging、schema 1 reader 相容、會議雙稿唯讀與 SSE | 待加會議設定 store、執行 API 與來源保存前置處理 |
 | `ui/frontend/src/{App.tsx,types.ts}` | 雙工作台導航、跨頁提示、會議歷史／雙稿與進度讀取；控制仍為預覽 | 待以正式執行 API 取代錄音／辨識 mock；Phase 保留 string 降級 |
 
 ## 切分為可 review 的里程碑
 
 1. **已完成：契約、mock 前端及唯讀分享銜接。** 新增規格與 meeting 預覽元件；示範狀態控制只改 React 本地狀態，錄音按鈕 disabled。既有內網分享可選擇真實 `work_type=meeting` session，訪客讀取原逐字稿及目前 generation 的帶代號稿。課堂分享、CLI、設定、錄音與辨識流程不改。測 10/4 折疊、進度、兩類分享文件及下載隔離。
-2. **Codex 契約底層：部分完成。** work type、會議設定查詢、目錄命名、status schema 2 與原子鎖已提供；來源 metadata 與會議執行 CLI 仍待實作。先以假辨識器測 error/cancel/retry 與原子輸出，不導入模型。檔案所有權與跨界變更遵循 [CLAUDE.md](../CLAUDE.md)／[CODEX.md](../CODEX.md)；文件和 contract tests 與程式同 PR。
+2. **Codex 契約底層：CLI 編排完成。** work type、會議設定查詢、目錄命名、status schema 2、原子鎖、來源 metadata 與會議執行 CLI 已提供。使用假辨識器驗證 error/cancel/retry 與原子輸出；真實品質仍待驗收。檔案所有權與跨界變更遵循 [CLAUDE.md](../CLAUDE.md)／[CODEX.md](../CODEX.md)；文件和 contract tests 與程式同 PR。
 3. **Claude 引擎已封裝，品質驗收待完成。** 已提供 `diarize_session` 封裝與時間戳產物；仍須以乾淨的約十人中文加英文術語錄音驗證 diarization。原始受損錄音的 20.2% 遺失不能作準確度通過標準。模型缺失、錯誤、取消均要可測；不得依賴 torch、numpy、網路服務。
-4. **Codex API 與真資料 UI：唯讀完成，控制待接線。** 現有 session store 已能讀雙稿；前端歷史與結果現讀真實 meeting session，session SSE 在帶代號稿新增或切換 generation 時發 `speaker_transcript` content event，status schema 2 的會後階段進度可顯示在會議頁與跨頁提示。會議設定、錄音／匯入、辨識、重跑與取消 API 仍待底層執行 CLI 與來源保存落地。移除其 mock 前須有對應 API contract tests；UI 不 import `core`。
+4. **Codex API 與真資料 UI：唯讀完成，控制待接線。** 現有 session store 已能讀雙稿；前端歷史與結果現讀真實 meeting session，session SSE 在帶代號稿新增或切換 generation 時發 `speaker_transcript` content event，status schema 2 的會後階段進度可顯示在會議頁與跨頁提示。底層執行 CLI 與來源保存已落地；會議設定、錄音／匯入、辨識、重跑與取消 API 仍待品質驗收後接線。移除其 mock 前須有對應 API contract tests；UI 不 import `core`。
 5. **整合與硬體驗收。** 兩平台 beta 仍用實驗中措辭；Linux 實機錄音與匯入皆測、跨頁不中止、暫存清理後重跑、長任務進度、10/4 顯示、兩行程搶鎖、Ctrl+C/stop/stop_force。完成前不可宣稱會議功能可用。
 
 ## 契約檢查點
@@ -45,7 +45,7 @@
 ## 引擎層現況（Claude）
 
 `core/diarize.py` 已提供契約的 `diarize_session(request, progress=None, cancel=None) -> DiarizationResult`，
-**尚未由 CLI／UI 編排執行**；設定查詢與驗證已提供，執行時的設定映射及狀態接線仍由 Codex 依下列介面完成。**辨識準確度尚未驗證**，
+**已由 CLI 編排執行，正式 UI 控制尚未接入**；CLI 啟動／收尾 WhisperServer、保存來源與請求紀錄，並映射進度、錯誤及取消。**辨識準確度尚未驗證**，
 唯一可用的真實會議錄音有 20.2% 音訊遺失（見 [platform-macos.md](platform-macos.md)「擷取掉音訊」），不能當通過依據。
 
 **呼叫端要知道的事**
@@ -70,7 +70,7 @@
   `diarization.current.json`。重跑建立新 generation，不改舊的、不改原稿與來源。
   `DiarizationResult` 回傳 generation、requested／actual、各代號有聲秒數與三個 session 相對路徑。
 - `diarization.request.json`（契約要求每次辨識另存的請求紀錄）**不是引擎層寫的**：參數與模型雜湊
-  在 `speakers.json` 的 `engine` 欄位已有；編排層仍須依正式契約另存請求紀錄，目前尚未接線。
+  在 `speakers.json` 的 `engine` 欄位已有；CLI 編排層已依正式契約另存請求紀錄。
 
 **依賴與行程**
 
@@ -137,3 +137,41 @@ UI 不會漏看。開始時兩路都必須成功開啟，否則整個不開始�
 - 檔案所有權與共用檔案規則以 [CLAUDE.md](../CLAUDE.md)／[CODEX.md](../CODEX.md) 為準；跨所有權變更走 CROSS_AGENT_REQUEST，跨層整合測試依被斷言的契約分工。
 - 模型取得、授權標示與版本鎖見 [安裝說明](diarize-install.md)；各平台安裝驗證與採用方案的品質仍待乾淨錄音確認。
 - 引擎已使用 `diarization.current.json` 原子切換 generation，session／分享 reader 已讀取 manifest 指定的帶代號稿；取消或失敗保留上一版成功產物。後續編排須延續此契約，並補上執行入口層的失敗／重跑驗證，不能改為逐一 rename 兩個最終檔。
+
+
+## CLI 編排里程碑（Codex）
+
+- `lec meeting run <id> --speakers N [--file PATH] [--source ID] [--set k=v] [--json]`：
+  原子配置新 session，強制保留來源、停用摘要，匯入先複製／驗證再轉錄，錄音先驗完整性再保存 `source_audio.ogg`。
+- `lec meeting diarize <session-path> --speakers N [--set diarization.k=v] [--json]`：
+  驗來源 metadata／大小／SHA-256，保存請求與模型雜湊，管理 WhisperServer，呼叫 `diarize_session`。
+- 兩工作與課堂共用 `run.lock`，忙碌 exit 3。status/run 保持 schema 2、events 保持 schema 1；進度新增
+  `diarization_progress`，取消新增 `diarization_cancelled`。來源、JSON／exit、停止與欄位格式見正式契約的「CLI 落地格式與操作」。
+- Automated／Mock contract tests：`python3 -m unittest tests.test_session_meeting -v`。
+  包含 JSON 0／1／2／3／130、兩真實 CLI 行程搶鎖、stop／stop_force／Ctrl+C、匯入失敗、來源雜湊、
+  capture integrity、所有引擎錯誤代碼、請求紀錄、進度及保留上一版結果。
+- 正式 UI 寫入 API 與控制沒有啟用。品質門檻、真實辨識準確度、Linux／Mac／Windows 錄音硬體驗收仍待 Claude 與 maintainer 驗證。
+
+
+### PR #95 審核修正
+
+匯入取消與現場正常停止分開收尾；辨識保留原錄音的時間／長度／原稿指標。
+歷史以原工作的 phase 事件呈現原稿結果，以可選的 `diarization_status` 顯示最近辨識結果；
+已驗證 `source_audio.*` 納入 `has_recording`，不再依賴會議原本的 recording 檔名。
+status schema 不擴張，正式 UI 控制仍停用。收尾錯誤必釋放鎖並回作業錯誤；manifest 發布後晚到的強停不逆轉完成。
+設定快照優先、長音檔解碼 timeout 與雙重雜湊檢查詳見正式契約「歷史、辨識結果與取消競態」。
+新增 Automated／Mock tests 覆蓋匯入 stop／SIGINT、辨識成功／失敗／取消的歷史、收尾寫入失敗、
+manifest 發布競態、來源 symlink／竄改、HTTP 唯讀 response 及前端原稿／辨識結果並存。
+
+
+### PR #95 第二輪審核修正（A–D）
+
+- A：UI `has_recording` 改為 metadata／路徑／檔案大小的顯示檢查，不開啟來源音檔、不驗內容雜湊；
+  完整性由正式辨識入口及引擎把關。session API／SSE 的磁碟讀取移至執行緒。同大小竄改測試改為顯示 true，並保留大小錯誤／symlink／越界／缺檔的 false 測試。
+- B：已有主錯誤時，收尾錯誤只附加 session.log，不取代主錯誤；成功後收尾失敗仍回 exit 1。
+- C：收尾停用 stop 檔 watcher，但第二次 Ctrl+C 可快速退出並回收本次擁有的 server、鎖及 signal handler。
+  process exit 130 不撤銷已決定的結果；完成仍呈現 done，不另發 aborted。語義詳見正式契約。
+- D：選擇 close 失敗僅記 log，保留已發布 terminal phase／envelope／exit code。
+
+Automated／Mock tests 使用真實子行程模擬 30 秒收尾阻塞，兩次 SIGINT 後須於 3 秒內退出、保留單一 terminal phase；
+另驗證原錯誤優先、close 失敗一致性、UI 不讀取音檔及 API／SSE 讀取執行緒。未變更引擎介面或狀態檔 schema，會議仍為實驗中。

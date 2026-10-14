@@ -327,7 +327,8 @@ class Config:
 
     @property
     def course_name(self):
-        return self.data["course"]["name"]
+        # The shared transcriber uses this display name for the original draft.
+        return self.meeting_name if self.work_type == "meeting" else self.data["course"]["name"]
 
     def whisper_model_path(self):
         name = self.data["whisper"]["model"]

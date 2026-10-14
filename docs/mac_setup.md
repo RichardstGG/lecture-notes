@@ -1,7 +1,7 @@
 # macOS 安裝
 
-狀態：**實驗中（beta）**。程式已支援 macOS（錄音用 AVFoundation、GPU 用 Metal），但幾乎沒有在真正的 Mac 上驗證過，
-請不要當成「已支援」。已知限制與實機驗證步驟見 [platform-macos.md](platform-macos.md)。
+狀態：**實驗中（beta）**。錄音用 AVFoundation 原生擷取、GPU 用 Metal。單一麥克風的課堂錄音已在 Apple Silicon 真機驗證（31 分鐘、無音訊遺失），
+其他行為大多只有 mock 與靜態驗證，請不要當成「已支援」。已知限制與實機驗證步驟見 [platform-macos.md](platform-macos.md)。
 
 需要：Homebrew、Python 3.11+、ffmpeg、git、cmake、Xcode Command Line Tools；用 Web UI 另需 Node.js 22.22+。
 
@@ -10,6 +10,17 @@
 > `echo 'setopt interactivecomments' >> ~/.zshrc && source ~/.zshrc`，之後就能連同註解一起貼上。
 
 ## 1. 系統套件
+
+先安裝 Xcode Command Line Tools（已經裝過會提示已安裝）：
+
+```bash
+xcode-select --install
+```
+
+它提供編譯引擎用的 C++ 編譯器，以及錄音需要的 `swiftc`：macOS 的即時錄音透過一支小型原生程式擷取麥克風，每次開始錄音時用 `swiftc` 編譯。
+缺少 `swiftc` 時即時錄音會直接失敗，`lec doctor` 也會顯示 FAIL。
+
+接著安裝其他套件：
 
 ```bash
 brew install python cmake ffmpeg opencc
