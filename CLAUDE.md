@@ -67,14 +67,14 @@ UI 的測試需要 `ui/backend/requirements.txt` 的 fastapi；沒安裝時 `tes
 ## 不可擅自改動的 public contract
 
 - **停止機制**：UI 與 `lec stop` 靠在輸出資料夾寫 `stop` / `stop_force` 檔（由程式輪詢），不是送 OS signal。三個平台一致，不要改成 signal。
-- **phase 名稱**：`starting → loading → recording/transcribing → summarizing → finishing → done/failed/aborted`
+- **phase 名稱**：課堂 `starting → loading → recording/transcribing → summarizing → finishing → done/failed/aborted`；會議錄音／匯入省略 summarizing，會後辨識為 `starting → loading → diarizing → finishing → done/failed/aborted`。
 - **設定合併順序**：`config/default.toml` → `config/local.toml`（本機，不進 git）→ `courses/<課名>.toml`（不進 git）→ 指令列（`--model` / `--source` / `--set 區塊.鍵=值`）
 - **UI 不得 import core**：只能讀寫設定檔、呼叫 `lec` 子指令（多半有 `--json`）、讀 `status.json` / `events.jsonl` / `run.json`
   - 反方向也要留意：平台偵測邏輯會因此在 `core/platform.py`（Claude）與 `ui/backend/share_network.py`（Codex，硬寫 Linux 的 `ip`）各有一份。改動其中一邊時確認另一邊。
 - **總結模型固定 Qwen3-8B**（`[models.*]` 設定驅動，不要在程式裡寫死模型清單）
 - CLI 指令與既有參數名稱、exit code、JSON/TOML schema 同樣算 contract，要改必須先說明現況、差異、相容性，並補 contract test。
 
-目前實際出貨的狀態：`status.json` / `run.json` writer 為 **schema 2**，`events.jsonl` 維持 **schema 1**。status 只新增 `work_type`、`stop_reason`、`diarization`，run 只新增 `work_type`；reader 相容 schema 1、不回寫舊檔。所有 mode 共用 `<state_dir>/run.lock` 的原子 OS 鎖與公開 `run.json`。課堂 phase 序列不變；`diarizing` 與進度事件已有狀態容器契約測試，但 meeting run/diarize 編排尚未接線。詳見 [鎖與狀態契約](docs/meeting-workbench-lock-status.md)。
+目前實際出貨的狀態：`status.json` / `run.json` writer 為 **schema 2**，`events.jsonl` 維持 **schema 1**。status 只新增 `work_type`、`stop_reason`、`diarization`，run 只新增 `work_type`；reader 相容 schema 1、不回寫舊檔。所有 mode 共用 `<state_dir>/run.lock` 的原子 OS 鎖與公開 `run.json`。課堂 phase 序列不變；`lec meeting run`／`lec meeting diarize` 已接持久來源、請求紀錄、`diarizing` 與進度／取消事件，會議 CLI 維持實驗中。正式 UI 寫入 API 與控制仍待辨識品質驗收。詳見 [鎖與狀態契約](docs/meeting-workbench-lock-status.md)。
 
 **文件優先順序**：`docs/meeting-workbench-contract.md` 規劃了 schema 2、`diarizing` phase、`mode=diarize` 與 `lec meeting *` 指令。經 maintainer 核准的契約文件優先於本檔上面這份清單，但**實作該變更的同一個 PR 必須同時更新本檔**，不要讓兩邊各說一套。還沒核准、或程式還沒跟上的部分，一律以上面這份清單為準。
 
