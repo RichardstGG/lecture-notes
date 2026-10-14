@@ -428,6 +428,39 @@ class MeetingSessionTests(unittest.TestCase):
                 code, payload = self.import_audio()
                 self.assertEqual((code, payload['error']['code']), (1, 'asr_failed'))
 
+    def test_cleanup_failure_preserves_primary_model_error_and_logs_secondary_error(self):
+        session = self.session()
+        self.seg.unlink()
+        with patch.object(MeetingDiarize, '_cleanup', side_effect=TypeError('secondary teardown error')):
+            code, payload = self.invoke(*self.diarize_args(session))
+        self.assertEqual((code, payload['error']['code']), (1, 'model_missing'))
+        status, _ = self.files(session)
+        self.assertTrue(status['last_error'].startswith('model_missing:'))
+        self.assertIn('TypeError: secondary teardown error', (session / 'session.log').read_text())
+        self.assertFalse((self.state / 'run.json').exists())
+        lock = RunLock(self.state)
+        self.assertIsNone(lock.acquire())
+        lock.release()
+
+    def test_close_failure_keeps_published_status_and_envelope_consistent(self):
+        original_close = Status.close
+        def close(status):
+            original_close(status)
+            raise OSError('final flush failure')
+        with patch.object(Status, 'close', close):
+            code, payload = self.import_audio()
+        self.assertEqual((code, payload['accepted'], payload['outcome']), (0, True, 'done'))
+        session = Path(payload['session'])
+        status, _ = self.files(session)
+        self.assertEqual(status['phase'], 'done')
+        self.assertIn('OSError: final flush failure', (session / 'session.log').read_text())
+        self.assertFalse((self.state / 'run.json').exists())
+        self.seg.unlink()
+        with patch.object(Status, 'close', close):
+            code, payload = self.invoke(*self.diarize_args(session))
+        self.assertEqual((code, payload['accepted'], payload['error']['code']), (1, False, 'model_missing'))
+        self.assertEqual(self.files(session)[0]['phase'], 'failed')
+
     def test_manifest_publication_wins_force_stop_before_and_after_engine_return(self):
         session = self.session()
         def engine(request, progress, cancel):
@@ -479,7 +512,8 @@ class MeetingSessionTests(unittest.TestCase):
 class MeetingProcessTests(unittest.TestCase):
     """Real processes/stop files and OS lock, fake audio engines."""
     SCRIPT = r'''
-import json, sys, time
+import json, sys, time, signal
+from types import SimpleNamespace
 from pathlib import Path
 from unittest.mock import patch
 from core import cli, config as C
@@ -493,8 +527,12 @@ class Whisper:
     url = 'http://127.0.0.1:8178'
     def __init__(self, cfg): pass
     def ensure(self, path): pass
-    def stop(self): pass
-    def kill_now(self): pass
+    def stop(self):
+        if operation.startswith('cleanup-'):
+            (root / 'entered-cleanup').touch()
+            time.sleep(30)
+    def kill_now(self):
+        (root / 'killed-owned-server').touch()
 class Transcriber:
     def __init__(self, cfg, session, url, source, status):
         self.session, self.status, self.source = session, status, source
@@ -506,18 +544,27 @@ class Transcriber:
             self.recording_path = self.session / 'recording_120000.ogg'
             self.recording_path.write_bytes(b'complete recording')
         (root / 'entered-run').touch()
-        while not self.stopped: time.sleep(.05)
+        while not self.stopped and operation != 'cleanup-run': time.sleep(.05)
         self.status.event('capture_integrity', lost_ratio=0)
         return dict(duration=12.5, ffmpeg_failed=False, capture=dict(lost_ratio=0),
                     aborted=self.source is not None and self.stopped)
 def diarize(request, progress, cancel):
+    if operation == 'cleanup-diarize':
+        (request.session_dir / 'diarization.current.json').write_text(json.dumps(dict(schema_version=1, generation='0001')))
+        return SimpleNamespace(actual_speakers=1, duration_seconds=12.5)
     (root / 'entered-diarize').touch()
     while not cancel(): time.sleep(.05)
     raise DiarizationCancelled()
-with patch('core.session.WhisperServer', Whisper), patch('core.session.Transcriber', Transcriber), \
+real_signal = signal.signal
+def restore_signal(sig, handler):
+    result = real_signal(sig, handler)
+    if sig == signal.SIGINT and handler == signal.default_int_handler and (root / 'entered-cleanup').exists():
+        (root / 'restored-signal').touch()
+    return result
+with patch('signal.signal', restore_signal), patch('core.session.WhisperServer', Whisper), patch('core.session.Transcriber', Transcriber), \
      patch('core.session.source_duration', return_value=12.5), patch('core.diarize.diarize_session', diarize):
-    args = ['meeting', 'run', 'team'] if operation in ('run', 'import') else ['meeting', 'diarize', str(root / 'session')]
-    if operation == 'import': args += ['--file', str(root / 'input.ogg')]
+    args = ['meeting', 'run', 'team'] if operation in ('run', 'import', 'cleanup-run') else ['meeting', 'diarize', str(root / 'session')]
+    if operation in ('import', 'cleanup-run'): args += ['--file', str(root / 'input.ogg')]
     sys.exit(cli.main([*args, '--speakers', '2', '--json']))
 '''
 
@@ -632,6 +679,38 @@ with patch('core.session.WhisperServer', Whisper), patch('core.session.Transcrib
                 self.assertEqual(source.read_bytes(), (root / 'input.ogg').read_bytes())
                 self.assertEqual(metadata['kind'], 'import')
                 self.assertFalse((root / 'state' / 'run.json').exists())
+    def test_two_sigints_end_stalled_cleanup_without_reversing_completed_work(self):
+        import signal
+        for operation in ('cleanup-run', 'cleanup-diarize'):
+            with self.subTest(operation=operation), tempfile.TemporaryDirectory() as tmp:
+                root = Path(tmp)
+                self.setup_root(root)
+                proc = self.start(root, operation)
+                self.wait_path(root / 'entered-cleanup')
+                active = json.loads((root / 'state' / 'run.json').read_text())
+                session = Path(active['session'])
+                (session / 'stop_force').touch()  # Teardown uses Ctrl+C, not the stopped watcher.
+                proc.send_signal(signal.SIGINT)
+                time.sleep(.15)  # Prevent POSIX from coalescing two pending signals.
+                self.assertIsNone(proc.poll())
+                started = time.monotonic()
+                proc.send_signal(signal.SIGINT)
+                stdout, stderr = proc.communicate(timeout=3)
+                self.assertLess(time.monotonic() - started, 3)
+                self.assertEqual(stderr, '')
+                payload = json.loads(stdout)
+                self.assertEqual((proc.returncode, payload['accepted'], payload['outcome']), (130, True, 'done'))
+                status = json.loads((session / 'status.json').read_text())
+                self.assertEqual(status['phase'], 'done')
+                phases = [json.loads(line)['phase'] for line in (session / 'events.jsonl').read_text().splitlines()
+                          if json.loads(line)['type'] == 'phase']
+                self.assertEqual([phase for phase in phases if phase in ('done', 'failed', 'aborted')], ['done'])
+                self.assertTrue((root / 'killed-owned-server').exists())
+                self.assertTrue((root / 'restored-signal').exists())
+                self.assertFalse((root / 'state' / 'run.json').exists())
+                if operation == 'cleanup-diarize':
+                    self.assertEqual(json.loads((session / 'diarization.current.json').read_text())['generation'], '0001')
+
 
 
 class SourceDurationTests(unittest.TestCase):

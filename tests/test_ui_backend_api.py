@@ -4,6 +4,7 @@ import importlib.util
 import json
 import hashlib
 import tempfile
+import threading
 import tomllib
 import unittest
 from pathlib import Path
@@ -710,6 +711,29 @@ class BackendApiTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(response.status_code, 200)
         self.assertEqual(response.json()["transcript"]["content"], "first\n")
         self.assertEqual(response.json()["notes"]["content"], "note\n")
+
+    async def test_session_filesystem_reads_run_outside_event_loop_thread(self):
+        session = self.make_session()
+        loop_thread = threading.get_ident()
+        store = self.app.state.sessions
+        original_get, original_list = store.get, store.list
+        def get(session_id):
+            self.assertNotEqual(threading.get_ident(), loop_thread)
+            return original_get(session_id)
+        def list_sessions():
+            self.assertNotEqual(threading.get_ident(), loop_thread)
+            return original_list()
+        class ConnectedRequest:
+            async def is_disconnected(self): return False
+        with patch.object(store, 'get', side_effect=get), patch.object(store, 'list', side_effect=list_sessions):
+            self.assertEqual((await self.request('GET', '/api/v1/sessions')).status_code, 200)
+            self.assertEqual((await self.request('GET', f'/api/v1/sessions/{session.name}')).status_code, 200)
+            events = _session_events(ConnectedRequest(), store, session.name, 0.001)
+            try:
+                self.assertIn('event: snapshot', await anext(events))
+                self.assertIn('heartbeat', await anext(events))
+            finally:
+                await events.aclose()
 
     async def test_meeting_history_keeps_capture_and_exposes_latest_diarization(self):
         session = self.make_session('meetings/review')

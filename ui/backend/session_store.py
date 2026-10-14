@@ -1,6 +1,5 @@
 """Read-only access to completed and active session files."""
 import json
-import hashlib
 import math
 import re
 import tomllib
@@ -135,7 +134,7 @@ class SessionStore:
         return None
 
     def _meeting_source(self, path):
-        """Validate saved source metadata/hash without importing core or decoding."""
+        """Display availability only; execution validates the actual audio hash."""
         metadata = _read_json(path / "source.json")
         name, size, digest = (metadata.get(key) for key in ("path", "size_bytes", "sha256"))
         duration = metadata.get("duration_seconds")
@@ -157,11 +156,6 @@ class SessionStore:
             stat = source.stat()
             if stat.st_size != size:
                 return None
-            # Hash every read: same-size writes can share filesystem timestamps,
-            # so a size/mtime/ctime cache cannot prove source integrity.
-            with source.open("rb") as stream:
-                if hashlib.file_digest(stream, "sha256").hexdigest() != digest:
-                    return None
             return metadata
         except OSError:
             return None

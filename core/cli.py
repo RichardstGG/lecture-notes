@@ -227,7 +227,8 @@ def cmd_meeting(args):
         emit(_meeting_error("write_failed", "無法讀寫會議設定"))
         return 1
 
-    job.on_force = lambda: emit(accepted())
+    job.on_force = lambda: emit(_meeting_error(job.error_code, job.error_message)
+                                if job.outcome == "failed" else accepted())
     try:
         # Engine log output can include ASR text. JSON jobs keep it in local
         # session logs, and emit only the public envelope on stdout.

@@ -544,7 +544,14 @@ class _MeetingJob(_Base):
         super()._install_signals()
 
     def _on_signal(self, signum, frame):
-        if self.stage == "cleanup" or self._has_published_diarization():
+        if self.stage == "cleanup":
+            if signum is None:
+                return
+            self.presses += 1
+            if self.presses > 1:
+                self._force_cleanup_exit()
+            return
+        if self._has_published_diarization():
             return
         self.presses += 1
         if self.presses > 1:
@@ -570,7 +577,7 @@ class _MeetingJob(_Base):
                 and isinstance(current.get("generation"), str))
 
     def _force_exit(self):
-        if self._has_published_diarization():
+        if self.stage == "cleanup" or self._has_published_diarization():
             return
         # During segmentation the engine owns a detached worker. Let its cancel
         # poll kill/reap that worker before releasing the shared lock. Killing
@@ -608,6 +615,49 @@ class _MeetingJob(_Base):
         # Release only after publishing the final status/envelope.
         self.lock.release()
         os._exit(130)
+
+    def _log_cleanup_error(self, exc):
+        # Secondary diagnostics stay local; never replace the primary error or
+        # print private engine/ASR exception text in a CLI envelope or stderr.
+        try:
+            with (self.dir / "session.log").open("a", encoding="utf-8") as stream:
+                stream.write(f"[{now_iso()}] cleanup: {type(exc).__name__}: {exc}\n")
+        except OSError:
+            pass
+
+    def _force_cleanup_exit(self):
+        """Two interrupts stop teardown, preserving the already decided result."""
+        terminal = self.status.get("phase") if self.status else None
+        if terminal in ("done", "failed", "aborted"):
+            self.outcome = terminal
+        elif self._has_published_diarization():
+            self.outcome = "done"
+        try:
+            for srv in (self.whisper, self.llama):
+                if srv:
+                    try:
+                        srv.kill_now()  # ManagedServer kills only its owned PID.
+                    except Exception as exc:
+                        self._log_cleanup_error(exc)
+            if self.status and terminal != self.outcome:
+                if terminal != "finishing":
+                    self.status.phase("finishing")
+                self.status.phase(self.outcome)
+            if self.on_force:
+                self.on_force()
+        finally:
+            try:
+                self.lock.release()
+            finally:
+                for sig, previous in self._old_signals.items():
+                    try:
+                        signal.signal(sig, previous)
+                    except Exception as exc:
+                        self._log_cleanup_error(exc)
+                try:
+                    log.close()
+                finally:
+                    os._exit(130)
 
     def _poll_cancel(self):
         if self._has_published_diarization():
@@ -669,6 +719,7 @@ class _MeetingJob(_Base):
             code = 1
             self.error_code, self.error_message = "asr_failed", "會議作業發生未預期錯誤"
         finally:
+            self.outcome = "aborted" if code == 130 else ("done" if code == 0 else "failed")
             self.stage = "cleanup"
             code = self._finalize(code)
         return code
@@ -678,8 +729,11 @@ class _MeetingJob(_Base):
         def failure(exc):
             nonlocal code
             code = 1
-            self.error_code = "write_failed" if isinstance(exc, OSError) else "asr_failed"
-            self.error_message = "會議作業收尾失敗"
+            if not self.error_code:
+                self.error_code = "write_failed" if isinstance(exc, OSError) else "asr_failed"
+                self.error_message = "會議作業收尾失敗"
+            else:
+                self._log_cleanup_error(exc)
 
         def attempt(action):
             try:
@@ -711,7 +765,12 @@ class _MeetingJob(_Base):
                 # a failed snapshot without invoking the failed phase hook.
                 if code == 1:
                     attempt(lambda: self.status.update(phase="failed", last_error=f"{self.error_code}: {self.error_message}"))
-                attempt(self.status.close)
+                try:
+                    self.status.close()
+                except Exception as exc:
+                    # The terminal phase is already public. A failed final flush
+                    # is diagnostic only; do not contradict its result/envelope.
+                    self._log_cleanup_error(exc)
         finally:
             try:
                 self.lock.release()

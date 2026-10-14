@@ -105,7 +105,7 @@ class SessionStoreTests(unittest.TestCase):
         (session / 'source.json').write_text(json.dumps(metadata))
         return session, metadata
 
-    def test_meeting_source_sets_has_recording_with_safe_metadata_and_hash(self):
+    def test_meeting_source_availability_does_not_claim_content_integrity(self):
         for kind in ('recording', 'import'):
             with self.subTest(kind=kind):
                 if (self.output / 'meetings' / 'one').exists():
@@ -113,9 +113,26 @@ class SessionStoreTests(unittest.TestCase):
                     shutil.rmtree(self.output / 'meetings' / 'one')
                 session, metadata = self.make_meeting(kind)
                 self.assertTrue(self.store.get('meetings/one')['session']['has_recording'])
-                # A same-size mutation must be detected, even on coarse timestamps.
+                # Display availability intentionally accepts same-size mutations.
+                # verify_meeting_source and inference enforce content integrity.
                 (session / 'source_audio.ogg').write_bytes(b'x' * metadata['size_bytes'])
+                self.assertTrue(self.store.get('meetings/one')['session']['has_recording'])
+                (session / 'source_audio.ogg').write_bytes(b'wrong size')
                 self.assertFalse(self.store.get('meetings/one')['session']['has_recording'])
+
+    def test_meeting_get_and_list_never_open_or_hash_source_audio(self):
+        session, _ = self.make_meeting()
+        source = session / 'source_audio.ogg'
+        real_open = Path.open
+        def open_file(path, *args, **kwargs):
+            if path == source:
+                self.fail('UI must not open source audio')
+            return real_open(path, *args, **kwargs)
+        with patch('hashlib.file_digest') as digest, patch('hashlib.sha256') as sha, patch.object(Path, 'open', open_file):
+            self.assertTrue(self.store.get('meetings/one')['session']['has_recording'])
+            self.assertTrue(self.store.list()[0]['has_recording'])
+        digest.assert_not_called()
+        sha.assert_not_called()
 
     def test_meeting_recording_rejects_symlinks_missing_and_invalid_source(self):
         session, metadata = self.make_meeting()
@@ -129,7 +146,7 @@ class SessionStoreTests(unittest.TestCase):
         source.unlink()
         self.assertFalse(self.store.get('meetings/one')['session']['has_recording'])
         source.write_bytes(original)
-        for change in ({'path': '../external.ogg'}, {'sha256': '0' * 64}, {'size_bytes': True},
+        for change in ({'path': '../external.ogg'}, {'sha256': 'invalid hash format'}, {'size_bytes': True},
                        {'schema_version': True}, {'requested_speakers': True}):
             with self.subTest(change=change):
                 (session / 'source.json').write_text(json.dumps({**metadata, **change}))
