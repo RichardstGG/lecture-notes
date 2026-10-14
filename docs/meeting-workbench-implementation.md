@@ -151,3 +151,14 @@ UI 不會漏看。開始時兩路都必須成功開啟，否則整個不開始�
   包含 JSON 0／1／2／3／130、兩真實 CLI 行程搶鎖、stop／stop_force／Ctrl+C、匯入失敗、來源雜湊、
   capture integrity、所有引擎錯誤代碼、請求紀錄、進度及保留上一版結果。
 - 正式 UI 寫入 API 與控制沒有啟用。品質門檻、真實辨識準確度、Linux／Mac／Windows 錄音硬體驗收仍待 Claude 與 maintainer 驗證。
+
+
+### PR #95 審核修正
+
+匯入取消與現場正常停止分開收尾；辨識保留原錄音的時間／長度／原稿指標。
+歷史以原工作的 phase 事件呈現原稿結果，以可選的 `diarization_status` 顯示最近辨識結果；
+已驗證 `source_audio.*` 納入 `has_recording`，不再依賴會議原本的 recording 檔名。
+status schema 不擴張，正式 UI 控制仍停用。收尾錯誤必釋放鎖並回作業錯誤；manifest 發布後晚到的強停不逆轉完成。
+設定快照優先、長音檔解碼 timeout 與雙重雜湊檢查詳見正式契約「歷史、辨識結果與取消競態」。
+新增 Automated／Mock tests 覆蓋匯入 stop／SIGINT、辨識成功／失敗／取消的歷史、收尾寫入失敗、
+manifest 發布競態、來源 symlink／竄改、HTTP 唯讀 response 及前端原稿／辨識結果並存。

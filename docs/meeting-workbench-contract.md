@@ -105,14 +105,14 @@ lec meeting diarize outputs/meetings/team_20261014_143000 --speakers 3 --json
 
 `--speakers` 必填且為 1..30 的整數，優先於 `--set diarization.num_speakers`。
 run 的 `--set` 沿用會議設定驗證；diarize 僅允許 `diarization.*`，沿用錄音時快照的會議、轉錄與辨識設定，
-再套本次覆寫。鎖的位置採目前 default/local 設定的 `paths.state_dir`，確保 `lec status`／`lec stop` 查到同一項工作。
+再套本次覆寫。錄音後修改 `local.toml` 的模型路徑或閾值不覆蓋 session 快照；要更換請用 `--set diarization.<key>=<value>`，`meeting diarize --help` 也列此規則。鎖的位置採目前 default/local 設定的 `paths.state_dir`，確保 `lec status`／`lec stop` 查到同一項工作。
 `audio.capture_mode=dual` 的錄音入口仍拒絕，能力查詢不變。課堂指令與課堂來源保存行為不變。
 
 `source.json` schema 1 的實際欄位：`kind`、`original_name`（只供顯示）、`path`（session 內的 `source_audio.<ext>`）、
 `size_bytes`、`sha256`（小寫十六進位）、`duration_seconds`、`created_at`（含時區 ISO 8601）、`requested_speakers`。
 匯入先以暫存檔和原子 rename 複製，完整解碼檢查後發布 metadata，再啟動轉錄。錄音先通過 capture integrity，
 再 rename 為 `source_audio.ogg`，完整解碼與雜湊完成後才發布 metadata；未能驗證的強停錄音不發布 `source.json`。
-完整性未知或掉音訊達引擎錯誤門檻會失敗（`source_incomplete`）。匯入已保存完整來源時，即使轉錄失敗／取消，來源仍可重跑。
+完整性未知或掉音訊達引擎錯誤門檻會失敗（`source_incomplete`）。完整解碼的 timeout 為 `max(120, duration_seconds * 2)` 秒，隨音長增加，不以固定 120 秒限制長會議。匯入已保存完整來源時，即使轉錄失敗／取消，來源仍可重跑。
 
 `diarization.request.json` 使用 `schema_version=1`、`spec_version=1`、`created_at`，以及 `DiarizationRequest` 的實際欄位：
 `session_dir`、`source_audio`、`source_sha256`、`meeting_name`、`requested_speakers`、兩個模型絕對路徑、
@@ -125,6 +125,36 @@ JSON 工作開始且正常完成時 exit 0、`accepted:true,outcome:"done"`；�
 `accepted:true,outcome:"aborted"`（接受的是作業，outcome 表示結果）；尚未配置 session 就取消則 `accepted:false,error.code="cancelled"`。參數／設定錯誤 exit 2、忙碌 exit 3、
 作業失敗 exit 1，均使用 `accepted:false,error:{code,message}`。引擎錯誤 code 保留在 error 和 status `last_error`。
 JSON 模式只輸出一個 envelope，不把 ASR 文字寫入 stdout/stderr；完整逐字稿及本機 session log 留在 session。
-Ctrl+C 與 stop 使用相同語義：正常停止錄音完成原稿與來源，exit 0；辨識取消 exit 130 並保留上一個 generation。
+Ctrl+C 與 stop 使用相同語義：正常停止現場錄音完成原稿與來源，exit 0；匯入轉錄丟棄剩餘內容時則為 aborted／exit 130，已驗證來源仍保留。辨識取消 exit 130 並保留上一個 generation。
 辨識強停會立即發布 aborted 並關閉由本次作業擁有的 WhisperServer；分群階段由取消輪詢終止／回收 worker 後釋放鎖，重新轉錄階段直接終止 CLI。
 不得只退出 CLI 而留下推論行程。staging 清理依引擎取消安全點完成，非續跑。
+
+
+### 歷史、辨識結果與取消競態
+
+辨識作業建立新的 status writer 時，沿用原 session 的 `started_at`、`elapsed`、`transcribed`、`transcribe_lag`、
+`sections_total`、`sections_summarized`、`input_file`，保留錄音／匯入的時間和原稿指標。
+`status.json` 的 `mode`、`phase`、`stop_reason`、`last_error`、`diarization` 仍描述最近一次工作，
+所以 `lec status --json`／status SSE 在辨識期間仍回報 `mode=diarize`、`diarizing` 及進度。
+本次未新增 status/run/events 欄位或事件種類，schema 2／2／1 不變；當次作業開始時間仍由 `run.json.started_at` 記錄。
+
+會議的唯讀 session API 不再以辨識作業的 terminal phase 判定原稿是否完成：`mode=diarize` 時，
+歷史摘要的 `phase` 取既有 `events.jsonl` 中原錄音／匯入第一個 terminal phase，`mode` 取
+`source.json.kind` 對應的 live/file；原稿已取消仍顯示 aborted，不因來源與部分原稿存在就猜成 done。
+缺少原工作 phase 事件時以 null 表示未知，不猜完成。會議來源 metadata 的格式、大小及 SHA-256 通過檢查，
+且 metadata／來源均非 symlink 時，`has_recording=true`；課堂仍沿用 `recording_*.ogg` 規則。
+UI reader 每次以串流計算 SHA-256；不依賴大小／時間戳快取，避免同大小且同時間戳刻度的來源變更被漏判。
+
+API version 1 的會議摘要新增可選 `diarization_status={phase,stop_reason,last_error,diarization}`，
+取自既有 status 欄位，讓歷史同時顯示原稿完成狀態與最近辨識完成／失敗／取消。課堂及尚未辨識的 session 不帶此欄位；
+舊 reader 可忽略附加欄位。正式 UI 寫入 API／控制仍未啟用，唯讀歷史可顯示這個結果。
+
+辨識 manifest 的原子切換是產物發布點：已切換 `diarization.current.json` 或引擎已成功返回後，
+晚到的 Ctrl+C／stop_force 不再把完成結果改成 aborted，成功作業維持 done／exit 0。
+呼叫端比較本次執行前後的 manifest，涵蓋原子切換至成功返回之間的短暫區間；發布前取消仍沿既有 aborted 語義。
+編排層 `verify_meeting_source` 與引擎 `_validate` 各自計算 SHA-256 是刻意保留的兩道邊界檢查，
+後者再次偵測驗證到推論之間的來源變更，未修改引擎介面。
+
+收尾的 status 寫入與 cleanup 各自防護，任一失敗回作業錯誤 exit 1；鎖釋放與 signal 還原不依賴前面的 status 寫入成功。
+CLI 僅在參數／設定載入階段把欄位型別錯誤歸類為 input_invalid，工作中的非預期錯誤不回 exit 2。
+設定錯誤 message 只列出可辨識的鍵名，不回吐設定值、音訊文字或憑證。
