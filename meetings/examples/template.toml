@@ -1,5 +1,7 @@
-# 會議設定（實驗中）：複製成 meetings/<id>.toml；不使用 courses/。
-# 目前提供設定查詢，錄音／匯入／會後辨識 CLI/API 仍待後續接線。
+# 會議設定（實驗中）：複製成 meetings/<id>.toml（個人設定不進 git）；不使用 courses/。
+# 錄音／匯入：lec meeting run <id> --speakers N [--file 音檔]
+# 會後辨識：lec meeting diarize <session 資料夾> --speakers N
+# 目前只有 CLI；正式 UI 控制尚未開放，雙來源錄音入口仍停用。
 [meeting]
 name = ""
 
