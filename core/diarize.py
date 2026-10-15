@@ -38,7 +38,7 @@ from pathlib import Path
 from typing import NamedTuple
 
 from . import platform as P
-from .transcribe import HALLUCINATIONS, _multipart, normalize_punct
+from .transcribe import FRAME_BYTES, HALLUCINATIONS, _multipart, frame_rms, normalize_punct
 from .util import opencc_available, opencc_convert
 
 SR = 16000
@@ -47,6 +47,12 @@ ENGINE_NAME = "sherpa-onnx"
 SHERPA_ONNX_VERSION = "1.13.8"     # 已實測的版本；升級要重跑 tests/test_diarize_*.py
 MAX_SPEAKERS = 30
 UNASSIGNED = "S00"
+# 單次送 whisper 的音訊上限（秒，含 pad）。whisper 一次只看 30 秒；更長的音訊會被
+# whisper-server 自己分窗、並把前一窗的文字當條件。8 分鐘樣本裡一段 70.8 秒的區間
+# 實測被解成 byte-level 錯字（「，」→「Ｂ」）、吐出無效 UTF-8，還在字中間斷句。
+# 課堂流程靠 VAD 把段落壓在 [vad].max_chunk = 30 秒內，這裡留 2 秒餘裕。
+MAX_ASR_SECONDS = 28.0
+_PAUSE_FRAMES = 10      # 切點找最安靜的 10 × 30ms = 300ms
 
 APP_ROOT = Path(__file__).resolve().parent.parent
 WORKER = Path(__file__).with_name("diarize_worker.py")
@@ -103,6 +109,7 @@ class DiarizationRequest:
     merge_gap: float = 1.0     # 相鄰同代號區間間隔 <= 此值就併成一次轉錄
     pad: float = 0.15          # 切段前後各留一點，避免咬掉字頭字尾
     min_turn_seconds: float = 0.25   # 短於此的區間不送 whisper（送了只會拿到幻覺）
+    max_asr_seconds: float = MAX_ASR_SECONDS  # 更長的區間在最安靜處切開再送；[1, 30]
     opencc: bool = True
     python: Path | None = None       # 指定跑分群的直譯器；預設自動尋找
     unassigned_confidence_floor: float | None = None
@@ -427,6 +434,9 @@ def _validate(req):
             "input_invalid", f"cluster_threshold 必須在 (0,1]，收到 {req.cluster_threshold!r}")
     if not req.segmentation_window_shift > 0:
         raise DiarizationError("input_invalid", "segmentation_window_shift 必須 > 0")
+    if isinstance(req.max_asr_seconds, bool) or not 1.0 <= req.max_asr_seconds <= 30.0:
+        raise DiarizationError(
+            "input_invalid", f"max_asr_seconds 必須在 [1,30]，收到 {req.max_asr_seconds!r}")
     src = Path(req.source_audio)
     if not src.is_file():
         raise DiarizationError("source_missing", f"來源音檔不存在：{src}")
@@ -472,6 +482,34 @@ def _merge(turns, gap):
         else:
             merged.append([start, end, spk])
     return merged
+
+
+def _split_pcm(pcm, max_seconds):
+    """回傳切點（byte offset，含頭尾），讓每段 s16le 音訊都 <= max_seconds。
+
+    在每段後半（max/2..max）裡找最安靜的 300ms，從它中間切；與課堂 VAD
+    （`VadChunker._best_cut` 沒有靜音時的退路）同一套規則。只看單一 30ms frame
+    不夠：實測會挑到音節之間的短空隙，把「李奇」切成兩半、兩邊都轉不出來。
+    不夠長的音訊原樣一段，行為與加上限之前相同。
+    """
+    limit = max(int(max_seconds * SR) * 2 // FRAME_BYTES, 2)   # 以 frame 計
+    w = min(_PAUSE_FRAMES, limit // 2)
+    cuts, pos = [0], 0
+    while len(pcm) - pos > limit * FRAME_BYTES:
+        first = limit // 2                   # 視窗起點（frame，相對 pos）
+        last = limit - w                     # 視窗整個落在上限內
+        rms = [frame_rms(pcm[pos + i * FRAME_BYTES:pos + (i + 1) * FRAME_BYTES])
+               for i in range(first, last + w)]
+        total = sum(rms[:w])
+        best, best_at = total, first
+        for k in range(1, last - first + 1):
+            total += rms[k + w - 1] - rms[k - 1]
+            if total < best:
+                best, best_at = total, first + k
+        pos += (best_at + w // 2) * FRAME_BYTES   # frame 邊界，必為偶數 byte
+        cuts.append(pos)
+    cuts.append(len(pcm))
+    return cuts
 
 
 def _usable(text):
@@ -529,17 +567,26 @@ def diarize_session(request: DiarizationRequest, progress=None, cancel=None,
             b = min(duration, end + req.pad)
             if b - a > 0.05:
                 pcm = _decode_pcm16(src, a, b - a)
-                if len(pcm) >= SR // 4:
-                    for s0, s1, text in asr(req, pcm, req.whisper_prompt):
-                        if not _usable(text):
-                            continue
-                        # whisper 的時間是這一段音訊內的相對時間，加上切點就是真實時間。
-                        abs0 = a + max(s0, 0.0)
-                        abs1 = min(max(a + max(s1, s0), abs0 + 0.001), b)
-                        segments.append({"start_ms": int(round(abs0 * 1000)),
-                                         "end_ms": int(round(abs1 * 1000)),
-                                         "speaker_id": spk,
-                                         "text": normalize_punct(text)})
+                cuts = _split_pcm(pcm, req.max_asr_seconds)
+                for i, (lo, hi) in enumerate(zip(cuts, cuts[1:])):
+                    if i:
+                        _check_cancel(cancel)
+                    # 每一片的起點是真實時間；最後一片沿用原本的 b 當上界。
+                    p0 = a + lo / 2 / SR
+                    p1 = b if hi == len(pcm) else a + hi / 2 / SR
+                    piece = pcm[lo:hi]
+                    if len(piece) >= SR // 4:
+                        for s0, s1, text in asr(req, piece, req.whisper_prompt):
+                            if not _usable(text):
+                                continue
+                            # whisper 的時間是這一片音訊內的相對時間，加上切點就是真實時間。
+                            abs0 = p0 + max(s0, 0.0)
+                            abs1 = min(max(p0 + max(s1, s0), abs0 + 0.001), p1)
+                            segments.append({"start_ms": int(round(abs0 * 1000)),
+                                             "end_ms": int(round(abs1 * 1000)),
+                                             "speaker_id": spk,
+                                             "text": normalize_punct(text)})
+                    prog(done + (p1 - a), plan_total, found)
             done += max(b - a, 0.0)
             prog(done, plan_total, found)
 
@@ -593,6 +640,7 @@ def diarize_session(request: DiarizationRequest, progress=None, cancel=None,
                     "merge_gap": req.merge_gap,
                     "pad": req.pad,
                     "min_turn_seconds": req.min_turn_seconds,
+                    "max_asr_seconds": req.max_asr_seconds,
                 },
             },
         }
