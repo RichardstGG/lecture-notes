@@ -96,6 +96,10 @@ $python = Join-Path $env:LOCALAPPDATA 'lecture-notes-test-runner\venv\Scripts\py
 會終止當次測試樹。Windows Job Object 在 runner process 結束時清理剩餘子行程，
 建立 containment 失敗便不啟動測試。逾時／被關閉不算測試失敗重試成功，也不能視為通過。
 測試子行程使用 `CREATE_NO_WINDOW`，避免 Windows console event 波及 runner 的主控台。
+workflow 的 PowerShell shell 明確使用 `-NoProfile -NonInteractive -ExecutionPolicy Bypass`；
+執行原則僅作用於該次 shell process，不寫入 CurrentUser／LocalMachine 設定。
+若在 station 啟動前出現 `PSSecurityException`，該次沒有測試或 summary，不能視為通過；
+先確認 main 已包含此 shell 設定，再從 main 派送新的 request。
 收到可處理的 `KeyboardInterrupt` 時，摘要為 `error`／`execution_interrupted`、退出碼 4；
 只有全部步驟完成才回報 `passed`。直接強制終止 harness 時可能沒有摘要，不能算通過。
 這是測試資源限制，不是阻擋惡意待測程式的安全邊界。
