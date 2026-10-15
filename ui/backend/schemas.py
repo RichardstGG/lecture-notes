@@ -63,6 +63,7 @@ class MeetingCreateRequest(BaseModel):
 class MeetingRunRequest(BaseModel):
     model_config = ConfigDict(extra="forbid")
     meeting_id: str = Field(min_length=1, max_length=100)
+    original_name: str | None = Field(default=None, min_length=1, max_length=4096)
     speakers: int = Field(ge=1, le=30, strict=True)
     input_file: str | None = Field(default=None, min_length=1, max_length=4096)
     source: str | None = Field(default=None, min_length=1, max_length=1000)

@@ -32,3 +32,6 @@
 會議啟動期間按鈕停用；API 確認本次 CLI 已持鎖並發布 session 才回 202，配置前錯誤顯示 envelope 訊息。前端不推測錄音狀態。檔案選擇器沿用 upload staging，重跑不重傳音檔；正常停止／取消後仍可強停，換頁不重送停止。跨頁提示包含目前唯一工作的類型、session、phase、進度。session SSE 在原稿／帶代號稿更新時 append／replace，來源或發言者資料改變時 snapshot 更新結果。
 
 前端檢查：`npm run lint` 使用 TypeScript 的 noUnusedLocals／noUnusedParameters（沒有額外 ESLint 相依）；`npm run typecheck`、`npm run build`、`npm test`。
+
+會議工作台以單一 `minmax(0, 1fr)` grid 欄限制寬度；場次增加時，歷史卡片只在 `.meeting-history-list` 內水平捲動，不撐寬整頁。
+會議匯入使用 upload 回應的 `path` 作為 input_file、`name` 作為選用 original_name；CLI 以選用 --original-name 保存經過濾、最多 255 字元的顯示名稱。名稱不參與磁碟路徑選擇；未提供時仍沿用直接 --file 的 basename。

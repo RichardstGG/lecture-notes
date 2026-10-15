@@ -210,7 +210,7 @@ def cmd_meeting(args):
         if args.operation == "run":
             cfg = C.load_meeting(args.meeting, source=args.source,
                                  sets=[*args.set, f"diarization.num_speakers={speakers}"])
-            job = MeetingRun(cfg, speakers, args.file)
+            job = MeetingRun(cfg, speakers, args.file, original_name=args.original_name)
         else:
             session = Path(args.session).expanduser().resolve()
             if not session.is_dir():
@@ -616,6 +616,7 @@ def main(argv=None):
         q.add_argument("--json", action="store_true")
         if operation == "run":
             q.add_argument("--file")
+            q.add_argument("--original-name", help="匯入原始檔名（僅供顯示，需 --file；過濾不可列印字元並限制 255 字元）")
             q.add_argument("--source")
         q.set_defaults(func=cmd_meeting)
 

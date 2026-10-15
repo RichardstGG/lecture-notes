@@ -74,7 +74,7 @@ export function MeetingWorkbench({ active = true, runtime, sessions = [], device
     if (!selectedConfig || !validSpeakers || runtime.running || (mode === "file" && !uploaded)) return;
     await action("start", async () => {
       await api.startMeeting({ meeting_id: selectedConfig.id, speakers: Number(speakers),
-        ...(mode === "file" ? { input_file: uploaded!.path } : source ? { source } : {}),
+        ...(mode === "file" ? { input_file: uploaded!.path, original_name: uploaded!.name } : source ? { source } : {}),
       });
       setMessage("會議工作已啟動，進度將持續更新。");
     });
