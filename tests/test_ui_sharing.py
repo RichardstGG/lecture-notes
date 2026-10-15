@@ -390,6 +390,18 @@ class SharingTests(unittest.IsolatedAsyncioTestCase):
             self.assertEqual(status['bind_host'], '0.0.0.0')
             invitation = status['url'].split('#')[1]
             for host in ('127.0.0.1', '127.0.0.2'):
+                if host == '127.0.0.2':
+                    # 127/8 aliases are not configured by default on macOS.
+                    # Probe only after .1 has passed every security assertion.
+                    try:
+                        _reader, writer = await asyncio.wait_for(
+                            asyncio.open_connection(host, port), timeout=1,
+                        )
+                    except (OSError, TimeoutError) as exc:
+                        self.skipTest(f'127.0.0.2 loopback alias is not reachable: {type(exc).__name__}; '
+                                      '127.0.0.1 Host/Origin rejection assertions passed')
+                    writer.close()
+                    await writer.wait_closed()
                 async with httpx.AsyncClient(base_url=f'http://{host}:{port}', trust_env=False) as client:
                     response = await client.post('/share/v1/join', json={
                         'invitation': invitation, 'nickname': host,
@@ -402,6 +414,15 @@ class SharingTests(unittest.IsolatedAsyncioTestCase):
             self.assertEqual(len(runtime.status()['participants']), 2)
         finally:
             await runtime.close()
+
+    async def test_wildcard_skips_unavailable_loopback_alias(self):
+        for error in (OSError('loopback alias unavailable'), TimeoutError()):
+            with self.subTest(error=type(error).__name__), \
+                    patch('asyncio.open_connection', side_effect=error) as connect:
+                with self.assertRaisesRegex(unittest.SkipTest, '127.0.0.2 loopback alias is not reachable'):
+                    await self.test_wildcard_accepts_two_local_addresses_and_rejects_forged_host()
+                connect.assert_awaited_once()
+                self.assertEqual(connect.call_args.args[0], '127.0.0.2')
 
     def test_private_ipv4_only(self):
         for host in ('0.0.0.0', '10.1.2.3', '172.16.1.2', '172.31.255.254', '192.168.1.2'):
