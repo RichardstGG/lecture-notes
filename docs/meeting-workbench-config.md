@@ -25,7 +25,7 @@
 
 id 為不含副檔名的可攜單一檔名；拒絕路徑分隔符、絕對路徑、控制字元、Windows 保留字、開頭 `.` / `-`、尾端 `.`、前後空白及過長名稱。中文及中間空白可用。讀取會議設定拒絕符號連結。模型不存在不影響設定查詢；真正載入前仍須由引擎檢查。
 
-建立個人設定的目前方法（不啟動錄音）：複製 `meetings/examples/template.toml` 成 `meetings/<id>.toml`，修改 name／num_speakers 後用上述 CLI 驗證。`meetings/.gitignore` 排除個人 `*.toml` 與 `*.toml.tmp`，不修改共享 checkout 原有 `.gitignore`。API 建立與編輯屬後續里程碑。
+建立個人設定的目前方法（不啟動錄音）：複製 `meetings/examples/template.toml` 成 `meetings/<id>.toml`，修改 name／num_speakers 後用上述 CLI 驗證。`meetings/.gitignore` 排除個人 `*.toml` 與 `*.toml.tmp`，不修改共享 checkout 原有 `.gitignore`。API 建立與編輯已於 2026-10-15 接線，見正式契約「會議寫入 API」。
 
 `Config.work_type` 正規化缺值／空值為 lecture，保留未知非空字串，非字串為 unknown。`Config.dump()` 在新快照寫入 `[work] type`，不回寫舊檔、不修改記憶體內原始設定、保留 work 下其他欄位。課堂錄音／補摘要入口拒絕 meeting 或未知類型，以免誤用課堂流程；不會因 metadata 自動啟動會議作業。
 
@@ -57,3 +57,5 @@ Windows 已解析路徑可能以一般磁碟／UNC 路徑或 `\\?\` extended-len
 鎖／狀態基礎已完成；後續依序為單來源 session 與來源保存、辨識編排、API 與真資料控制 UI，最後獨立接雙音源。現有唯讀歷史與雙稿 UI 不等於控制流程已完成。依 AGENTS 不疊依賴未合併的 PR。
 
 辨識準確度 **Not tested**：沒有乾淨多人樣本及人工標註；唯一真實會議錄音有 20.2% 遺失，不能作驗收依據。雙音源硬體、macOS／Windows 引擎真機仍 **Not tested**。min_turn_seconds、S00 信賴度、prompt 回吐過濾等品質門檻待樣本，不宣稱「會議功能可用」。本 PR 的 Windows basic 只代表設定／CLI 等自動測試，與錄音或辨識硬體驗收不同。
+
+2026-10-15 增補：`lec config --work-type meeting --validate-file PATH` 對未發布 TOML 套用相同驗證，不能與 id 同用，也不接受 lecture。成功唯讀印生效 TOML（exit 0），錯誤 exit 2。`load_meeting` 新增可選 `config_file` 關鍵字，原有 id 查詢不變。UI 以此驗證 `.tmp` 後才原子發布至 meetings。

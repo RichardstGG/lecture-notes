@@ -327,11 +327,15 @@ def cmd_config(args):
             print("會議設定不接受摘要 --model/--upstream", file=sys.stderr)
             return 2
         try:
-            cfg = C.load_meeting(args.course, sets=args.set, source=args.source)
+            cfg = C.load_meeting(args.course, sets=args.set, source=args.source,
+                                 config_file=getattr(args, "validate_file", None))
         except (C.ConfigError, OSError) as exc:
             print(str(exc), file=sys.stderr)
             return 2
     else:
+        if getattr(args, "validate_file", None) is not None:
+            print("--validate-file 僅供 --work-type meeting 使用", file=sys.stderr)
+            return 2
         cfg, _ = _load(args, course_arg=args.course)
     for w in cfg.warnings:
         print(f"⚠ {w}", file=sys.stderr)
@@ -494,8 +498,13 @@ def cmd_stop(args):
     if session and session.is_dir():
         name = STOP_FORCE_FILE if args.force else STOP_FILE
         (session / name).write_text("", encoding="utf-8")
+        if cur.get("work_type") == "meeting":
+            message = ("，會在安全點取消辨識並保留既有成果" if cur.get("mode") == "diarize"
+                       else "，會完成目前音訊片段、保存原稿與來源後收尾")
+        else:
+            message = "，會轉完剩餘段落、補做最後一段總結；最多 1 秒內反應"
         print(f"✔ 已寫入停止要求（{session / name}）"
-              + ("，會立即結束" if args.force else "，會轉完剩餘段落、補做最後一段總結；最多 1 秒內反應"))
+              + ("，會立即結束" if args.force else message))
     else:
         die("工作仍在啟動或輸出資料夾不可用；尚未送出停止要求，請稍後重試 lec stop")
     return 0
@@ -627,6 +636,7 @@ def main(argv=None):
 
     p = sub.add_parser("config", help="印出合併後生效的設定")
     p.add_argument("--work-type", choices=("lecture", "meeting"), default="lecture")
+    p.add_argument("--validate-file", help="驗證尚未發布的會議 TOML 檔（不寫入設定）")
     p.add_argument("course", nargs="?")
     p.add_argument("--source")
     _add_overrides(p)

@@ -38,6 +38,41 @@ class CourseSummary(BaseModel):
     error: str | None = None
 
 
+class MeetingSummary(BaseModel):
+    id: str
+    file: str
+    work_type: str = "meeting"
+    name: str | None = None
+    num_speakers: int | None = None
+    error: str | None = None
+
+
+class MeetingDetail(BaseModel):
+    api_version: int = API_VERSION
+    id: str
+    file: str
+    content: str
+
+
+class MeetingCreateRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    id: str = Field(min_length=1, max_length=100)
+    content: str = '[meeting]\nname = ""\n'
+
+
+class MeetingRunRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    meeting_id: str = Field(min_length=1, max_length=100)
+    speakers: int = Field(ge=1, le=30, strict=True)
+    input_file: str | None = Field(default=None, min_length=1, max_length=4096)
+    source: str | None = Field(default=None, min_length=1, max_length=1000)
+
+
+class DiarizeRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    speakers: int = Field(ge=1, le=30, strict=True)
+
+
 class ModelInfo(BaseModel):
     model_config = ConfigDict(extra="allow")
 
@@ -264,6 +299,8 @@ class SessionDetail(BaseModel):
     transcript: SessionContentFile
     notes: SessionContentFile
     speaker_transcript: SessionContentFile | None = None
+    source: dict[str, Any] | None = None
+    speakers: dict[str, Any] | None = None
 
 
 class RunStartRequest(BaseModel):
@@ -293,6 +330,8 @@ class SummarizeRequest(BaseModel):
 
 
 class ProcessActionResponse(BaseModel):
+    session: str | None = None
+    work_type: str | None = None
     accepted: bool
     operation: str
     pid: int | None = None

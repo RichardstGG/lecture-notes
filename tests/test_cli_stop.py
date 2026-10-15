@@ -31,6 +31,25 @@ class StopContractTests(unittest.TestCase):
             finally:
                 owner.release()
 
+    def test_stop_feedback_follows_work_type_and_operation(self):
+        for work, mode, expected in [('lecture', 'live', '補做最後一段總結'),
+                                     ('meeting', 'live', '保存原稿與來源'),
+                                     ('meeting', 'diarize', '取消辨識並保留既有成果')]:
+            with self.subTest(work=work, mode=mode), tempfile.TemporaryDirectory() as tmp:
+                root = Path(tmp)
+                session = root / 'session'
+                session.mkdir()
+                owner = RunLock(root)
+                owner.acquire(work_type=work, mode=mode, session=str(session))
+                try:
+                    with patch('core.cli._state_dir', return_value=root), contextlib.redirect_stdout(io.StringIO()) as out:
+                        self.assertEqual(main(['stop']), 0)
+                    self.assertIn(expected, out.getvalue())
+                    if work == 'meeting':
+                        self.assertNotIn('總結', out.getvalue())
+                finally:
+                    owner.release()
+
     def test_starting_without_session_returns_error_instead_of_signal(self):
         with tempfile.TemporaryDirectory() as tmp:
             owner = RunLock(tmp)

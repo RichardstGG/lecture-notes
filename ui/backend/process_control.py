@@ -5,6 +5,7 @@ import math
 import os
 import re
 import subprocess
+import tempfile
 from dataclasses import dataclass
 from datetime import datetime
 from pathlib import Path
@@ -20,6 +21,7 @@ class LaunchResult:
     pid: int
     completed: bool = False
     exit_code: int | None = None
+    session: str | None = None
 
 
 class ControlError(Exception):
@@ -93,7 +95,7 @@ class LecProcessLauncher:
         process.wait()
         self._processes.discard(process)
 
-    async def start(self, *args):
+    async def start(self, *args, wait_for_session=None, startup_timeout=30):
         env = os.environ.copy()
         env["PYTHONUTF8"] = "1"
         env["PYTHONIOENCODING"] = "utf-8"
@@ -106,6 +108,7 @@ class LecProcessLauncher:
         else:
             kwargs["start_new_session"] = True
 
+        envelope = tempfile.TemporaryFile() if wait_for_session else None
         try:
             self.log_path.parent.mkdir(parents=True, exist_ok=True)
             with open(self.log_path, "ab") as output:
@@ -114,12 +117,61 @@ class LecProcessLauncher:
                 output.flush()
                 process = subprocess.Popen(
                     command, cwd=self.cwd, env=env, stdin=subprocess.DEVNULL,
-                    stdout=output, stderr=subprocess.STDOUT, **kwargs,
+                    stdout=envelope if envelope is not None else output,
+                    stderr=output if envelope is not None else subprocess.STDOUT, **kwargs,
                 )
         except OSError as exc:
+            if envelope is not None:
+                envelope.close()
             raise LecCommandError(
                 "cli_unavailable", f"Unable to start lec: {exc}", stderr=str(exc),
             ) from exc
+
+        self._processes.add(process)
+        task = asyncio.create_task(self._reap(process))
+        self._tasks.add(task)
+        task.add_done_callback(self._tasks.discard)
+        if wait_for_session is not None:
+            try:
+                deadline = asyncio.get_running_loop().time() + startup_timeout
+                while True:
+                    if process.poll() is not None:
+                        process.wait()
+                        envelope.seek(0)
+                        try:
+                            payload = json.loads(envelope.read(1024 * 1024))
+                        except (ValueError, UnicodeError):
+                            raise ControlError("cli_invalid_json", "Invalid meeting startup response", 502) from None
+                        if not isinstance(payload, dict) or not isinstance(payload.get("accepted"), bool):
+                            raise ControlError("cli_invalid_response", "Invalid meeting startup response", 502)
+                        if not payload["accepted"]:
+                            error = payload.get("error") or {}
+                            if (not isinstance(error, dict) or not isinstance(error.get("code"), str)
+                                    or not isinstance(error.get("message"), str)):
+                                raise ControlError("cli_invalid_response", "Invalid meeting startup error", 502)
+                            code = error["code"]
+                            http = (409 if code == "busy" else
+                                    422 if code in {"source_missing", "source_incomplete", "source_hash_mismatch"} else
+                                    400 if code == "input_invalid" or process.returncode == 2 else 502)
+                            raise ControlError(code, error.get("message", "Meeting startup failed"), http)
+                        if process.returncode not in (0, 130) or not payload.get("session"):
+                            raise ControlError("cli_start_failed", "Meeting startup failed", 502)
+                        return LaunchResult(process.pid, completed=True, exit_code=process.returncode,
+                                            session=payload["session"])
+                    status = await wait_for_session()
+                    # A different CLI may have won the lock. Only acknowledge
+                    # our child after it publishes its own allocated session.
+                    if (process.poll() is None and status.get("running")
+                            and status.get("pid") == process.pid and status.get("session")):
+                        return LaunchResult(process.pid, session=status["session"])
+                    if asyncio.get_running_loop().time() >= deadline:
+                        raise ControlError("startup_pending",
+                                           "Startup not confirmed; check status before retrying", 503)
+                    await asyncio.sleep(0.05)
+            finally:
+                # The detached child keeps its own descriptor, even on request
+                # cancellation. A browser disconnect must never stop the job.
+                envelope.close()
 
         await asyncio.sleep(self.settle_seconds)
         if process.poll() is not None:
@@ -136,11 +188,6 @@ class LecProcessLauncher:
                     exit_code=process.returncode, stderr=detail,
                 )
             return LaunchResult(process.pid, completed=True, exit_code=0)
-
-        self._processes.add(process)
-        task = asyncio.create_task(self._reap(process))
-        self._tasks.add(task)
-        task.add_done_callback(self._tasks.discard)
         return LaunchResult(process.pid)
 
 
@@ -194,6 +241,45 @@ class ProcessController:
                 "completed": result.completed, "exit_code": result.exit_code,
                 "message": ("Lecture process completed" if result.completed
                             else "Lecture process started")}
+
+    async def _meeting_start(self, operation, *args):
+        async with self._lock:
+            await self._ensure_idle()
+            result = await self.launcher.start(
+                "meeting", operation, *args, "--json", wait_for_session=self.client.status,
+                startup_timeout=getattr(self.client, "timeout", 30),
+            )
+        return {"accepted": True, "operation": operation, "work_type": "meeting",
+                "pid": result.pid, "session": result.session,
+                "completed": result.completed, "exit_code": result.exit_code,
+                "message": "Meeting completed" if result.completed else "Meeting started"}
+
+    async def start_meeting(self, meeting_id, speakers, input_file=None, source=None):
+        # Existence and portable-id validation stay in the settings store/API.
+        args = [meeting_id, "--speakers", str(speakers)]
+        if input_file is not None:
+            if "\x00" in input_file or not re.fullmatch(r"[A-Za-z0-9]+", Path(input_file).suffix.lstrip(".")):
+                raise ControlError("input_invalid", "Input audio path requires a valid file extension", 400)
+            path = Path(input_file).expanduser()
+            if not path.is_absolute():
+                path = self.repo_root / path
+            if not path.is_file():
+                raise ControlError("source_missing", "Input audio file not found", 422)
+            args += ["--file", str(path.resolve())]
+        if source is not None:
+            args += ["--source", _cli_value(source, "source")]
+        return await self._meeting_start("run", *args)
+
+    async def diarize(self, session_id, speakers):
+        session = await asyncio.to_thread(self.sessions.path_for, session_id)
+        # Only read metadata here. The CLI verifies the source hash under the
+        # shared OS lock; no audio reads or core imports on the API side.
+        detail = await asyncio.to_thread(self.sessions.get, session_id)
+        if detail["session"].get("work_type") != "meeting":
+            raise ControlError("input_invalid", "Session is not a meeting", 400)
+        if not detail["session"]["has_recording"]:
+            raise ControlError("source_missing", "No reusable meeting source", 422)
+        return await self._meeting_start("diarize", str(session), "--speakers", str(speakers))
 
     async def stop(self, force=False):
         async with self._lock:

@@ -318,6 +318,27 @@ class SessionStore:
             }
             if summary["work_type"] == "meeting":
                 detail["speaker_transcript"] = self._speaker_transcript(path)
+                detail["source"] = self._meeting_source(path)
+                manifest = _read_json(path / "diarization.current.json")
+                generation = manifest.get("generation")
+                if (isinstance(generation, str) and re.fullmatch(r"[A-Za-z0-9_-]+", generation)
+                        and manifest.get("speakers") == f"diarization/{generation}/speakers.json"):
+                    target = path / manifest["speakers"]
+                    if not any(parent.is_symlink() for parent in (target.parent.parent, target.parent, target)):
+                        content = self._content_file(target)["content"]
+                        try:
+                            speakers = json.loads(content)
+                            if (isinstance(speakers, dict) and type(speakers.get("actual_speakers")) is int
+                                    and speakers["actual_speakers"] >= 0 and isinstance(speakers.get("speakers"), list)
+                                    and all(isinstance(row, dict) and isinstance(row.get("id"), str)
+                                            and re.fullmatch(r"S[0-9]{2,}", row["id"])
+                                            and type(row.get("speech_seconds")) in (int, float)
+                                            and math.isfinite(row["speech_seconds"]) and row["speech_seconds"] >= 0
+                                            and type(row.get("segment_count")) is int and row["segment_count"] >= 0
+                                            for row in speakers["speakers"])):
+                                detail["speakers"] = speakers
+                        except ValueError:
+                            pass
             return detail
         except OSError as exc:
             raise SessionStoreError(

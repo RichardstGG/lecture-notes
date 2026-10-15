@@ -12,10 +12,12 @@ from fastapi.staticfiles import StaticFiles
 
 from .cli_client import LecClient, LecCommandError
 from .course_store import CourseStore, CourseStoreError
+from .meeting_store import MeetingStore
 from .process_control import (ControlError, LecProcessLauncher,
                               ProcessController)
 from .schemas import (ApiErrorResponse, AudioUploadResponse, CaptureCapabilitiesResponse,
-                      CourseCreateRequest,
+                      CourseCreateRequest, MeetingSummary, MeetingDetail,
+                      MeetingCreateRequest, MeetingRunRequest, DiarizeRequest,
                       CourseDetail,
                       CourseSummary, CourseUpdateRequest,
                       CourseVocabularyUpdateRequest, DeviceInventoryResponse,
@@ -103,6 +105,9 @@ async def _session_events(
                         "updated_at": after_file["updated_at"],
                         "size_bytes": after_file["size_bytes"],
                     })
+                if any(previous.get(key) != current.get(key) for key in ("source", "speakers")):
+                    changed = True
+                    yield _sse("snapshot", current)
                 if not changed:
                     yield ": heartbeat\n\n"
             previous = current
@@ -118,12 +123,13 @@ async def _session_events(
 
 def create_app(
     settings=None, client=None, sessions=None, launcher=None, course_store=None,
-    upload_store=None, sharing=None, upstream_store=None,
+    upload_store=None, sharing=None, upstream_store=None, meeting_store=None,
 ):
     settings = settings or BackendSettings.from_env()
     client = client or LecClient.for_repo(settings.repo_root, settings.cli_timeout)
     sessions = sessions or SessionStore.from_settings(settings)
     course_store = course_store or CourseStore.from_settings(settings)
+    meeting_store = meeting_store or MeetingStore(settings.repo_root / "meetings")
     upload_store = upload_store or AudioUploadStore(
         settings.upload_root, settings.max_upload_bytes,
     )
@@ -151,6 +157,7 @@ def create_app(
     app.state.lec_client = client
     app.state.sessions = sessions
     app.state.course_store = course_store
+    app.state.meeting_store = meeting_store
     app.state.upload_store = upload_store
     app.state.upstream_store = upstream_store
     app.state.controller = controller
@@ -201,6 +208,12 @@ def create_app(
 
     @app.exception_handler(RequestValidationError)
     async def validation_error_handler(request, exc):
+        path = request.url.path
+        if (path.startswith("/api/v1/meetings") or path == "/api/v1/meeting-runs"
+                or path.startswith("/api/v1/sessions/") and path.endswith("/diarize")):
+            return JSONResponse(status_code=400, content={"error": {
+                "code": "input_invalid", "message": "Invalid meeting request parameters",
+            }})
         if request.url.path.startswith("/api/v1/summary-upstreams"):
             return JSONResponse(status_code=422, content={"error": {
                 "code": "invalid_upstream", "message": "Invalid upstream settings",
@@ -273,6 +286,43 @@ def create_app(
     )
     async def courses(request: Request):
         return await request.app.state.lec_client.courses()
+
+    @app.get("/api/v1/meetings", response_model=list[MeetingSummary], response_model_exclude_none=True,
+             responses={502: {"model": ApiErrorResponse}, 503: {"model": ApiErrorResponse}})
+    async def meetings():
+        return await client.meetings()
+
+    @app.post("/api/v1/meetings", response_model=MeetingDetail,
+              responses={400: {"model": ApiErrorResponse}, 409: {"model": ApiErrorResponse}})
+    async def meeting_create(payload: MeetingCreateRequest, request: Request):
+        check_local_settings_control(request)
+        return await meeting_store.write(client, payload.id, payload.content, create=True)
+
+    @app.get("/api/v1/meetings/{meeting_id:path}", response_model=MeetingDetail,
+             responses={400: {"model": ApiErrorResponse}, 404: {"model": ApiErrorResponse}})
+    async def meeting_detail(meeting_id: str):
+        return await asyncio.to_thread(meeting_store.get, meeting_id)
+
+    @app.put("/api/v1/meetings/{meeting_id:path}", response_model=MeetingDetail,
+             responses={400: {"model": ApiErrorResponse}, 404: {"model": ApiErrorResponse}})
+    async def meeting_update(meeting_id: str, payload: CourseUpdateRequest, request: Request):
+        check_local_settings_control(request)
+        return await meeting_store.write(client, meeting_id, payload.content)
+
+    @app.post("/api/v1/meeting-runs", response_model=ProcessActionResponse,
+              response_model_exclude_none=True, status_code=202,
+              responses={code: {"model": ApiErrorResponse} for code in (400, 404, 409, 422, 502, 503)})
+    async def meeting_start(payload: MeetingRunRequest, request: Request):
+        check_local_settings_control(request)
+        await asyncio.to_thread(meeting_store.get, payload.meeting_id)
+        return await controller.start_meeting(**payload.model_dump())
+
+    @app.post("/api/v1/sessions/{session_id:path}/diarize", response_model=ProcessActionResponse,
+              response_model_exclude_none=True, status_code=202,
+              responses={code: {"model": ApiErrorResponse} for code in (400, 404, 409, 422, 502, 503)})
+    async def session_diarize(session_id: str, payload: DiarizeRequest, request: Request):
+        check_local_settings_control(request)
+        return await controller.diarize(session_id, payload.speakers)
 
     @app.get(
         "/api/v1/models", response_model=ModelInventoryResponse,

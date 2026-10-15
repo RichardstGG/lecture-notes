@@ -1,133 +1,149 @@
-import { useEffect, useState } from "react";
+import { useEffect, useState, type FormEvent } from "react";
 import { api } from "../api";
-import type { CaptureCapabilities, RuntimeStatus, SessionSummary } from "../types";
-import { formatDuration } from "../utils";
+import type { AudioUpload, DeviceInventory, Meeting, RuntimeStatus, SessionSummary } from "../types";
+import { sessionIdFromPath } from "../utils";
 import { SharePanel } from "./SharePanel";
 import { MeetingSessionPanel } from "./MeetingSessionPanel";
-
-type PreviewStage = "ready" | "recording" | "diarizing" | "done";
-
-const previewSpeakers = [
-  { id: "S01", seconds: 1720, share: "51.7%", text: "我們先確認今天的系統架構。" },
-  { id: "S02", seconds: 606, share: "18.2%", text: "API 的回傳格式要保留相容性。" },
-  { id: "S03", seconds: 593, share: "17.8%", text: "部署前先跑一次 smoke test。" },
-  { id: "S04", seconds: 319, share: "9.6%", text: "我會再檢查英文術語。" },
-  { id: "S05", seconds: 39, share: "1.2%", text: "收到。" },
-  { id: "S06", seconds: 27, share: "0.8%", text: "好。" },
-  { id: "S07", seconds: 13, share: "0.4%", text: "可以。" },
-  { id: "S08", seconds: 8, share: "0.2%", text: "嗯。" },
-  { id: "S09", seconds: 3, share: "0.1%", text: "對。" },
-  { id: "S10", seconds: 1, share: "0.0%", text: "好。" },
-];
 
 interface Props {
   active?: boolean;
   runtime: RuntimeStatus;
   sessions?: SessionSummary[];
+  devices?: DeviceInventory;
+  onChanged?: () => Promise<unknown>;
 }
 
-export function MeetingWorkbench({ active = true, runtime, sessions = [] }: Props) {
-  const [captureMode, setCaptureMode] = useState("single");
-  const [capabilities, setCapabilities] = useState<CaptureCapabilities | null>(null);
-  const [capabilityError, setCapabilityError] = useState(false);
-  useEffect(() => {
-    if (!active) return;
-    let cancelled = false;
-    api.captureCapabilities().then((value) => {
-      if (!cancelled) { setCapabilities(value); setCapabilityError(false); }
-    }).catch(() => { if (!cancelled) { setCapabilities(null); setCapabilityError(true); } });
-    return () => { cancelled = true; };
-  }, [active]);
+export function MeetingWorkbench({ active = true, runtime, sessions = [], devices, onChanged }: Props) {
+  const [meetings, setMeetings] = useState<Meeting[]>([]);
+  const [meetingId, setMeetingId] = useState("");
+  const [loading, setLoading] = useState(true);
   const [name, setName] = useState("");
-  const [speakers, setSpeakers] = useState(10);
-  const [stage, setStage] = useState<PreviewStage>("ready");
-  const [showShort, setShowShort] = useState(false);
-  const [resultTab, setResultTab] = useState<"raw" | "speakers">("speakers");
+  const [speakers, setSpeakers] = useState("");
+  const [mode, setMode] = useState<"live" | "file">("live");
+  const [source, setSource] = useState("");
+  const [uploaded, setUploaded] = useState<AudioUpload>();
+  const [pending, setPending] = useState<string>();
+  const [stopMode, setStopMode] = useState<"normal" | "force">();
+  const [error, setError] = useState<string>();
+  const [message, setMessage] = useState<string>();
+  const [content, setContent] = useState<string>();
   const [selectedMeetingId, setSelectedMeetingId] = useState("");
   const meetingSessions = sessions.filter((session) => session.work_type === "meeting");
   const selectedMeeting = meetingSessions.find((session) => session.id === selectedMeetingId) || meetingSessions[0];
-  const prominent = previewSpeakers.filter((speaker) => speaker.seconds >= 30 && Number.parseFloat(speaker.share) >= 2);
-  const short = previewSpeakers.filter((speaker) => speaker.seconds < 30 || Number.parseFloat(speaker.share) < 2);
-  const isBusy = runtime.running;
+  const validMeetings = meetings.filter((meeting) => !meeting.error);
+  const selectedConfig = meetings.find((meeting) => meeting.id === meetingId) || validMeetings[0];
+  const validSpeakers = Number.isInteger(Number(speakers)) && Number(speakers) >= 1 && Number(speakers) <= 30;
+  const meetingRunning = runtime.running && runtime.work_type === "meeting";
+  const runningId = sessionIdFromPath(runtime.session, meetingSessions.map((session) => session.id));
+
+  useEffect(() => {
+    if (!active) return;
+    let current = true;
+    setLoading(true);
+    api.meetings().then((value) => { if (current) { setMeetings(value); setError(undefined); } })
+      .catch((reason) => { if (current) setError(reason instanceof Error ? reason.message : "無法讀取會議設定"); })
+      .finally(() => { if (current) setLoading(false); });
+    return () => { current = false; };
+  }, [active]);
+
+  useEffect(() => {
+    if (meetingRunning && runningId && meetingSessions.some((session) => session.id === runningId)) setSelectedMeetingId(runningId);
+  }, [meetingRunning, runningId, sessions]);
+
+  useEffect(() => { setStopMode(undefined); }, [runtime.running, runtime.pid]);
+
+  async function action(kind: string, run: () => Promise<unknown>) {
+    setPending(kind); setError(undefined); setMessage(undefined);
+    try { await run(); await onChanged?.(); }
+    catch (reason) { setError(reason instanceof Error ? reason.message : "無法完成會議操作"); }
+    finally { setPending(undefined); }
+  }
+
+  async function create(event: FormEvent) {
+    event.preventDefault();
+    if (!name.trim()) return;
+    await action("create", async () => {
+      const result = await api.createMeeting(name.trim(), `[meeting]\nname = ${JSON.stringify(name.trim())}\n`);
+      setMeetings(await api.meetings()); setMeetingId(result.id); setContent(undefined); setName("");
+      setMessage("會議設定已建立。");
+    });
+  }
+
+  async function start(event: FormEvent) {
+    event.preventDefault();
+    if (!selectedConfig || !validSpeakers || runtime.running || (mode === "file" && !uploaded)) return;
+    await action("start", async () => {
+      await api.startMeeting({ meeting_id: selectedConfig.id, speakers: Number(speakers),
+        ...(mode === "file" ? { input_file: uploaded!.path } : source ? { source } : {}),
+      });
+      setMessage("會議工作已啟動，進度將持續更新。");
+    });
+  }
+
+  async function stop(force: boolean) {
+    await action("stop", async () => {
+      const result = await api.stop(force); setStopMode(force ? "force" : "normal"); setMessage(result.message);
+    });
+  }
 
   return <div className="meeting-workbench">
-    <div className="meeting-preview-note" role="status">
-      <strong>會議工作台預覽</strong>
-      <span>錄音、辨識控制與示範結果尚未連接會議 CLI。會議歷史與內網分享讀取真實場次；示範控制不會啟動或停止工作。</span>
-    </div>
-
+    {error && <p className="notice error" role="alert">{error}</p>}
+    {message && <p className="notice" role="status">{message}</p>}
     <section className="meeting-card" id="meeting-settings">
-      <div className="meeting-card-heading">
-        <div><p className="eyebrow">MEETING SETUP</p><h2>開始一場會議</h2></div>
-        <span className="meeting-demo-tag">介面預覽</span>
-      </div>
-      <p className="meeting-help">會議流程將沿用本機錄音、音檔匯入與逐字稿。發言者代號在會後產生，只在本場會議內有效。</p>
-      <div className="meeting-fields">
-        <label><span>會議名稱</span><input value={name} onChange={(event) => setName(event.target.value)} placeholder="例如：系統設計討論" /></label>
-        <label><span>預計參與人數（必填）</span><input type="number" min="1" max="30" required value={speakers} onChange={(event) => setSpeakers(Number(event.target.value))} /></label>
-        <label><span>錄音來源模式（預覽）</span><select value={captureMode} onChange={(event) => setCaptureMode(event.target.value)}>
-          <option value="single">單一來源</option><option value="dual">系統輸出＋麥克風</option>
-        </select></label>
-      </div>
-      {captureMode === "dual" && <div>
-        <p className="meeting-help" role="status">{capabilityError ? "無法查詢雙音源能力；錄音保持停用" : capabilities?.dual.message || "正在查詢雙音源能力；錄音保持停用"}</p>
+      <div className="meeting-card-heading"><div><p className="eyebrow">MEETING SETUP</p><h2>開始一場會議</h2></div></div>
+      <p className="meeting-help">錄音或匯入後保留來源與原逐字稿；會後可另行辨識發言者。代號只在本場會議內有效。</p>
+      <form onSubmit={create} className="meeting-fields">
+        <label><span>新會議名稱</span><input value={name} onChange={(event) => setName(event.target.value)} placeholder="例如：系統設計討論" required maxLength={100} /></label>
+        <button className="button secondary" disabled={!!pending || !name.trim()} type="submit">建立會議設定</button>
+      </form>
+      <form onSubmit={start}>
         <div className="meeting-fields">
-          <label><span>系統輸出裝置</span><select disabled><option>尚未提供可驗證的 monitor 清單</option></select></label>
-          <label><span>麥克風裝置</span><select disabled><option>尚未提供雙音源裝置驗證</option></select></label>
+          <label><span>會議設定</span><select value={selectedConfig?.id || ""} required disabled={loading || !!pending}
+            onChange={(event) => { setMeetingId(event.target.value); setContent(undefined); }}>
+            {!validMeetings.length && <option value="">{loading ? "載入中…" : "請先建立會議設定"}</option>}
+            {meetings.map((meeting) => <option key={meeting.id} value={meeting.id} disabled={!!meeting.error}>{meeting.name || meeting.id}{meeting.error ? "（設定有誤）" : ""}</option>)}
+          </select></label>
+          <label><span>預計參與人數（必填）</span><input type="number" min="1" max="30" step="1" required value={speakers} onChange={(event) => setSpeakers(event.target.value)} /></label>
+          <label><span>輸入方式</span><select value={mode} onChange={(event) => setMode(event.target.value as "live" | "file")} disabled={!!pending}>
+            <option value="live">現場錄音</option><option value="file">匯入音檔</option>
+          </select></label>
+          <label><span>錄音來源模式</span><select value="single" disabled><option value="single">單一來源</option><option value="dual" disabled>系統輸出＋麥克風（v1 不提供）</option></select></label>
+          {mode === "live" ? <label><span>錄音裝置（選填）</span><select value={source} onChange={(event) => setSource(event.target.value)} disabled={!!pending}>
+            <option value="">使用會議／本機設定</option>
+            {devices?.sources.map((device) => <option key={device.id} value={device.id}>{device.description || device.name}</option>)}
+          </select></label> : <label><span>會議音檔</span><input type="file" accept="audio/*,video/*,.ogg,.wav,.flac,.m4a,.mp3,.webm" disabled={!!pending || runtime.running}
+            onChange={(event) => {
+              const file = event.target.files?.[0];
+              if (file) { setUploaded(undefined); void action("upload", async () => { setUploaded(await api.uploadAudio(file)); }); }
+              event.target.value = "";
+            }} /></label>}
         </div>
-        <ul aria-label="各路音訊狀態">
-          <li>系統輸出：未開始 · 音量未知</li>
-          <li>麥克風：未開始 · 音量未知</li>
-        </ul>
-        <p className="meeting-help">第一版規劃 Linux PulseAudio 相容服務（含 PipeWire），請使用耳機。指定輸出的音訊可能包含其他程式；會議 app 的靜音不會關閉本程式的麥克風錄音。來源標記不代表人物身分，也不保證重疊發言完整轉錄。</p>
-      </div>}
-      <button className="button primary" disabled title="會議 CLI 尚未實作">開始錄音（待串接）</button>
-      {isBusy && <p className="meeting-help">目前已有工作進行中；兩個工作台共用單一工作限制。</p>}
-    </section>
-
-    <section className="meeting-card">
-      <div className="meeting-card-heading"><div><p className="eyebrow">WORKFLOW PREVIEW</p><h2>會後辨識進度</h2></div></div>
-      <div className="meeting-demo-controls" role="group" aria-label="示範狀態">
-        {(["ready", "recording", "diarizing", "done"] as const).map((value) =>
-          <button type="button" className={stage === value ? "active" : ""} onClick={() => setStage(value)} key={value}>
-            {{ ready: "待開始", recording: "錄音中", diarizing: "辨識中", done: "已完成" }[value]}
-          </button>)}
-      </div>
-      {stage === "ready" && <p className="meeting-help">錄音完成後保留原始音檔與逐字稿，再以預計人數啟動會後辨識。</p>}
-      {stage === "recording" && <div className="meeting-progress"><strong>示範：錄音中</strong><p>原逐字稿持續更新；切換工作台不會停止背景工作。</p></div>}
-      {stage === "diarizing" && <div className="meeting-progress" role="progressbar" aria-label="示範辨識進度" aria-valuenow={47} aria-valuemin={0} aria-valuemax={100}>
-        <strong>重新轉錄 · 已處理 42:00 / 88:00</strong>
-        <div className="meeting-progress-track"><span style={{ width: "47%" }} /></div>
-        <p>要求 {speakers || 10} 位 · 已找到 4 位主要發言者 · 其他短發言 6 位</p>
-        <p>實際可用代號數可能少於或多於主要發言者數。</p>
-      </div>}
-      {stage === "done" && <p className="meeting-help">示範完成。正式版本將提供取消、強制停止及從保留來源重新辨識；此預覽不操作背景工作。</p>}
-    </section>
-
-    <MeetingSessionPanel active={active} runtime={runtime} sessions={meetingSessions} selectedId={selectedMeeting?.id} onSelect={setSelectedMeetingId} />
-
-    <section className="meeting-card">
-      <div className="meeting-card-heading"><div><p className="eyebrow">RESULT PREVIEW</p><h2>示範發言者結果</h2></div><span className="meeting-demo-tag">示範會議 · 10 人</span></div>
-      <div className="meeting-demo-controls" role="tablist" aria-label="示範逐字稿">
-        <button role="tab" aria-selected={resultTab === "raw"} className={resultTab === "raw" ? "active" : ""} onClick={() => setResultTab("raw")}>原逐字稿</button>
-        <button role="tab" aria-selected={resultTab === "speakers"} className={resultTab === "speakers" ? "active" : ""} onClick={() => setResultTab("speakers")}>帶發言者逐字稿</button>
-      </div>
-      {resultTab === "raw" ? <div className="meeting-transcript"><p>[00:01:12] 我們先確認今天的系統架構。API 的回傳格式要保留相容性。</p></div> : <>
-        <div className="meeting-speaker-list">
-          {prominent.map((speaker) => <div key={speaker.id}><strong>{speaker.id}</strong><span>{formatDuration(speaker.seconds)} · {speaker.share}</span></div>)}
-        </div>
-        <button className="meeting-short-toggle" type="button" aria-expanded={showShort} onClick={() => setShowShort(!showShort)}>
-          其他短發言 · {short.length} 位 {showShort ? "收起" : "展開"}
+        {mode === "file" && <p className="meeting-help">{pending === "upload" ? "正在準備音檔…" : uploaded ? `已準備：${uploaded.name}` : "請先選擇要匯入的音檔。"}</p>}
+        <button className="button primary" type="submit" disabled={loading || !!pending || runtime.running || !selectedConfig || !!selectedConfig.error || !validSpeakers || (mode === "file" && !uploaded)}>
+          {pending === "start" ? "啟動中…" : mode === "file" ? "開始匯入" : "開始錄音"}
         </button>
-        {showShort && <div className="meeting-speaker-list short">{short.map((speaker) => <div key={speaker.id}><strong>{speaker.id}</strong><span>{formatDuration(speaker.seconds)} · {speaker.share}</span></div>)}</div>}
-        <div className="meeting-transcript">{previewSpeakers.slice(0, 4).map((speaker, index) =>
-          <p key={speaker.id}><time>[00:0{index + 1}:12.000–00:0{index + 1}:18.000]</time> <strong>{speaker.id}:</strong> {speaker.text}</p>)}</div>
-      </>}
+      </form>
+      {runtime.running && <p className="meeting-help">目前已有工作進行中；兩個工作台共用單一工作限制。</p>}
+      {selectedConfig && <details>
+        <summary>編輯會議設定</summary>
+        <button className="button secondary" disabled={!!pending} onClick={() => void action("load-config", async () => { setContent((await api.meeting(selectedConfig.id)).content); })}>載入設定內容</button>
+        {content !== undefined && <form onSubmit={(event) => {
+          event.preventDefault();
+          void action("save-config", async () => {
+            await api.updateMeeting(selectedConfig.id, content); setMeetings(await api.meetings()); setMessage("會議設定已儲存。");
+          });
+        }}>
+          <label><span>會議 TOML 設定</span><textarea rows={10} value={content} onChange={(event) => setContent(event.target.value)} /></label>
+          <button type="submit" className="button secondary" disabled={!!pending}>儲存會議設定</button>
+        </form>}
+      </details>}
     </section>
-
+    <MeetingSessionPanel active={active} runtime={runtime} sessions={meetingSessions} selectedId={selectedMeeting?.id} onSelect={setSelectedMeetingId}
+      pending={!!pending} stopMode={stopMode} onStop={(force) => void stop(force)}
+      onDiarize={(id, count) => void action("diarize", async () => { await api.diarize(id, count); setMessage("會後辨識已啟動。"); })} />
     <section className="meeting-card" id="meeting-sharing">
       <div className="meeting-card-heading"><div><p className="eyebrow">LAN SHARING</p><h2>分享會議逐字稿</h2></div></div>
-      <p className="meeting-help">選擇真實會議場次後，可用現有內網唯讀分享提供原逐字稿與帶發言者逐字稿。示範資料不會對外分享。</p>
+      <p className="meeting-help">分享選定場次的原逐字稿與帶發言者逐字稿。</p>
       <label className="meeting-share-selection"><span>分享場次</span><select value={selectedMeeting?.id || ""} onChange={(event) => setSelectedMeetingId(event.target.value)} disabled={!meetingSessions.length}>
         {!meetingSessions.length && <option value="">目前沒有可分享的會議場次</option>}
         {meetingSessions.map((session) => <option key={session.id} value={session.id}>{session.course || session.id}</option>)}

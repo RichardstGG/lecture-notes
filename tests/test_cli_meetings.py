@@ -80,3 +80,18 @@ class MeetingCliTests(unittest.TestCase):
             self.assertEqual(self.invoke(['config', '--work-type', 'meeting'])[0], 0)
             self.assertEqual(self.invoke(['meetings', '--json'])[0], 0)
         spawn.assert_not_called()
+
+    def test_validate_file_is_read_only_and_uses_identical_meeting_rules(self):
+        temporary = self.root / 'candidate.tmp'
+        content = '[meeting]\nname="驗證"\n[diarization]\nnum_speakers=3'
+        temporary.write_text(content, encoding='utf-8')
+        code, out, err = self.invoke(['config', '--work-type', 'meeting', '--validate-file', str(temporary)])
+        self.assertEqual((code, err), (0, ''))
+        self.assertEqual(tomllib.loads(out)['meeting']['name'], '驗證')
+        self.assertEqual(temporary.read_text(encoding='utf-8'), content)
+        self.assertEqual(list(C.MEETINGS_DIR.iterdir()), [])
+        for content in ('[summary]\nenabled=true', '[meeting]\nname=true', '[diarization]\nnum_speakers=31'):
+            temporary.write_text(content, encoding='utf-8')
+            self.assertEqual(self.invoke(['config', '--work-type', 'meeting', '--validate-file', str(temporary)])[0], 2)
+        self.assertEqual(self.invoke(['config', '--validate-file', str(temporary)])[0], 2)
+        self.assertEqual(self.invoke(['config', '--work-type', 'meeting', 'team', '--validate-file', str(temporary)])[0], 2)
