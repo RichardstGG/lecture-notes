@@ -17,12 +17,34 @@
 - 日期是台北時間（UTC+8）的合併日期。
 - 這份檔案由 maintainer 累積一批 PR 後交給 Antigravity 更新，再由 Claude 復核。流程和提示詞見 [docs/changelog-update.md](docs/changelog-update.md)。
 
+## v1.9：會議 Web UI 控制
+
+會議的錄音、匯入、停止、會後辨識與重跑都能從 Web UI 操作（Linux、單一來源），並完成 Linux 真機 CLI 與 UI 驗收。
+
+| 版本 | 合併日期 | PR | 內容 |
+|---|---|---|---|
+| v1.9.05 | 2026-10-15 | [#108](https://github.com/RichardstGG/lecture-notes/pull/108) | 強停的錄音不再是空檔；upgrade 說明 detached HEAD 的處理 |
+| v1.9.04 | 2026-10-15 | [#107](https://github.com/RichardstGG/lecture-notes/pull/107) | UI 測試相容 macOS，補上測試依賴與前端安全更新 |
+| v1.9.03 | 2026-10-15 | [#106](https://github.com/RichardstGG/lecture-notes/pull/106) | 會議頁版面不再被撐寬，匯入保留原始檔名 |
+| v1.9.02 | 2026-10-15 | [#105](https://github.com/RichardstGG/lecture-notes/pull/105) | Linux UI 整合驗收紀錄 |
+| v1.9.01 | 2026-10-15 | [#103](https://github.com/RichardstGG/lecture-notes/pull/103) | Linux 真機會議 CLI 驗收紀錄 |
+| v1.9.00 | 2026-10-15 | [#104](https://github.com/RichardstGG/lecture-notes/pull/104) | Web UI 可操作會議錄音、匯入、停止與辨識 |
+
 ## v1.8：會議 CLI 與 macOS 錄音修正
 
 `lec meeting run`／`lec meeting diarize` 接上後，會議第一次能從頭跑到尾（實驗中，只有 CLI）。
 
 | 版本 | 合併日期 | PR | 內容 |
 |---|---|---|---|
+| v1.8.11 | 2026-10-15 | [#77](https://github.com/RichardstGG/lecture-notes/pull/77) | Windows 會議路徑與 UTF-8 輸出修正 |
+| v1.8.10 | 2026-10-15 | [#102](https://github.com/RichardstGG/lecture-notes/pull/102) | macOS helper 快取目錄權限不受 umask 影響 |
+| v1.8.09 | 2026-10-15 | [#101](https://github.com/RichardstGG/lecture-notes/pull/101) | 會議範本註解改成目前的 CLI 用法 |
+| v1.8.08 | 2026-10-15 | [#100](https://github.com/RichardstGG/lecture-notes/pull/100) | Windows 測試站確實驗證撤銷同意 |
+| v1.8.07 | 2026-10-15 | [#99](https://github.com/RichardstGG/lecture-notes/pull/99) | 平台測試斷言加嚴，失敗時也清理暫存 |
+| v1.8.06 | 2026-10-15 | [#94](https://github.com/RichardstGG/lecture-notes/pull/94) | macOS 錄音 helper 快取，不必每次重新編譯 |
+| v1.8.05 | 2026-10-15 | [#98](https://github.com/RichardstGG/lecture-notes/pull/98) | 會後辨識的重新轉錄不再出現亂碼 |
+| v1.8.04 | 2026-10-15 | [#97](https://github.com/RichardstGG/lecture-notes/pull/97) | 修正四個在 Windows 失敗的測試 |
+| v1.8.03 | 2026-10-15 | [#96](https://github.com/RichardstGG/lecture-notes/pull/96) | CHANGELOG 與 README 依進度更新 |
 | v1.8.02 | 2026-10-15 | [#95](https://github.com/RichardstGG/lecture-notes/pull/95) | 會議 CLI：錄音、匯入、會後發言者辨識 |
 | v1.8.01 | 2026-10-14 | [#93](https://github.com/RichardstGG/lecture-notes/pull/93) | macOS 缺 swiftc 時 doctor 回報失敗 |
 | v1.8.00 | 2026-10-14 | [#86](https://github.com/RichardstGG/lecture-notes/pull/86) | macOS 錄音不再掉音訊（原生擷取） |

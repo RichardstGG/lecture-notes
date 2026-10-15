@@ -27,8 +27,9 @@
 
 **會議紀錄（開發中，部分可試用）**
 
-- 錄製會議或匯入會議錄音並產生逐字稿；會後自動區分不同的發言者，產生標示發言者的逐字稿。目前只能以指令操作，發言者區分的準確度仍在驗證中。
-- 規劃中：同時收錄電腦播放的聲音（例如線上會議中其他人的發言）與自己的麥克風，以及在圖形介面中操作會議。
+- 錄製會議或匯入會議錄音並產生逐字稿；會後自動區分不同的發言者，產生標示發言者的逐字稿。
+- 錄音、匯入、停止、發言者區分與重新辨識都可以在圖形介面中操作，也可以用指令操作（目前在 Linux 驗證過）。發言者區分的準確度仍在驗證中。
+- 規劃中：同時收錄電腦播放的聲音（例如線上會議中其他人的發言）與自己的麥克風。
 
 **桌面應用程式（規劃中）**
 
@@ -39,7 +40,7 @@
 | 版本 | 內容 | 狀態 |
 |---|---|---|
 | V1.0 | 課堂紀錄與基本操作介面 | 已完成 |
-| V2.0 | 會議紀錄與會議工作介面 | 開發中（錄製與發言者區分可試用，操作介面開發中） |
+| V2.0 | 會議紀錄與會議工作介面 | 開發中（錄製、發言者區分與操作介面可試用，準確度驗證中） |
 | V3.0 | 打包成桌面應用程式 | 規劃中 |
 
 ### 使用須知
@@ -186,7 +187,7 @@ extra_instructions = "本課程著重網路概念，重點請保留協定名稱�
 預設 `[summary] upstream = "local"` 保留既有 llama-server／本機模型流程。
 UI「本機設定 → 摘要 API 上游」可新增、完整覆寫或刪除私有上游；課堂與歷史紀錄的「摘要上游」選單可選本地 GPU 或已儲存的 API。錄音、音檔轉錄後摘要、補做／重做皆使用所選上游。
 API 模式不檢查本機 GGUF、不啟停本機或遠端 LLM 行程；語音轉錄仍使用本機 whisper。
-目前只提供課程摘要，會議工作台仍為預覽、沒有會議摘要流水線；未來會議可共用此連線層。
+目前只提供課程摘要，會議不做摘要；未來會議可共用此連線層。
 
 建立 **`config/upstreams.toml`**（已加入 `.gitignore`；不要把此內容放進課程檔或 `local.toml`）：
 
@@ -296,7 +297,7 @@ lec --start-ui                           # Windows：python lec --start-ui
 #### 頁面
 
 - **課堂**：處理控制、逐字稿／課堂筆記／術語候選、歷史紀錄、內網分享、課程設定。
-- **會議**（實驗中）：目前只能讀取既有會議場次的逐字稿與辨識進度，「開始一場會議」只是預覽、錄音按鈕停用。見「會議功能」。
+- **會議**（實驗中）：建立／編輯會議設定、現場錄音或匯入、正常停止／強停、啟動會後辨識／取消／重跑，並查看原稿、帶代號的逐字稿與辨識進度。只開放單一來源，雙來源選項停用。見「會議功能」。
 - **本機設定**：麥克風、裝置診斷、摘要 API 上游。
 
 各區塊網址與導覽細節見 [ui/WORKBENCH.md](ui/WORKBENCH.md)。
@@ -356,8 +357,8 @@ npm run dev
 ### 會議功能（開發中，V2.0）
 
 會議工作台的目標：同時錄「系統輸出＋麥克風」兩個來源，會後分辨發言者並產生帶代號的逐字稿。
-**目前可以用 CLI 從頭跑完一場會議（實驗中）**：單一來源錄音或匯入 → 原稿 → 會後發言者辨識。
-雙來源錄音還沒開放，UI 也還不能開始錄會議或啟動辨識；辨識準確度尚未用標註樣本驗證。
+**目前可以用 CLI 或 Web UI 從頭跑完一場會議（實驗中）**：單一來源錄音或匯入 → 原稿 → 會後發言者辨識。
+Linux 已做過 CLI 與 UI 真機驗收；雙來源錄音還沒開放，辨識準確度尚未用標註樣本驗證（品質優化列在 v2.x）。
 
 ```bash
 cp meetings/examples/template.toml meetings/週會.toml      # 改 name、num_speakers
@@ -378,7 +379,7 @@ lec meeting diarize outputs/meetings/週會_20261015_140000 --speakers 4
 | 單工作鎖與狀態 | `run.lock` 原子 OS 鎖；status／run 為 schema 2（新增 `work_type`、`stop_reason`、`diarization`），events 維持 schema 1，reader 相容舊檔 | [docs/meeting-workbench-lock-status.md](docs/meeting-workbench-lock-status.md) |
 | 會後發言者辨識 `core/diarize.py` | 由 `lec meeting diarize` 呼叫；**準確度未驗證** | [docs/diarize-install.md](docs/diarize-install.md)、[評分器](docs/diarize-evaluation.md) |
 | 雙音源錄音 `core/capture.py` | 引擎層完成，僅 Linux；**錄音入口仍拒絕 `capture_mode = "dual"`，硬體驗收未做** | [docs/platform-dual-capture.md](docs/platform-dual-capture.md)、[docs/meeting-workbench-dual-audio.md](docs/meeting-workbench-dual-audio.md) |
-| UI 會議頁 | 讀取既有會議場次、兩份逐字稿與辨識進度；開始錄音與辨識仍停用 | [ui/WORKBENCH.md](ui/WORKBENCH.md) |
+| UI 會議頁 | 會議設定、錄音／匯入、停止／強停、辨識／取消／重跑都已接上正式 API；Linux 已做 UI 真機驗收 | [ui/WORKBENCH.md](ui/WORKBENCH.md) |
 
 實作順序與剩餘工作：[docs/meeting-workbench-implementation.md](docs/meeting-workbench-implementation.md)。
 
