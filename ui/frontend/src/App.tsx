@@ -122,17 +122,18 @@ export default function App() {
       </div>}
 
       {data.status.running && <div className="cross-workbench-status" role="status">
-        <span>背景工作進行中：{runningWorkbench === "meeting" ? "會議" : runningWorkbench === "lecture" ? "課堂" : "未知類型"} · {data.status.course || data.status.session || "未命名工作"} · {phaseLabels[phase || ""] || phase || "處理中"}
+        <span>背景工作進行中：{runningWorkbench === "meeting" ? "會議" : runningWorkbench === "lecture" ? "課堂" : "未知類型"} · {data.status.course || data.status.session || "未命名工作"} · {data.status.session || "session 配置中"} · {phaseLabels[phase || ""] || phase || "處理中"}
           {data.status.work_type === "meeting" && data.status.status?.diarization && Number.isFinite(data.status.status.diarization.processed_seconds)
             && <> · {data.status.status.diarization.stage === "segmentation" ? "發言者辨識" : data.status.status.diarization.stage === "retranscription" ? "重新轉錄" : "會後處理"} {formatDuration(data.status.status.diarization.processed_seconds)}
               {Number.isFinite(data.status.status.diarization.total_seconds) && (data.status.status.diarization.total_seconds ?? 0) > 0
                 ? ` / ${formatDuration(data.status.status.diarization.total_seconds ?? undefined)}` : ""}</>}
+          {!data.status.status?.diarization && <> · 已處理 {formatDuration(data.status.status?.transcribed)}</>}
         </span>
         {runningWorkbench && <button type="button" onClick={() => navigate(runningWorkbench === "meeting" ? { page: "meeting", target: "meeting-live" } : { page: "lecture", target: "live" })}>回到工作台</button>}
       </div>}
 
       <div hidden={page !== "meeting"} id="meeting-live">
-        <MeetingWorkbench active={page === "meeting"} runtime={data.status} sessions={data.sessions} />
+        <MeetingWorkbench active={page === "meeting"} runtime={data.status} sessions={data.sessions} devices={data.devices} onChanged={data.refresh} />
       </div>
       <div hidden={page !== "lecture"}>
 

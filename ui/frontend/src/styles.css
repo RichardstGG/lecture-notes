@@ -56,6 +56,7 @@ h1 { margin-bottom: 0; font-size: clamp(28px, 3vw, 38px); letter-spacing: -.035e
 .notice.error { border-color: #e8c3ba; background: #fff0ec; color: #8c3a29; }
 .notice button { border: 0; background: none; color: inherit; }
 .cross-workbench-status { margin-bottom: 18px; padding: 12px 16px; display: flex; align-items: center; justify-content: space-between; gap: 12px; border: 1px solid #bdd3c2; border-radius: 10px; background: #e8f1e9; color: #274c36; font-size: 12px; }
+.cross-workbench-status > span { min-width: 0; overflow-wrap: anywhere; }
 .cross-workbench-status button { border: 0; background: transparent; color: #245b40; font-weight: 700; text-decoration: underline; }
 .meeting-workbench { display: grid; gap: 20px; }
 .meeting-preview-note { display: grid; gap: 4px; padding: 14px 18px; border: 1px solid #e7cf9f; border-radius: 11px; background: #fff8e9; color: #6e4d1f; font-size: 12px; line-height: 1.5; }
@@ -66,6 +67,10 @@ h1 { margin-bottom: 0; font-size: clamp(28px, 3vw, 38px); letter-spacing: -.035e
 .meeting-demo-tag { padding: 5px 9px; border-radius: 30px; background: #eeeae0; color: #655b45; font-size: 11px; }
 .meeting-help { margin: 12px 0 20px; color: var(--muted); font-size: 13px; line-height: 1.6; }
 .meeting-fields { display: grid; grid-template-columns: 1.2fr .7fr 1fr; gap: 12px; margin: 18px 0; }
+.meeting-fields > button { align-self: end; }
+.meeting-card details { margin-top: 18px; }
+.meeting-card details form, .meeting-card details label { display: grid; gap: 10px; margin-top: 12px; }
+.meeting-card details textarea { width: 100%; resize: vertical; font-family: ui-monospace, monospace; }
 .meeting-fields label { display: grid; gap: 7px; min-width: 0; }
 .meeting-fields label span { color: var(--muted); font-size: 11px; font-weight: 600; }
 .meeting-demo-controls { display: flex; flex-wrap: wrap; gap: 7px; margin: 18px 0; }

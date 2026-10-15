@@ -552,6 +552,7 @@ class _MeetingJob(_Base):
         self._old_signals = {}
         self._terminal_published = False
         self._diarization_published = False
+        self._forced = False
         self._manifest_before = None
 
     def _install_signals(self):
@@ -595,6 +596,7 @@ class _MeetingJob(_Base):
     def _force_exit(self):
         if self.stage == "cleanup" or self._has_published_diarization():
             return
+        self._forced = True
         # During segmentation the engine owns a detached worker. Let its cancel
         # poll kill/reap that worker before releasing the shared lock. Killing
         # only this parent would leave inference running in the background.
@@ -612,8 +614,13 @@ class _MeetingJob(_Base):
             return
         # Unfinished recordings do not receive reusable source metadata.
         transcriber = getattr(self, "transcriber", None)
-        if transcriber and transcriber.proc:
-            transcriber.proc.kill()
+        if transcriber:
+            # Mark intentional capture termination before kill so the reader
+            # cannot report the expected ffmpeg -9 as a source failure.
+            transcriber.stopping = True
+            transcriber.abort = True
+            if transcriber.proc:
+                transcriber.proc.kill()
         self.outcome = "aborted"
         for srv in (self.whisper, self.llama):
             if srv:
@@ -735,6 +742,8 @@ class _MeetingJob(_Base):
             code = 1
             self.error_code, self.error_message = "asr_failed", "會議作業發生未預期錯誤"
         finally:
+            if self._forced:
+                code = 130
             self.outcome = "aborted" if code == 130 else ("done" if code == 0 else "failed")
             self.stage = "cleanup"
             code = self._finalize(code)
@@ -857,6 +866,8 @@ class MeetingRun(_MeetingJob):
         if self.cancelled.is_set():
             self.transcriber.request_stop()
         result = self.transcriber.run()
+        if self._forced:
+            raise KeyboardInterrupt
         if self.cancelled.is_set() or result.get("aborted"):
             self.status.update(stop_reason="user")
         if self.input_file and result.get("aborted"):

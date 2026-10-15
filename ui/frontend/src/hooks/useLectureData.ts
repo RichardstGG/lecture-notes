@@ -32,6 +32,7 @@ export function useLectureData() {
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string>();
   const previousRunning = useRef(false);
+  const previousSession = useRef<string | undefined>(undefined);
 
   const refreshSessions = useCallback(async () => {
     const result = await api.sessions();
@@ -58,6 +59,7 @@ export function useLectureData() {
         api.status(), api.courses(), api.models(), api.sessions(),
       ]);
       setStatus(nextStatus);
+      previousRunning.current = nextStatus.running;
       setCourses(nextCourses);
       setModels(nextModels);
       setSessions(nextSessions);
@@ -80,7 +82,8 @@ export function useLectureData() {
       setStatus(next);
       setConnected(true);
       setError(undefined);
-      if (previousRunning.current && !next.running) void refreshSessions();
+      if ((previousRunning.current && !next.running) || (next.session && next.session !== previousSession.current)) void refreshSessions();
+      previousSession.current = next.session;
       previousRunning.current = next.running;
     });
     events.addEventListener("error", () => setConnected(false));

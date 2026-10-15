@@ -99,6 +99,53 @@ class LauncherTests(unittest.IsolatedAsyncioTestCase):
         self.assertTrue(result.completed)
         self.assertEqual(result.exit_code, 0)
 
+    async def test_meeting_fast_completion_uses_the_single_envelope(self):
+        launcher = self.launcher("""
+            import json
+            print(json.dumps(dict(schema_version=1, accepted=True, session="/output/meeting", work_type="meeting")))
+        """)
+        async def idle():
+            return {"running": False}
+        result = await launcher.start("meeting", "run", "team", "--json", wait_for_session=idle)
+        self.assertTrue(result.completed)
+        self.assertEqual(result.session, "/output/meeting")
+
+    async def test_meeting_never_accepts_another_pid_and_timeout_keeps_child_alive(self):
+        from ui.backend.process_control import ControlError
+        marker = self.root / "finished"
+        launcher = self.launcher("""
+            import time
+            from pathlib import Path
+            time.sleep(.2)
+            Path("finished").touch()
+        """)
+        async def another_job():
+            return {"running": True, "pid": -1, "session": "/unrelated/session"}
+        with self.assertRaises(ControlError) as result:
+            await launcher.start("meeting", wait_for_session=another_job, startup_timeout=.01)
+        self.assertEqual((result.exception.code, result.exception.status_code), ("startup_pending", 503))
+        await asyncio.sleep(.25)
+        self.assertTrue(marker.exists())
+
+    async def test_cancelling_startup_wait_does_not_stop_child(self):
+        launcher = self.launcher("""
+            import time
+            from pathlib import Path
+            time.sleep(.2)
+            Path("finished").touch()
+        """)
+        entered = asyncio.Event()
+        async def status():
+            entered.set()
+            await asyncio.Future()
+        task = asyncio.create_task(launcher.start("meeting", wait_for_session=status))
+        await entered.wait()
+        task.cancel()
+        with self.assertRaises(asyncio.CancelledError):
+            await task
+        await asyncio.sleep(.25)
+        self.assertTrue((self.root / "finished").exists())
+
 
 class DetachedLauncherTests(unittest.TestCase):
     def test_background_process_survives_event_loop_shutdown(self):

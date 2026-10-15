@@ -1,5 +1,5 @@
 import type {
-  CaptureCapabilities,
+  CaptureCapabilities, Meeting, MeetingDetail, MeetingRunRequest,
   ActionResponse,
   AudioUpload,
   ApiErrorEnvelope,
@@ -101,6 +101,20 @@ export const api = {
     "/api/v1/sharing/close", { method: "POST", body: "{}" },
   ),
   status: () => request<RuntimeStatus>("/api/v1/status"),
+  meetings: () => request<Meeting[]>("/api/v1/meetings"),
+  meeting: (id: string) => request<MeetingDetail>(`/api/v1/meetings/${encodeURIComponent(id)}`),
+  createMeeting: (id: string, content: string) => request<MeetingDetail>("/api/v1/meetings", {
+    method: "POST", body: JSON.stringify({ id, content }),
+  }),
+  updateMeeting: (id: string, content: string) => request<MeetingDetail>(`/api/v1/meetings/${encodeURIComponent(id)}`, {
+    method: "PUT", body: JSON.stringify({ content }),
+  }),
+  startMeeting: (payload: MeetingRunRequest) => request<ActionResponse>("/api/v1/meeting-runs", {
+    method: "POST", body: JSON.stringify(payload),
+  }),
+  diarize: (id: string, speakers: number) => request<ActionResponse>(`/api/v1/sessions/${encodeURIComponent(id)}/diarize`, {
+    method: "POST", body: JSON.stringify({ speakers }),
+  }),
   courses: () => request<Course[]>("/api/v1/courses"),
   models: () => request<ModelInventory>("/api/v1/models"),
   summaryUpstreams: () => request<SummaryUpstreamSettings>("/api/v1/summary-upstreams"),
