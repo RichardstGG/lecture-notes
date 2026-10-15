@@ -254,9 +254,16 @@ class ProcessController:
                 "completed": result.completed, "exit_code": result.exit_code,
                 "message": "Meeting completed" if result.completed else "Meeting started"}
 
-    async def start_meeting(self, meeting_id, speakers, input_file=None, source=None):
+    async def start_meeting(self, meeting_id, speakers, input_file=None, source=None, original_name=None):
         # Existence and portable-id validation stay in the settings store/API.
         args = [meeting_id, "--speakers", str(speakers)]
+        if original_name is not None:
+            # Display metadata only. Sanitize before argv too (NUL cannot be
+            # passed to subprocess); the CLI repeats this for direct callers.
+            original_name = "".join(char for char in original_name if char.isprintable()).strip()[:255]
+            if not input_file or not original_name:
+                raise ControlError("input_invalid", "Original name requires an import file and visible text", 400)
+            args.append(f"--original-name={original_name}")
         if input_file is not None:
             if "\x00" in input_file or not re.fullmatch(r"[A-Za-z0-9]+", Path(input_file).suffix.lstrip(".")):
                 raise ControlError("input_invalid", "Input audio path requires a valid file extension", 400)

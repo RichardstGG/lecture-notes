@@ -77,6 +77,7 @@ export interface MeetingDetail {
 }
 
 export interface MeetingRunRequest {
+  original_name?: string;
   meeting_id: string;
   speakers: number;
   input_file?: string;

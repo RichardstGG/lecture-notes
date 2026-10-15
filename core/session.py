@@ -816,8 +816,15 @@ class _MeetingJob(_Base):
 class MeetingRun(_MeetingJob):
     operation = "run"
 
-    def __init__(self, cfg, speakers, input_file=None):
+    def __init__(self, cfg, speakers, input_file=None, *, original_name=None):
         super().__init__(cfg, speakers)
+        if original_name is not None:
+            if not input_file or not isinstance(original_name, str):
+                raise MeetingJobError("input_invalid", "原始檔名需搭配匯入音檔", 2)
+            original_name = "".join(char for char in original_name if char.isprintable()).strip()[:255]
+            if not original_name:
+                raise MeetingJobError("input_invalid", "原始檔名不可為空白或不可列印字元", 2)
+        self.original_name = original_name
         self.input_file = Path(input_file).expanduser().resolve() if input_file else None
         self.transcriber = None
         if cfg.capture_plan()["mode"] != "single":
@@ -854,7 +861,7 @@ class MeetingRun(_MeetingJob):
                 os.replace(temporary, source)
             finally:
                 Path(temporary).unlink(missing_ok=True)
-            self._save_source(source, "import", self.input_file.name)
+            self._save_source(source, "import", self.original_name or self.input_file.name)
         if self._poll_cancel():
             raise KeyboardInterrupt
         self._start_whisper()

@@ -133,9 +133,10 @@ class MeetingApiTests(unittest.IsolatedAsyncioTestCase):
     async def start(self, imported=False):
         data = dict(meeting_id='team', speakers=3)
         if imported:
-            uploaded = await self.http.post('/api/v1/audio-uploads?filename=original.ogg', content=b'audio')
+            uploaded = await self.http.post('/api/v1/audio-uploads?filename=test8min.ogg', content=b'audio')
             self.assertEqual(uploaded.status_code, 201)
             data['input_file'] = uploaded.json()['path']
+            data['original_name'] = uploaded.json()['name']
         response = await self.http.post('/api/v1/meeting-runs', json=data)
         self.assertEqual(response.status_code, 202, response.text)
         self.assertEqual(response.json()['work_type'], 'meeting')
@@ -191,6 +192,27 @@ class MeetingApiTests(unittest.IsolatedAsyncioTestCase):
             self.assertEqual(response.json()['error']['code'], code)
         self.assertFalse((self.root / 'outputs').exists())
 
+    async def test_original_name_is_sanitized_before_subprocess_and_remains_display_metadata(self):
+        uploaded = await self.http.post('/api/v1/audio-uploads?filename=test8min.ogg', content=b'audio')
+        path = uploaded.json()['path']
+        (self.root / 'finish').touch()
+        response = await self.http.post('/api/v1/meeting-runs', json=dict(
+            meeting_id='team', speakers=2, input_file=path,
+            original_name='../test\x00\n\u202e8min.ogg' + '長' * 300))
+        self.assertEqual(response.status_code, 202, response.text)
+        await self.idle()
+        session = Path(response.json()['session'])
+        metadata = json.loads((session / 'source.json').read_text(encoding='utf-8'))
+        self.assertEqual(metadata['original_name'], ('../test8min.ogg' + '長' * 300)[:255])
+        self.assertEqual(metadata['path'], 'source_audio.ogg')
+        self.assertEqual((session / metadata['path']).read_bytes(), b'audio')
+        for data in [dict(meeting_id='team', speakers=2, original_name='label.ogg'),
+                     dict(meeting_id='team', speakers=2, input_file=path, original_name='\x00\n'),
+                     dict(meeting_id='team', speakers=2, input_file=path, original_name='x' * 4097)]:
+            rejected = await self.http.post('/api/v1/meeting-runs', json=data)
+            self.assertEqual(rejected.status_code, 400, rejected.text)
+            self.assertEqual(rejected.json()['error']['code'], 'input_invalid')
+
     async def test_simultaneous_work_only_one_succeeds_and_force_is_clean(self):
         # Independent control instances bypass the in-process asyncio lock;
         # the real CLI OS lock must still admit exactly one job.
@@ -215,6 +237,9 @@ class MeetingApiTests(unittest.IsolatedAsyncioTestCase):
         await self.idle()
         Path(staging).unlink()  # Retry must use the session copy.
         self.assertEqual((session / 'source_audio.ogg').read_bytes(), b'audio')
+        metadata = json.loads((session / 'source.json').read_text(encoding='utf-8'))
+        self.assertEqual(metadata['original_name'], 'test8min.ogg')
+        self.assertNotEqual(metadata['original_name'], Path(staging).name)
         raw = (session / 'transcript.md').read_bytes()
         for payload in ({}, {'speakers': 0}, {'speakers': '3'}):
             response = await self.http.post(self.url(session), json=payload)
@@ -229,6 +254,7 @@ class MeetingApiTests(unittest.IsolatedAsyncioTestCase):
         sid = session.relative_to(self.root / 'outputs').as_posix()
         initial = self.app.state.sessions.get(sid)
         self.assertEqual(initial['source']['kind'], 'import')
+        self.assertEqual(initial['source']['original_name'], 'test8min.ogg')
         self.assertEqual(initial['speakers']['actual_speakers'], 1)
         (self.root / 'finish').unlink()
         for force in (False, True):

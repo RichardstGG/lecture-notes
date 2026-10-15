@@ -54,7 +54,7 @@ describe("meeting workbench controls", () => {
     await waitFor(() => expect(changed).toHaveBeenCalledOnce());
   });
 
-  it("uploads a selected import and passes only the staged path to run", async () => {
+  it("imports the staged path with the original display name", async () => {
     vi.mocked(api.uploadAudio).mockResolvedValue({ api_version: 1, name: "original.wav", path: "/tmp/staging/upload.wav", size_bytes: 20 });
     render(<MeetingWorkbench runtime={idle} />);
     await screen.findByRole("option", { name: "團隊" });
@@ -65,7 +65,7 @@ describe("meeting workbench controls", () => {
     fireEvent.change(screen.getByLabelText("會議音檔"), { target: { files: [file] } });
     await screen.findByText("已準備：original.wav");
     fireEvent.click(screen.getByRole("button", { name: "開始匯入" }));
-    await waitFor(() => expect(api.startMeeting).toHaveBeenCalledExactlyOnceWith({ meeting_id: "team", speakers: 4, input_file: "/tmp/staging/upload.wav" }));
+    await waitFor(() => expect(api.startMeeting).toHaveBeenCalledExactlyOnceWith({ meeting_id: "team", speakers: 4, input_file: "/tmp/staging/upload.wav", original_name: "original.wav" }));
   });
 
   it("creates and updates meeting settings through the real API surface", async () => {

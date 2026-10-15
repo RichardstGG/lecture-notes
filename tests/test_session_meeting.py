@@ -115,6 +115,32 @@ class MeetingSessionTests(unittest.TestCase):
         self.whisper.return_value.stop.assert_called_once()
         self.assertFalse((self.state / 'run.json').exists())
 
+    def test_original_name_is_display_only_and_does_not_choose_source_path(self):
+        for name, expected in [('測試會議 test8min.ogg', '測試會議 test8min.ogg'),
+                               ('../../outside.wav', '../../outside.wav'),
+                               ('-name.ogg', '-name.ogg'),
+                               ('  test\x00\n\u202e8min.ogg  ', 'test8min.ogg'),
+                               ('長' * 300 + '.ogg', '長' * 255)]:
+            with self.subTest(name=name):
+                code, payload = self.import_audio('--original-name=' + name)
+                self.assertEqual(code, 0)
+                session = Path(payload['session'])
+                metadata = json.loads((session / 'source.json').read_text(encoding='utf-8'))
+                self.assertEqual(metadata['original_name'], expected)
+                self.assertEqual(metadata['path'], 'source_audio.ogg')
+                self.assertEqual((session / 'source_audio.ogg').read_bytes(), self.source.read_bytes())
+        self.assertFalse((self.root / 'outside.wav').exists())
+
+    def test_original_name_requires_file_and_visible_text_before_allocating_session(self):
+        for args in [('meeting', 'run', 'team', '--speakers', '2', '--original-name=label.ogg', '--json'),
+                     ('meeting', 'run', 'team', '--speakers', '2', '--file', str(self.source), '--original-name=', '--json'),
+                     ('meeting', 'run', 'team', '--speakers', '2', '--file', str(self.source), '--original-name=\x00\n\u202e', '--json')]:
+            with self.subTest(args=args):
+                code, payload = self.invoke(*args)
+                self.assertEqual((code, payload['error']['code']), (2, 'input_invalid'))
+        self.assertFalse((self.root / 'output').exists())
+        self.transcriber.assert_not_called()
+
     def test_import_copy_failure_does_not_start_transcription_or_publish_metadata(self):
         with patch('core.session.shutil.copyfile', side_effect=OSError('disk full')):
             code, payload = self.import_audio()

@@ -235,3 +235,15 @@ Automated／Mock tests 使用真實子行程模擬 30 秒收尾阻塞，兩次 S
 Hardware test（既有證據，由 maintainer 本次任務提供）：CLI 已在 Linux 真機驗錄音、lec stop、stop --force、SIGINT、會後辨識及搶鎖。
 本次沒有重做硬體驗收。Not tested：Claude 後續以正式 UI 驗錄音、匯入、跨頁、暫存清理後重跑、長時間錄音與搶鎖；Windows basic 由 maintainer 觸發，macOS／Windows 真機會議流程尚未驗證。
 辨識品質優化列 v2.x，不是 v1 接線前提。獨立 review／human final approval／merge 仍依 AGENTS.md，不自動合併。
+
+
+## v1 UI 整合驗收修正（2026-10-15）
+
+Claude 已在 Linux 真機 main `e9cf85e` 驗過錄音、匯入、停止／強停、辨識／取消／重跑、跨頁及長時間錄音（證據由 maintainer 本次任務提供）。本次只修該次驗收發現的兩個問題，仍待 Claude 真機複驗：
+
+- 會議工作台 grid 欄寬改為 `minmax(0, 1fr)`，避免歷史卡片列的 min-content 把整個工作台撐寬；歷史列沿用自己的水平捲動。
+- 匯入將上傳回應的原始 `name` 隨 API 選用 `original_name`、CLI 選用 `--original-name` 傳到 source.json，清理與相容性見正式契約。名稱僅供顯示，不能改變磁碟路徑。
+- Automated test／Mock test：CLI 預設 --file basename 不變；自訂名稱、控制字元、255 字元上限、類似路徑的名稱不影響 source_audio；API 上傳 test8min.ogg 後 metadata 與 session 回應保留該名稱，staging 清除後重跑仍保留。
+- Static validation／Mock test：CSS 回歸檢查限制外層 grid、保留 history overflow-x:auto；前端測試確認送出 staged path 與原始名稱。
+- Manual test（六場 fixture，沒有音訊引擎）：瀏覽器在 1024px／800px 寬度下，工作台寬度分別為 717.3px／511.2px，等於可用容器寬度；歷史列 scrollWidth=1360px、clientWidth=666px／460px，限制在自己的容器中。所有會議卡片與開始辨識按鈕均位於容器內，並可捲動選到第六張卡片。
+- Hardware test：本次未執行；Not tested：上述兩項修正的 Linux 真實 UI 複驗由 Claude 接續，Windows basic 仍由 maintainer 觸發。
