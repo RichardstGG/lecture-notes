@@ -160,6 +160,7 @@ class StartCaptureTests(unittest.TestCase):
              mock.patch.object(P.subprocess, "Popen", side_effect=[helper, ffmpeg]) as popen:
             result = P.start_live_capture(self.CMD, "1", "avfoundation")
         root = Path(result.cache.name)
+        self.addCleanup(result.cache.cleanup)     # 中途斷言失敗也不留下暫存目錄
         self.assertEqual(popen.call_args_list[0].args[0][1], self.ROWS[0]["name"])
         expected = self.CMD[:5] + ["-f", "matroska", "-i", "pipe:0"] + self.CMD[11:]
         self.assertEqual(popen.call_args_list[1].args[0], expected)
