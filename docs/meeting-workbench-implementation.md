@@ -31,6 +31,18 @@
 3. **Claude 引擎已封裝，品質驗收待完成。** 已提供 `diarize_session` 封裝與時間戳產物；仍須以乾淨的約十人中文加英文術語錄音驗證 diarization。原始受損錄音的 20.2% 遺失不能作準確度通過標準。模型缺失、錯誤、取消均要可測；不得依賴 torch、numpy、網路服務。
 4. **Codex API 與真資料 UI：正式控制已接線。** 現有 session store 已能讀雙稿；前端歷史與結果現讀真實 meeting session，session SSE 在帶代號稿新增或切換 generation 時發 `speaker_transcript` content event，status schema 2 的會後階段進度可顯示在會議頁與跨頁提示。底層執行 CLI 與來源保存已落地；會議設定、錄音／匯入、辨識、重跑與取消 API 已接線，先通過對應 API contract tests 才移除 mock；品質優化列 v2.x；UI 不 import `core`。
 5. **整合與硬體驗收。** 兩平台 beta 仍用實驗中措辭；Linux 實機錄音與匯入皆測、跨頁不中止、暫存清理後重跑、長任務進度、10/4 顯示、兩行程搶鎖、Ctrl+C/stop/stop_force。完成前不可宣稱會議功能可用。
+   - **2026-10-15 Linux 真機 CLI 驗收（Hardware test，Debian 13、內建數位麥克風、PipeWire pulse、main `5054bfd`）**：
+     `lec meeting run` 現場錄音三次——`lec stop` 約 60 秒 → `done`／exit 0、`stop_reason=user`、發布 `kind=recording` 的 `source.json`，
+     capture `lost_ratio` 0.006%；`lec stop --force` 約 30 秒 → `aborted`／exit 130、不發布 `source.json`、鎖已釋放、無殘留 ffmpeg／whisper-server；
+     SIGINT 約 30 秒 → `done`／exit 0 並發布來源。對第一段 `lec meeting diarize` → `done`、generation `0001`，原稿與來源雜湊不變；
+     辨識進行中另啟 `lec meeting run` → `busy`／exit 3。
+   - **2026-10-15 Linux API 端到端（Manual test，PR #104 審查時，匯入 `samples/test8min.ogg`，不經瀏覽器）**：
+     建立會議設定 200、重複 409、TOML 錯誤 400、`speakers=0` 400；`POST /meeting-runs` 202（0.17 秒回應、回傳 session、pid 相符）、
+     執行中再送 409；`POST /sessions/{id}/diarize` 202 → 辨識中 `POST /runs/stop` 正常取消 → 歷史原稿仍 `done`、`diarization_status`
+     為 `aborted`／`user`；再次辨識 → `done` 並經 API 回傳帶代號稿。
+   - **尚未驗收**：瀏覽器內的 UI 操作（跨頁、強停按鈕）、暫存清理後重跑、長時間錄音；Windows／macOS 的 UI 流程。
+   - 觀察：強停後 `last_error` 的 `ffmpeg 結束代碼 -9` 與 `lec stop` 對會議仍寫「補做總結」兩項已由 #104 修正；
+     真實環境錄音的帶代號稿比原稿稀疏許多（58 秒只留 6 段），屬 v2.x 品質範圍。
 
 ## 契約檢查點
 
