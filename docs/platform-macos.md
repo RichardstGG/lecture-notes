@@ -149,8 +149,8 @@ Parrot 驅動。只有驅動 host 在執行，未觀察到可退出的 Backgroun
   原有 Opus 存檔。**不使用無時間戳 raw PCM 作輸入**，以免把真正遺失掩蓋成連續的合成時間。
   合成測試刻意加入 128 ms 缺口，編成 Opus 後 `probe_capture` 仍量到 0.128 秒、一個缺口。
 - 需要 Xcode Command Line Tools 的 `swiftc`；缺少時 `lec doctor` 顯示 FAIL，請先執行
-  `xcode-select --install` 並完成安裝。每次錄音在獨立
-  暫存目錄編譯 helper，正常收尾刪除原始碼、binary 與 module cache。不加新設定鍵。
+  `xcode-select --install` 並完成安裝。helper 使用下節的安全 binary 快取；重新編譯時原始碼／
+  module cache 留在每次錄音的獨立暫存目錄，正常收尾刪除。不加新設定鍵。
   編譯／啟動失敗明確回報，**不退回已知會掉音訊的 ffmpeg avfoundation 擷取**。
 - `lec stop`／Ctrl+C 仍走原協定：停止檔或 signal handler 要求 helper 停止來源，等 FIFO
   寫完、EOF 讓 ffmpeg 封裝完成。強制停止時 helper 偵測父行程離開而結束，避免留下錄音子行程。
@@ -160,6 +160,82 @@ Parrot 驅動。只有驅動 host 在執行，未觀察到可退出的 Backgroun
   上游 native helper 失敗也令既有 `ffmpeg_failed` 為 true，即使 ffmpeg 封裝 EOF 後退出 0；另記錄原生錯誤。
 - Linux pulse、Windows dshow、檔案轉錄、裝置音量測試及其他擷取呼叫保留既有路徑。
   本次沒有改動會議功能；本節的單來源驗證不能套用到其他路徑。
+
+### 原生 helper 編譯快取（Issue #87）
+
+沿用 `default_state_dir()`，macOS 位置為
+`~/Library/Application Support/lecture-notes/native-capture/`，不受課程的 state_dir 設定影響。
+鍵是 SHA-256（Swift 原始碼 UTF-8 + NUL + `swiftc --version` 的 stdout／stderr + NUL + 機器架構）。
+任一輸入改變就重新編譯。binary 為 `<key>.bin`，另有 `<key>.sha256` 保存內容摘要；
+命中時仍需 swiftc 來取得版本，缺 swiftc 的啟動失敗與 doctor FAIL 判定不變。
+
+安全與復原：
+
+- 快取目錄須為目前使用者擁有的真實目錄、權限 0700。父目錄亦不可由其他帳號替換：
+  拒絕 symlink、其他擁有者與 group／world 可寫的父目錄（root 擁有的 sticky 暫存目錄例外）。
+  不會自行修正既有不安全目錄的權限。
+- binary、摘要及 `.lock` 須為目前使用者擁有的一般檔案，不可 group／world 可寫或為 symlink；
+  binary 還須有使用者執行權限且摘要相符。寫入的新 binary 為 0700、摘要與 lock 為 0600。
+- 跨行程 flock 保護查驗、編譯、發布與 helper 啟動，成功 exec 後釋放。binary／摘要各用私有
+  暫存檔、fsync、`os.replace` 原子改名；讀者使用同一把鎖，不會讀到一半的 binary／摘要組。
+- 一般毀損、缺少摘要或不可執行的安全檔案會刪除該筆並重編一次；命中後 helper Popen 發生
+  OSError 也只刪除／重編／重試一次，再失敗明確回報，沒有無限重試或退回 ffmpeg AVFoundation。
+  不安全的擁有者／權限／symlink 檔案則保持原樣、拒用，改在錄音專用暫存目錄編譯並記錄原因。
+- 快取不可寫、版本查詢／鎖／發布失敗時使用原有暫存編譯；快取問題不令錄音失敗。
+  真正的編譯／啟動錯誤仍明確報錯。每次記錄「使用快取」或「重新編譯」，並保留實際裝置名稱。
+- 每次發布新版本，保留本次及另外兩筆最近使用的安全版本；命中更新使用時間。只清理本快取
+  格式的安全檔案，不刪不明項目。`MacOSCaptureProcess.cache` 仍只持有錄音專用 TemporaryDirectory，
+  `wait()` 不刪持久 binary。helper 原始碼、PCM／stderr 協定、來源選擇與報告、停止與回收均不變。
+  Linux pulse／Windows dshow 不查詢版本、不讀寫此快取；CLI／設定／schema 不變。
+
+#### 快取驗證（本台 arm64 Mac）
+
+Hardware test：清空專用快取後，用實際 `./lec run ... --source default --transcribe-only`
+與持續低音量測試音各錄超過 1 分鐘。量測外部觀察器只包裝每次 `MacOSCaptureProcess.stdout.read()`，
+在第一筆非空 PCM（兩次均 9600 bytes）返回時記 monotonic 時間；起點是啟動 lec 程序前。
+此觀察器只在本機測試目錄，不改 helper／產品檔案，數字包含 Python／server／helper／ffmpeg 的啟動時間。
+最初測試音與停止參數有誤的 trial 已作廢，不混入下表。
+
+| 量測 | 第一次冷啟動 | 第二次暖啟動 |
+|---|---|---|
+| 開始至收到第一筆 PCM 秒 | 5.363376833003713 | 2.8879577920015436 |
+| 編譯／使用快取 | 是／否 | 否／是 |
+| probe audio／span 秒 | 61.233／61.233 | 61.713／61.713 |
+| probe lost_seconds／lost_ratio／gap_count | 0／0／0 | 0／0／0 |
+| Ogg 完整頁／封包中位數／額外頁時間中位數 ms | 61／50／0 | 61／50／0 |
+| native audio_seconds | 61.226666666662055 | 61.706666666662 |
+| native pts_span_seconds | 61.22666666668374 | 61.706666666665114 |
+| native callbacks | 5740 | 5785 |
+| native gap_count／lost_seconds／error | 0／0／空字串 | 0／0／空字串 |
+| native wall_seconds | 61.248346500011394 | 61.72502654168056 |
+| 總程序牆鐘秒 | 67.05262758300523 | 65.00920866700471 |
+| 退出碼／殘留自有子行程 | 0／無 | 0／無 |
+
+兩次 session.log 皆選到內建麥克風，原生報告的 gap_count／lost_seconds 相同且為 0，
+`capture_integrity.detail.native_capture` 亦保留，事件 schema_version 仍為 1。
+快取目錄／binary 權限均 0700；`codesign -v <cache binary>` exit 0、stdout／stderr 空，
+`codesign -dv --verbose=2` 回報 `Signature=adhoc` 與 `adhoc,linker-signed`，是 swiftc linker
+產生的內嵌簽章，未另行修改 helper 或自行補簽。
+
+Hardware test（並行）：另清空快取，兩個獨立 PTY 在同一 barrier 後啟動 lec，使用各自 run lock／
+whisper port 以免被既有全域單工作鎖拒絕；兩者共享同一使用者 helper 快取。
+A 重新編譯，B 使用快取；各錄 60.796 秒、lost_ratio／gap_count 皆 0、封包中位數 50，
+native callbacks 各 5699、audio_seconds 各 60.78933333332877、gap_count／lost_seconds 皆 0。
+第一筆 PCM 耗時分別為 5.816715083026793／5.816949208994629 秒（B 包含等待 A 編譯時間）。
+兩者正常停止、退出 0、無自有子行程殘留。之後快取只有一份 binary、摘要相符、沒有發布暫存檔，
+再次 codesign 驗證 exit 0；並行沒有毀損快取。
+
+Automated／Mock test：119 項相關平台、轉錄與 doctor 測試通過；其中 14 項 POSIX 快取 mock
+可在 Linux／macOS 執行，不需真正 swiftc 或麥克風。覆蓋二次命中、source／版本／架構改變、
+不可寫降級、毀損與 exec OSError 重編一次、重編失敗、uid／權限／symlink（含父目錄、lock、摘要）、
+並行完整發布及最近使用版本保留。Windows 只跳過 POSIX 快取 mock，既有 pulse／dshow spawn 契約仍驗證。
+完整 `python3 -m unittest`：1059 項、12 skipped、1 個既有 UI loopback ConnectTimeout
+（`test_wildcard_accepts_two_local_addresses_and_rejects_forged_host`／127.0.0.2）。
+未修改的 base（1dcfc0a）單獨重跑同項仍失敗；沒有改 UI 或繞過測試。
+Static validation：Swift 原始碼、A 的來源解析、MacOSCaptureProcess 停止／回收程式碼與 base 逐段比對相同；
+Python 編譯與完整 diff 檢查通過。
+Not tested：Intel Mac、真實 macOS 升級令編譯器版本改變的重編、沒有 Command Line Tools 的 Mac，
+Linux／Windows 真機、NFS／網路家目錄。macOS／Windows 保持實驗中。
 
 ### swiftc 檢查與相容性（Issue #89）
 
