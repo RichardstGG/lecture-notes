@@ -93,16 +93,16 @@ class SessionStoreTests(unittest.TestCase):
 
     def make_meeting(self, kind='recording'):
         session = self.make_session('meetings/one')
-        status = json.loads((session / 'status.json').read_text())
+        status = json.loads((session / 'status.json').read_text(encoding="utf-8"))
         status.update(work_type='meeting', schema_version=2, mode='live' if kind == 'recording' else 'file')
-        (session / 'status.json').write_text(json.dumps(status))
+        (session / 'status.json').write_text(json.dumps(status), encoding="utf-8")
         (session / 'recording_100000.ogg').unlink()
         source = session / 'source_audio.ogg'
         source.write_bytes(b'saved meeting audio')
         metadata = dict(schema_version=1, kind=kind, original_name='original.ogg', path=source.name,
                         size_bytes=source.stat().st_size, sha256=hashlib.sha256(source.read_bytes()).hexdigest(),
                         duration_seconds=123.4, requested_speakers=3, created_at=status['started_at'])
-        (session / 'source.json').write_text(json.dumps(metadata))
+        (session / 'source.json').write_text(json.dumps(metadata), encoding="utf-8")
         return session, metadata
 
     def test_meeting_source_availability_does_not_claim_content_integrity(self):
@@ -149,7 +149,7 @@ class SessionStoreTests(unittest.TestCase):
         for change in ({'path': '../external.ogg'}, {'sha256': 'invalid hash format'}, {'size_bytes': True},
                        {'schema_version': True}, {'requested_speakers': True}):
             with self.subTest(change=change):
-                (session / 'source.json').write_text(json.dumps({**metadata, **change}))
+                (session / 'source.json').write_text(json.dumps({**metadata, **change}), encoding="utf-8")
                 self.assertFalse(self.store.get('meetings/one')['session']['has_recording'])
         (session / 'source.json').unlink()
         (session / 'source.json').symlink_to(external)
@@ -157,11 +157,11 @@ class SessionStoreTests(unittest.TestCase):
 
     def test_history_keeps_original_abort_without_confusing_valid_source_with_done(self):
         session, _ = self.make_meeting('import')
-        status = json.loads((session / 'status.json').read_text())
+        status = json.loads((session / 'status.json').read_text(encoding="utf-8"))
         status.update(mode='diarize', phase='failed', last_error='model_missing')
-        (session / 'status.json').write_text(json.dumps(status))
+        (session / 'status.json').write_text(json.dumps(status), encoding="utf-8")
         (session / 'events.jsonl').write_text('\n'.join(json.dumps(dict(schema_version=1, type='phase', phase=phase))
-                                                for phase in ('starting', 'loading', 'transcribing', 'finishing', 'aborted', 'starting', 'failed')))
+                                                for phase in ('starting', 'loading', 'transcribing', 'finishing', 'aborted', 'starting', 'failed')), encoding="utf-8")
         summary = self.store.get('meetings/one')['session']
         self.assertEqual((summary['phase'], summary['mode']), ('aborted', 'file'))
         self.assertTrue(summary['has_transcript'])

@@ -7,19 +7,19 @@ import sys
 import tempfile
 import unittest
 from datetime import datetime
-from pathlib import Path
+from pathlib import Path, PurePosixPath, PureWindowsPath
 from unittest.mock import patch
 
 from tests import _pathfix  # noqa: F401
 from core.config import Config, ConfigError
-from core.session import LectureRun, OfflineSummary, make_meeting_session_dir
+from core.session import LectureRun, OfflineSummary, _meeting_path_is_within, make_meeting_session_dir
 
 
 class MeetingDirectoryTests(unittest.TestCase):
     def setUp(self):
         self.tmp = tempfile.TemporaryDirectory()
         self.addCleanup(self.tmp.cleanup)
-        self.root = Path(self.tmp.name)
+        self.root = Path(self.tmp.name).resolve()
         self.cfg = Config({'meeting': {'name': '設計/討論'}, 'paths': {
             'output_root': str(self.root / 'outputs'),
             'meeting_output_root': 'meetings',
@@ -126,3 +126,31 @@ print(make_meeting_session_dir(cfg).name)
                 if process.poll() is None:
                     process.kill()
                 process.communicate()
+
+
+class MeetingContainmentTests(unittest.TestCase):
+    def test_resolved_windows_namespace_aliases_preserve_containment(self):
+        for root in (r'C:\outputs', r'\\?\C:\outputs',
+                     r'\\server\share\outputs', r'\\?\UNC\server\share\outputs'):
+            unc = 'server' in root
+            parents = ((r'\\server\share\outputs\meetings', r'\\?\UNC\server\share\outputs\meetings')
+                       if unc else (r'C:\outputs\meetings', r'\\?\C:\outputs\meetings'))
+            for parent in parents:
+                with self.subTest(root=root, parent=parent):
+                    self.assertTrue(_meeting_path_is_within(PureWindowsPath(parent), PureWindowsPath(root)))
+
+    def test_namespace_normalization_does_not_allow_escape_or_device_aliases(self):
+        cases = [
+            (r'\\?\C:\outputs-other\meetings', r'C:\outputs'),
+            (r'C:\outside', r'\\?\C:\outputs'),
+            (r'\\?\D:\outputs\meetings', r'C:\outputs'),
+            (r'\\?\UNC\server\other\outputs\meetings', r'\\server\share\outputs'),
+            (r'\\server\share\outside', r'\\?\UNC\server\share\outputs'),
+            (r'\\?\GLOBALROOT\Device\HarddiskVolume1\outputs', r'C:\outputs'),
+            (r'\\.\C:\outputs\meetings', r'C:\outputs'),
+        ]
+        for parent, root in cases:
+            with self.subTest(root=root, parent=parent):
+                self.assertFalse(_meeting_path_is_within(PureWindowsPath(parent), PureWindowsPath(root)))
+        self.assertFalse(_meeting_path_is_within(PurePosixPath('/outside'), PurePosixPath('/outputs')))
+        self.assertTrue(_meeting_path_is_within(PurePosixPath('/outputs/meetings'), PurePosixPath('/outputs')))

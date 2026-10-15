@@ -26,7 +26,7 @@ class UpstreamSessionTests(unittest.TestCase):
                 payload = {'choices': [{'message': {'content': json.dumps({'topic': 'Topic', 'points': [], 'terms': [], 'emphasis': []})}, 'finish_reason': 'stop'}]}
                 target = ('http://secret.invalid/v1', {'name': 'lab', 'remote': True,
                           'model_id': 'secret-model', 'api_key': 'secret-key', 'disable_thinking': False})
-                root.joinpath('transcript.md').write_text(transcript)
+                root.joinpath('transcript.md').write_text(transcript, encoding='utf-8')
                 source = root / 'input.wav'
                 source.touch()
                 run = LectureRun(cfg, source if mode == 'file' else None) if mode in ('live', 'file') else OfflineSummary(cfg, root, 'all' if mode == 'redo' else None)
@@ -37,7 +37,7 @@ class UpstreamSessionTests(unittest.TestCase):
                     first.set()
                     return payload
                 def transcribe():
-                    (run.dir / 'transcript.md').write_text(transcript)
+                    (run.dir / 'transcript.md').write_text(transcript, encoding='utf-8')
                     if mode == 'live':
                         self.assertTrue(first.wait(2), 'first section must summarize before capture finishes')
                         self.assertEqual(len(calls), 1, 'last section stays pending until transcription ends')
@@ -55,13 +55,13 @@ class UpstreamSessionTests(unittest.TestCase):
                     llama.assert_not_called()
                 self.assertEqual(len(calls), 2)
                 self.assertTrue(all(body['model'] == 'secret-model' for body in calls))
-                entries = [json.loads(line) for line in (run.dir / 'notes.jsonl').read_text().splitlines()]
+                entries = [json.loads(line) for line in (run.dir / 'notes.jsonl').read_text(encoding='utf-8').splitlines()]
                 self.assertEqual([e['status'] for e in entries], ['ok', 'ok'])
-                public = ''.join(p.read_text() for p in run.dir.iterdir() if p.suffix in ('.log', '.toml', '.json', '.jsonl', '.md'))
+                public = ''.join(p.read_text(encoding='utf-8') for p in run.dir.iterdir() if p.suffix in ('.log', '.toml', '.json', '.jsonl', '.md'))
                 for secret in ('secret.invalid', 'secret-key', 'secret-model'):
                     self.assertNotIn(secret, public)
                 if mode in ('live', 'file', 'resume', 'redo'):
-                    status = json.loads((run.dir / 'status.json').read_text())
+                    status = json.loads((run.dir / 'status.json').read_text(encoding='utf-8'))
                     self.assertEqual(status['summary_upstream'], 'lab')
                     self.assertEqual(status['summary_connection'], 'ok')
                     self.assertEqual(status['servers']['llama'], 'not_started')
@@ -83,7 +83,7 @@ class UpstreamSessionTests(unittest.TestCase):
                 release.wait(5)
                 return {'choices': [{'message': {'content': '{}'}}]}
             def transcribe():
-                (run.dir / 'transcript.md').write_text('## 00:00:00\nFirst section\n## 00:05:00\nLast section')
+                (run.dir / 'transcript.md').write_text('## 00:00:00\nFirst section\n## 00:05:00\nLast section', encoding='utf-8')
                 self.assertTrue(entered.wait(2))
                 return dict(duration=310, aborted=False, gaps=[], ffmpeg_failed=False)
             with (patch.object(Config, 'remote_summary', return_value=target),
@@ -99,7 +99,7 @@ class UpstreamSessionTests(unittest.TestCase):
                     self.assertFalse(run.summary_thread.is_alive())
                     self.assertFalse((root / 'state' / 'run.json').exists())
                     self.assertFalse((run.dir / 'notes.jsonl').exists())
-                    self.assertEqual(json.loads((run.dir / 'status.json').read_text())['phase'], 'done')
+                    self.assertEqual(json.loads((run.dir / 'status.json').read_text(encoding='utf-8'))['phase'], 'done')
                     llama.assert_not_called()
                 finally:
                     release.set()
