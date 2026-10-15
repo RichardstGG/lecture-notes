@@ -8,7 +8,7 @@
 
 2026-10-06 雙音源增量：已實作設定驗證、能力查詢與安全阻擋，錄音仍未開放；引擎介面、來源 schema 2 與硬體驗收皆明標提案／未測試。詳見 [雙音源契約與 CROSS_AGENT_REQUEST](meeting-workbench-dual-audio.md)。
 
-本文件同時記錄已實作的基礎契約與尚待接線的完整流程。設定查詢、目錄分配、鎖／狀態、引擎及唯讀 UI 已分階段提供；`lec meeting run`、`lec meeting diarize` 已接持久來源與本機引擎，會議寫入 API 尚未提供。各項現況見文末，正式 UI 控制仍待品質驗收。決策依據為 2026-10-04 Claude Code 的 `CROSS_AGENT_REQUEST` 及使用者回覆「以此請求作為正式依據」。選定 sherpa-onnx 1.13.8、pyannote segmentation 3.0 ONNX、3D-Speaker CAMPPlus 中文英文 ONNX；辨識品質尚待乾淨會議錄音驗證。目前前端保留 mock 錄音／辨識預覽，真實會議歷史與雙稿讀取使用既有 session API；本機引擎僅由 CLI 接線。
+本文件同時記錄已實作的基礎契約與尚待接線的完整流程。設定查詢、目錄分配、鎖／狀態、引擎及唯讀 UI 已分階段提供；`lec meeting run`、`lec meeting diarize` 已接持久來源與本機引擎，會議寫入 API 尚未提供。各項現況見文末。**2026-10-15 maintainer 決定**：v1 以「Linux 單一來源的會議錄音、匯入、會後辨識在 CLI 與 Web UI 都可運作」為完成條件；辨識品質優化（門檻、準確度、標註樣本驗收）改列 v2.x 目標，不再是寫入 API／正式 UI 控制的接線前提；雙來源錄音不在 v1。決策依據為 2026-10-04 Claude Code 的 `CROSS_AGENT_REQUEST` 及使用者回覆「以此請求作為正式依據」。選定 sherpa-onnx 1.13.8、pyannote segmentation 3.0 ONNX、3D-Speaker CAMPPlus 中文英文 ONNX；辨識品質尚待乾淨會議錄音驗證。目前前端保留 mock 錄音／辨識預覽，真實會議歷史與雙稿讀取使用既有 session API；本機引擎僅由 CLI 接線。
 
 ## 範圍與既有行為
 
@@ -90,7 +90,7 @@ Codex 實作順序：契約與 UI mock → `core/config.py` / `core/cli.py` / `c
 
 ## 現況差距與待決事項
 
-目前 main 已提供會議設定查詢／驗證、排他目錄分配、status／run schema 2、原子工作鎖，以及可直接呼叫的辨識引擎與 generation 輸出。本次提供 `lec meeting run`／`lec meeting diarize`、會議持久來源產生流程與 `diarization.request.json`；錄音／辨識寫入 API 與正式控制 UI 仍待品質驗收。session API、前端歷史與分享 reader 已能依真實會議 session 的 `work_type` 與 generation manifest 讀取兩份逐字稿；session SSE 能在帶代號稿新增或切換 generation 時傳 `speaker_transcript` content event。正式會議來源可由 CLI 生成，mock 示範資料不能分享。Claude 所述模型組合已被採用為實作候選，尚需乾淨樣本品質驗收；模型檔再散佈方式與各平台安裝驗證由 maintainer 決定。實作前若變更本契約須同步更新文件與 contract tests。
+目前 main 已提供會議設定查詢／驗證、排他目錄分配、status／run schema 2、原子工作鎖，以及可直接呼叫的辨識引擎與 generation 輸出。本次提供 `lec meeting run`／`lec meeting diarize`、會議持久來源產生流程與 `diarization.request.json`；錄音／辨識寫入 API 與正式控制 UI 尚未完成，是 v1 剩餘的主要工作（不再以品質驗收為前提）。session API、前端歷史與分享 reader 已能依真實會議 session 的 `work_type` 與 generation manifest 讀取兩份逐字稿；session SSE 能在帶代號稿新增或切換 generation 時傳 `speaker_transcript` content event。正式會議來源可由 CLI 生成，mock 示範資料不能分享。Claude 所述模型組合已被採用為實作候選，乾淨樣本品質驗收改列 v2.x；模型檔再散佈方式與各平台安裝驗證由 maintainer 決定。實作前若變更本契約須同步更新文件與 contract tests。
 
 
 ## CLI 落地格式與操作（實驗中）

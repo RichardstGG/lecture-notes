@@ -15,7 +15,7 @@
 | 現有位置 | 已有行為 | 必要變動及驗證 |
 | --- | --- | --- |
 | `core/config.py`、`config/default.toml` | 已提供 work type、獨立 meetings 設定與 diarization 驗證；課堂 `load()` 行為保留 | 執行編排沿用已驗證的設定；保持同名課堂／會議隔離 |
-| `core/cli.py` | 課堂與會議工作同步執行；會議列表、設定查詢與 JSON/exit contract 已提供 | 正式 UI 控制待品質驗收；沒有引擎時回明確失敗 |
+| `core/cli.py` | 課堂與會議工作同步執行；會議列表、設定查詢與 JSON/exit contract 已提供 | 正式 UI 控制待接線（v1 剩餘工作）；沒有引擎時回明確失敗 |
 | `core/session.py` | 會議跳過 LLM、保存來源、編排會後辨識；沿用 stop 檔 | 正常停／強停已有契約測試，真實錄音硬體驗收待完成 |
 | `core/status.py` | status/run schema 2、event schema 1；持有整段工作的 OS 鎖，四行程競跑測試 | meeting run/diarize 已共用；實際硬體取消仍待驗收 |
 | `core/transcribe.py` | ffmpeg 16 kHz mono、VAD、whisper、原稿/SRT；`keep_recording` 可關 | CLI 編排持久來源；引擎按音訊時間戳重新轉錄，禁止字數或 OpenCC 字元位置對齊 |
@@ -28,9 +28,16 @@
 
 1. **已完成：契約、mock 前端及唯讀分享銜接。** 新增規格與 meeting 預覽元件；示範狀態控制只改 React 本地狀態，錄音按鈕 disabled。既有內網分享可選擇真實 `work_type=meeting` session，訪客讀取原逐字稿及目前 generation 的帶代號稿。課堂分享、CLI、設定、錄音與辨識流程不改。測 10/4 折疊、進度、兩類分享文件及下載隔離。
 2. **Codex 契約底層：CLI 編排完成。** work type、會議設定查詢、目錄命名、status schema 2、原子鎖、來源 metadata 與會議執行 CLI 已提供。使用假辨識器驗證 error/cancel/retry 與原子輸出；真實品質仍待驗收。檔案所有權與跨界變更遵循 [CLAUDE.md](../CLAUDE.md)／[CODEX.md](../CODEX.md)；文件和 contract tests 與程式同 PR。
-3. **Claude 引擎已封裝，品質驗收待完成。** 已提供 `diarize_session` 封裝與時間戳產物；仍須以乾淨的約十人中文加英文術語錄音驗證 diarization。原始受損錄音的 20.2% 遺失不能作準確度通過標準。模型缺失、錯誤、取消均要可測；不得依賴 torch、numpy、網路服務。
-4. **Codex API 與真資料 UI：唯讀完成，控制待接線。** 現有 session store 已能讀雙稿；前端歷史與結果現讀真實 meeting session，session SSE 在帶代號稿新增或切換 generation 時發 `speaker_transcript` content event，status schema 2 的會後階段進度可顯示在會議頁與跨頁提示。底層執行 CLI 與來源保存已落地；會議設定、錄音／匯入、辨識、重跑與取消 API 仍待品質驗收後接線。移除其 mock 前須有對應 API contract tests；UI 不 import `core`。
+3. **Claude 引擎已封裝；品質優化改列 v2.x。** 已提供 `diarize_session` 封裝與時間戳產物，並以 8 分鐘樣本與 Linux 真機錄音確認流程可運作。以乾淨的約十人中文加英文術語錄音驗證 diarization 準確度、決定門檻值，依 maintainer 2026-10-15 決定改列 v2.x，不阻擋 v1。原始受損錄音的 20.2% 遺失不能作準確度通過標準。模型缺失、錯誤、取消均要可測；不得依賴 torch、numpy、網路服務。
+4. **Codex API 與真資料 UI：唯讀完成，控制待接線。** 現有 session store 已能讀雙稿；前端歷史與結果現讀真實 meeting session，session SSE 在帶代號稿新增或切換 generation 時發 `speaker_transcript` content event，status schema 2 的會後階段進度可顯示在會議頁與跨頁提示。底層執行 CLI 與來源保存已落地；會議設定、錄音／匯入、辨識、重跑與取消 API 尚待接線，是 v1 剩餘的主要工作（不再等品質驗收）。移除其 mock 前須有對應 API contract tests；UI 不 import `core`。
 5. **整合與硬體驗收。** 兩平台 beta 仍用實驗中措辭；Linux 實機錄音與匯入皆測、跨頁不中止、暫存清理後重跑、長任務進度、10/4 顯示、兩行程搶鎖、Ctrl+C/stop/stop_force。完成前不可宣稱會議功能可用。
+   - **2026-10-15 Linux 真機 CLI 驗收（Hardware test，Debian 13、內建數位麥克風、PipeWire pulse、main `5054bfd`）**：
+     `lec meeting run` 現場錄音三次——`lec stop` 約 60 秒 → `done`／exit 0、`stop_reason=user`、發布 `kind=recording` 的 `source.json`，
+     capture `lost_ratio` 0.006%；`lec stop --force` 約 30 秒 → `aborted`／exit 130、不發布 `source.json`、鎖已釋放、無殘留 ffmpeg／whisper-server；
+     SIGINT 約 30 秒 → `done`／exit 0 並發布來源。對第一段 `lec meeting diarize` → `done`、generation `0001`，原稿與來源雜湊不變；
+     辨識進行中另啟 `lec meeting run` → `busy`／exit 3。**尚未驗收**：UI 控制（尚未接線）、跨頁、暫存清理後重跑、長時間錄音。
+   - 觀察（不阻擋 v1）：強制停止後 status `last_error` 為 `ffmpeg 結束代碼 -9`（強停本來就會 kill ffmpeg，屬雜訊）；
+     `lec stop` 的提示文字對會議仍寫「補做最後一段總結」；真實環境錄音的帶代號稿比原稿稀疏許多（58 秒只留 6 段），屬 v2.x 品質範圍。
 
 ## 契約檢查點
 
