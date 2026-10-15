@@ -325,6 +325,21 @@ class HelperCacheTests(unittest.TestCase):
         self.assertTrue(any("使用快取" in line for line in self.logs))
         self.assertEqual(sum("原生擷取來源" in line for line in self.logs), 2)
 
+    def test_missing_directories_are_private_even_with_group_writable_umask(self):
+        # Debian 等「使用者私有群組」預設 umask 0002；mkdir(parents=True) 的中間目錄會是 0775，
+        # 接著被父目錄檢查判成不安全，快取永遠用不到（在 Linux 開發機上 10 個測試因此失敗）。
+        previous = os.umask(0o002)
+        try:
+            self.start()
+            self.start()
+        finally:
+            os.umask(previous)
+        self.cached()
+        self.assertEqual(self.builds, 1, "第二次應該用快取，不重新編譯")
+        for path in (self.state, self.cache):
+            self.assertEqual(path.stat().st_mode & 0o777, 0o700, path)
+        self.assertFalse(any("不使用 macOS helper 快取" in line for line in self.logs))
+
     def test_source_version_and_architecture_each_invalidate_cache(self):
         self.start()
         with mock.patch.object(P, "_MACOS_CAPTURE_SWIFT", P._MACOS_CAPTURE_SWIFT + "\n"):
