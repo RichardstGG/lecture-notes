@@ -1074,6 +1074,21 @@ class _MacOSHelperCache:
                     or (info.st_mode & 0o022 and not sticky)):
                 raise PermissionError("快取父目錄的擁有者／權限／symlink 不安全")
 
+    def _mkdirs_private(self):
+        """逐層建立缺少的目錄，每一層都是 0700。
+
+        `Path.mkdir(parents=True)` 的中間目錄用 umask 預設權限：Debian 等「使用者私有群組」
+        的 umask 0002 會建出 0775，接著被 _check_parents 判成不安全，快取永遠用不到。
+        只建立原本不存在的層；既有目錄的權限不改，交給 _check_parents 判斷。
+        """
+        missing = []
+        for path in (self.root, *self.root.parents):
+            if path.exists() or path.is_symlink():
+                break
+            missing.append(path)
+        for path in reversed(missing):
+            path.mkdir(mode=0o700, exist_ok=True)
+
     def __enter__(self):
         try:
             if os.name != "posix":
@@ -1086,8 +1101,8 @@ class _MacOSHelperCache:
                                      + version.stdout + version.stderr + b"\0"
                                      + _pf.machine().encode("utf-8")).hexdigest()
             self._check_parents()
-            self.root.mkdir(mode=0o700, parents=True, exist_ok=True)
-            self._check_parents()  # umask 也可能令新建立的中間目錄不安全
+            self._mkdirs_private()
+            self._check_parents()  # 既有的中間目錄仍可能不安全
             info = self.root.lstat()
             if (not stat.S_ISDIR(info.st_mode) or info.st_uid != os.getuid()
                     or stat.S_IMODE(info.st_mode) != 0o700):
