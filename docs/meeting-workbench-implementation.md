@@ -40,9 +40,26 @@
      建立會議設定 200、重複 409、TOML 錯誤 400、`speakers=0` 400；`POST /meeting-runs` 202（0.17 秒回應、回傳 session、pid 相符）、
      執行中再送 409；`POST /sessions/{id}/diarize` 202 → 辨識中 `POST /runs/stop` 正常取消 → 歷史原稿仍 `done`、`diarization_status`
      為 `aborted`／`user`；再次辨識 → `done` 並經 API 回傳帶代號稿。
-   - **尚未驗收**：瀏覽器內的 UI 操作（跨頁、強停按鈕）、暫存清理後重跑、長時間錄音；Windows／macOS 的 UI 流程。
-   - 觀察：強停後 `last_error` 的 `ffmpeg 結束代碼 -9` 與 `lec stop` 對會議仍寫「補做總結」兩項已由 #104 修正；
-     真實環境錄音的帶代號稿比原稿稀疏許多（58 秒只留 6 段），屬 v2.x 品質範圍。
+   - **2026-10-15 Linux UI 整合驗收（Hardware test＋Manual test，main `e9cf85e`，Claude 桌面 app 內建瀏覽器操作 Web UI，內建數位麥克風）**：
+     - UI 現場錄音約 1 分鐘 → 「正常停止」→ 原稿完成、來源 `kind=recording`；錄音中切到課堂工作台約 20 秒再回來，工作不中斷，
+       跨頁提示列持續顯示「錄音中」；執行中「開始錄音」「開始辨識」皆停用。
+     - UI 會後辨識 → 顯示 `segmentation`／`retranscription` 階段、秒數與「要求 N／已找到 M」→「正常取消」→ 上一版 generation
+       `0001` 保留、`diarization_status=aborted`、無殘留 staging →「重跑辨識」→ 發布 `0002`。歷史清單約數秒內隨輪詢更新。
+     - UI 現場錄音約 20 秒 →「強制停止」→ `aborted`、不發布 `source.json`、`last_error` 為空（#104 的修正確認有效）、無殘留 ffmpeg／whisper-server。
+     - UI 匯入（maintainer 以檔案選擇器選 `samples/test8min.ogg`）→ `done`，`source_audio` 雜湊與原檔相同；刪除 upload staging 後
+       從 UI 重跑辨識 → `done`。
+     - UI 現場錄音 15 分 31 秒 →「正常停止」→ `done`；capture `lost_ratio` 0.008%；每分鐘取樣 RSS 穩定（lec 約 25 MB、
+       whisper-server 約 99 MB 不含 GPU 記憶體、ffmpeg 約 18 MB），轉錄佇列維持 0。會後辨識約 75 秒完成。
+   - **v1 收尾前要修（Codex，UI）**：
+     1. 會議工作台水平裁切：`.meeting-workbench` 的 grid 欄寬為 `auto`，`.meeting-history-list` 的 min-content 隨場次增加
+        （6 場時 1360px）把欄撐到 1411px，外層只有 1009px 寬且不可水平捲動，卡片右側（含「開始辨識」按鈕）被切掉。
+     2. UI 匯入時 `source.json` 的 `original_name` 記成上傳暫存的隨機檔名（例：`b6417e….ogg`），不是使用者的原始檔名。
+   - **尚未驗收**：Windows／macOS 的 UI 流程。
+   - 觀察（v2.x 品質範圍，不阻擋 v1）：
+     - 強停後 `last_error` 的 `ffmpeg 結束代碼 -9` 與 `lec stop` 對會議仍寫「補做總結」兩項已由 #104 修正。
+     - 真實環境錄音的帶代號稿比原稿稀疏許多（58 秒只留 6 段）。
+     - 15 分鐘錄音裡 VAD 略過 119 段、只送 4 段；後 12 分鐘確實無人說話（會後辨識同樣只在前 2 分 40 秒找到語音），
+       但前 1 分鐘幾句很短、很小聲的應答（「對，對」「嗯嗯」）被 VAD 判為「幾乎無人聲」略過，會後辨識則有抓到。
 
 ## 契約檢查點
 
