@@ -38,6 +38,30 @@ def make_wav(path, seconds=WAV_SECONDS, sr=16000):
     return path
 
 
+# 70 秒長音訊裡的兩段停頓；_split_pcm 在 28 秒上限下應該剛好從這兩處切開
+SILENCES = ((20.0, 20.3), (45.0, 45.3))
+
+
+def tone_pcm(seconds, silences=(), sr=16000):
+    """s16le 方波；silences 內的時間是靜音。"""
+    out = bytearray()
+    for i in range(int(seconds * sr)):
+        t = i / sr
+        quiet = any(s0 <= t < s1 for s0, s1 in silences)
+        out += struct.pack("<h", 0 if quiet else (2000 if (i // 800) % 2 else -2000))
+    return bytes(out)
+
+
+def make_wav_pcm(path, pcm, sr=16000):
+    path.parent.mkdir(parents=True, exist_ok=True)
+    with wave.open(str(path), "wb") as w:
+        w.setnchannels(1)
+        w.setsampwidth(2)
+        w.setframerate(sr)
+        w.writeframes(pcm)
+    return path
+
+
 def fake_diarizer(turns, duration=WAV_SECONDS):
     """turns: [(start, end, cluster, conf)]"""
     def inner(req, progress, cancel):
@@ -91,6 +115,34 @@ class Base(unittest.TestCase):
 
 # ---------------------------------------------------------------- 純函式
 class TestPure(unittest.TestCase):
+    def test_split_pcm_keeps_short_audio_whole(self):
+        pcm = tone_pcm(27.9)
+        self.assertEqual(D._split_pcm(pcm, 28.0), [0, len(pcm)])
+
+    def test_split_pcm_pieces_never_exceed_limit_even_without_silence(self):
+        # 連續不停頓的音訊也要切；所有片段相接、不重疊、不漏、而且都在上限內
+        pcm = tone_pcm(95.0)
+        cuts = D._split_pcm(pcm, 28.0)
+        self.assertEqual((cuts[0], cuts[-1]), (0, len(pcm)))
+        for lo, hi in zip(cuts, cuts[1:]):
+            self.assertLess(lo, hi)
+            self.assertEqual(lo % 2, 0, "切點必須落在 sample 邊界")
+            self.assertLessEqual((hi - lo) / 2 / 16000, 28.0)
+
+    def test_split_pcm_cuts_inside_the_pause(self):
+        pcm = tone_pcm(70.0, silences=SILENCES)
+        cuts = [c / 2 / 16000 for c in D._split_pcm(pcm, 28.0)[1:-1]]
+        self.assertEqual(len(cuts), 2)
+        for cut, (s0, s1) in zip(cuts, SILENCES):
+            self.assertTrue(s0 <= cut <= s1, f"切點 {cut:.3f}s 不在停頓 {s0}–{s1} 內")
+
+    def test_split_pcm_prefers_a_real_pause_over_a_gap_between_syllables(self):
+        # 15s 處只有 30ms 的空隙（像兩個音節之間），24s 處才是真正的停頓
+        pcm = tone_pcm(40.0, silences=((15.0, 15.03), (24.0, 24.3)))
+        cuts = [c / 2 / 16000 for c in D._split_pcm(pcm, 28.0)[1:-1]]
+        self.assertEqual(len(cuts), 1)
+        self.assertTrue(24.0 <= cuts[0] <= 24.3, f"切點 {cuts[0]:.3f}s 沒有落在真正的停頓")
+
     def test_relabel_uses_first_appearance_order(self):
         turns = [(0.0, 1.0, 7, 1.0), (1.0, 2.0, 2, 1.0), (2.0, 3.0, 7, 1.0)]
         self.assertEqual([t[2] for t in D._relabel(turns, None)], ["S01", "S02", "S01"])
@@ -153,6 +205,11 @@ class TestValidation(Base):
 
     def test_window_shift_must_be_positive(self):
         self._expect("input_invalid", segmentation_window_shift=0.0)
+
+    def test_max_asr_seconds_must_fit_one_whisper_window(self):
+        for bad in (0.0, 0.5, 30.5, float("nan"), True):
+            with self.subTest(bad=bad):
+                self._expect("input_invalid", max_asr_seconds=bad)
 
     def test_missing_source(self):
         self._expect("source_missing", source_audio=self.session / "nope.wav")
@@ -446,6 +503,65 @@ class TestOpenCC(Base):
         segs = json.loads((self.session / r.speakers_json).read_text(encoding="utf-8"))["segments"]
         self.assertEqual([s["speaker_id"] for s in segs], ["S01", "S02"])
         self.assertNotEqual(segs[0]["text"], "内存与网络", "應已轉成繁體")
+
+
+# ---------------------------------------------------------------- 長區間
+class TestLongTurns(Base):
+    """超過 whisper 30 秒視窗的區間要切開送：實測整段 70.8 秒送出會解出「Ｂ」與無效 UTF-8。"""
+    LONG = 70.0
+
+    def setUp(self):
+        super().setUp()
+        self.audio = make_wav_pcm(self.session / "long.wav", tone_pcm(self.LONG, SILENCES))
+        # pad 0.15 → 送出的視窗剛好是 [0, 70]
+        self.turns = [(0.15, self.LONG - 0.15, 1, 1.0)]
+
+    def recording_asr(self):
+        seen = []
+
+        def inner(req, pcm, prompt):
+            dur = len(pcm) / 2 / 16000
+            seen.append(dur)
+            return [(0.0, dur, f"第{len(seen)}片")]
+        inner.seen = seen
+        return inner
+
+    def run_long(self, **kw):
+        asr = self.recording_asr()
+        r = diarize_session(self.req(**kw), diarizer=fake_diarizer(self.turns, self.LONG), asr=asr)
+        segs = json.loads((self.session / r.speakers_json).read_text(encoding="utf-8"))
+        return asr.seen, segs
+
+    def test_every_asr_request_fits_the_limit_and_cuts_at_pauses(self):
+        seen, js = self.run_long()
+        self.assertEqual(len(seen), 3)
+        self.assertTrue(all(d <= 28.0 for d in seen), seen)
+        starts = [s["start_ms"] / 1000 for s in js["segments"]]
+        self.assertEqual(starts[0], 0.0)
+        for cut, (s0, s1) in zip(starts[1:], SILENCES):
+            self.assertTrue(s0 <= cut <= s1, f"切點 {cut:.3f}s 不在停頓 {s0}–{s1} 內")
+
+    def test_pieces_are_contiguous_and_times_are_absolute(self):
+        # 不漏音訊、不重疊：每片的 end 就是下一片的 start，最後一片結束在視窗尾
+        seen, js = self.run_long()
+        segs = js["segments"]
+        self.assertAlmostEqual(sum(seen), self.LONG, places=2)
+        for prev, nxt in zip(segs, segs[1:]):
+            self.assertEqual(prev["end_ms"], nxt["start_ms"])
+        self.assertEqual(segs[-1]["end_ms"], int(self.LONG * 1000))
+        self.assertEqual({s["speaker_id"] for s in segs}, {"S01"}, "切片不可改變代號")
+
+    def test_limit_is_recorded_in_engine_params(self):
+        _, js = self.run_long(max_asr_seconds=20.0)
+        self.assertEqual(js["engine"]["params"]["max_asr_seconds"], 20.0)
+
+    def test_cancel_is_honoured_between_pieces(self):
+        asr = self.recording_asr()
+        with self.assertRaises(DiarizationCancelled):
+            diarize_session(self.req(), diarizer=fake_diarizer(self.turns, self.LONG), asr=asr,
+                            cancel=lambda: len(asr.seen) >= 1)
+        self.assertEqual(len(asr.seen), 1, "第一片之後就該停下")
+        self.assertEqual(self.staging_dirs(), [])
 
 
 if __name__ == "__main__":

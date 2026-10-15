@@ -4,6 +4,7 @@
 不要自己判斷作業系統。
 """
 import ctypes
+import hashlib
 import io
 import json
 import math
@@ -12,6 +13,7 @@ import platform as _pf
 import re
 import shutil
 import signal
+import stat
 import subprocess
 import sys
 import tempfile
@@ -1018,12 +1020,178 @@ def native_capture_report(proc):
     return proc.capture_report if isinstance(proc, MacOSCaptureProcess) else None
 
 
+def _compile_macos_capture(compiler, work):
+    from .util import log
+    log("▶ 重新編譯 macOS 原生擷取 helper")
+    swift, binary = work / "capture.swift", work / "capture"
+    swift.write_text(_MACOS_CAPTURE_SWIFT, encoding="utf-8")
+    build = subprocess.run(
+        [compiler, "-module-cache-path", str(work / "modules"), str(swift), "-o", str(binary)],
+        capture_output=True, timeout=120,
+    )
+    if build.returncode:
+        detail = build.stderr.decode("utf-8", "replace").strip()[-1000:]
+        raise OSError(f"macOS 原生擷取 helper 編譯失敗：{detail}")
+    return binary
+
+
+class _MacOSHelperCache:
+    """私有持久快取。lock 持有到 helper exec 成功，避免查驗／清理／啟動競爭。
+
+    原始碼與 module cache 仍在每次錄音的 TemporaryDirectory；此物件沒有 cleanup，
+    不交給 MacOSCaptureProcess。摘要 sidecar 與 binary 在同一把 lock 下原子發布。
+    """
+
+    def __init__(self, compiler):
+        self.compiler = compiler
+        self.root = default_state_dir() / "native-capture"
+        self.lock = None
+        self.path = None
+        self.key = None
+
+    def _log_fallback(self, reason):
+        from .util import log
+        log(f"⚠ 不使用 macOS helper 快取：{reason}；改用暫存目錄重新編譯")
+        self.path = None
+
+    @staticmethod
+    def _safe_file(path):
+        info = path.lstat()
+        if (not stat.S_ISREG(info.st_mode) or info.st_uid != os.getuid()
+                or info.st_mode & 0o022):
+            raise PermissionError(f"{path.name} 不是目前使用者擁有的安全一般檔案（symlink／擁有者／權限）")
+        return info
+
+    def _check_parents(self):
+        # 父目錄不能由其他帳號替換；只允許 root 擁有的 sticky 暫存目錄例外。
+        for parent in self.root.parents:
+            try:
+                info = parent.lstat()
+            except FileNotFoundError:
+                continue
+            sticky = info.st_uid == 0 and info.st_mode & stat.S_ISVTX
+            if (not stat.S_ISDIR(info.st_mode) or info.st_uid not in (0, os.getuid())
+                    or (info.st_mode & 0o022 and not sticky)):
+                raise PermissionError("快取父目錄的擁有者／權限／symlink 不安全")
+
+    def __enter__(self):
+        try:
+            if os.name != "posix":
+                raise OSError("此快取需要 POSIX 檔案鎖")
+            import fcntl
+            version = subprocess.run([self.compiler, "--version"], capture_output=True, timeout=10)
+            if version.returncode:
+                raise OSError("無法取得 swiftc --version")
+            self.key = hashlib.sha256(_MACOS_CAPTURE_SWIFT.encode("utf-8") + b"\0"
+                                     + version.stdout + version.stderr + b"\0"
+                                     + _pf.machine().encode("utf-8")).hexdigest()
+            self._check_parents()
+            self.root.mkdir(mode=0o700, parents=True, exist_ok=True)
+            self._check_parents()  # umask 也可能令新建立的中間目錄不安全
+            info = self.root.lstat()
+            if (not stat.S_ISDIR(info.st_mode) or info.st_uid != os.getuid()
+                    or stat.S_IMODE(info.st_mode) != 0o700):
+                raise PermissionError("快取目錄必須由目前使用者擁有、權限 0700，且不是 symlink")
+            self.lock = os.open(self.root / ".lock", os.O_CREAT | os.O_RDWR | os.O_NOFOLLOW, 0o600)
+            info = os.fstat(self.lock)
+            if (not stat.S_ISREG(info.st_mode) or info.st_uid != os.getuid() or info.st_mode & 0o022):
+                raise PermissionError("快取鎖檔的擁有者／權限／型別不安全")
+            fcntl.flock(self.lock, fcntl.LOCK_EX)
+            self.path = self.root / (self.key + ".bin")
+        except (OSError, subprocess.TimeoutExpired) as exc:
+            self._log_fallback(str(exc))
+        return self
+
+    def __exit__(self, *exc):
+        if self.lock is not None:
+            os.close(self.lock)  # 關閉 fd 一併釋放 flock；不刪 lock 檔
+
+    @staticmethod
+    def _digest(path):
+        with path.open("rb") as stream:
+            return hashlib.file_digest(stream, "sha256").hexdigest()
+
+    def _discard(self):
+        for path in (self.path, self.path.with_suffix(".sha256")):
+            try:
+                self._safe_file(path)
+                path.unlink()
+            except FileNotFoundError:
+                pass
+
+    def _publish_file(self, path, data, mode):
+        fd, name = tempfile.mkstemp(prefix=".publish-", dir=self.root)
+        temporary = Path(name)
+        try:
+            with os.fdopen(fd, "wb") as output:
+                output.write(data)
+                output.flush()
+                os.fchmod(output.fileno(), mode)
+                os.fsync(output.fileno())
+            os.replace(temporary, path)
+        finally:
+            temporary.unlink(missing_ok=True)
+
+    def _prune(self):
+        entries = []
+        for path in self.root.glob("*.bin"):
+            if not re.fullmatch(r"[0-9a-f]{64}\.bin", path.name):
+                continue
+            try:
+                info = self._safe_file(path)
+                self._safe_file(path.with_suffix(".sha256"))
+                entries.append((info.st_mtime_ns, path))
+            except (OSError, ValueError):
+                continue
+        newest = [p for _, p in sorted(entries, reverse=True) if p != self.path]
+        for path in newest[2:]:  # 本次使用的版本 + 另外兩筆最近使用版本
+            path.unlink()
+            path.with_suffix(".sha256").unlink(missing_ok=True)
+
+    def binary(self, work, rebuild=False):
+        from .util import log
+        if self.path:
+            try:
+                if not rebuild:
+                    try:
+                        info = self._safe_file(self.path)
+                        digest_path = self.path.with_suffix(".sha256")
+                        self._safe_file(digest_path)
+                        try:
+                            digest = digest_path.read_text(encoding="ascii").strip()
+                        except UnicodeError:
+                            digest = ""  # 截斷／毀損的摘要視同 binary 不匹配
+                        if (info.st_size and info.st_mode & 0o100 and os.access(self.path, os.X_OK)
+                                and self._digest(self.path) == digest):
+                            os.utime(self.path, None, follow_symlinks=False)
+                            log("▶ 使用快取 macOS 原生擷取 helper")
+                            return self.path
+                        log("⚠ macOS helper 快取毀損或不可執行；刪除該筆並重新編譯一次")
+                    except FileNotFoundError:
+                        pass
+                self._discard()
+            except (OSError, UnicodeError) as exc:
+                self._log_fallback(str(exc))
+        binary = _compile_macos_capture(self.compiler, work)
+        if self.path:
+            try:
+                # 發布的 binary 與 digest 各自原子改名；讀取端持有相同 lock。
+                self._publish_file(self.path, binary.read_bytes(), 0o700)
+                self._publish_file(self.path.with_suffix(".sha256"),
+                                   (self._digest(binary) + "\n").encode("ascii"), 0o600)
+                self._prune()
+                return self.path
+            except OSError as exc:
+                self._log_fallback(str(exc))
+        return binary
+
+
 def start_live_capture(cmd, source, backend=None):
     """啟動課堂單來源錄音；macOS avfoundation 避開 ffmpeg 的單格暫存擷取。
 
     cmd 是既有 ffmpeg 輸入＋輸出 argv。僅替換輸入為帶原始 PTS 的 Matroska
     pipe；輸出、來源設定、停止檔協定、Linux pulse 與 Windows dshow 皆保留。
-    Swift 原始碼、binary 與 module cache 每次放在獨立暫存目錄，正常收尾刪除。
+    每次的原始碼／module cache 暫存目錄正常收尾刪除；安全的持久 binary 快取不隨錄音刪除。
     """
     if NAME != "macos" or audio_backend(backend) != "avfoundation":
         return subprocess.Popen(cmd, stdout=subprocess.PIPE, **spawn_kwargs())
@@ -1044,18 +1212,20 @@ def start_live_capture(cmd, source, backend=None):
                           "請重新執行 lec devices 或明確指定來源")
         cache = tempfile.TemporaryDirectory(prefix="lec-macos-capture-")
         root = Path(cache.name)
-        swift, binary = root / "capture.swift", root / "capture"
-        swift.write_text(_MACOS_CAPTURE_SWIFT, encoding="utf-8")
-        build = subprocess.run(
-            [compiler, "-module-cache-path", str(root / "modules"), str(swift), "-o", str(binary)],
-            capture_output=True, timeout=120,
-        )
-        if build.returncode:
-            detail = build.stderr.decode("utf-8", "replace").strip()[-1000:]
-            raise OSError(f"macOS 原生擷取 helper 編譯失敗：{detail}")
         diagnostics = tempfile.TemporaryFile()
-        helper = subprocess.Popen([str(binary), row["name"]], stdin=subprocess.DEVNULL,
-                                  stdout=subprocess.PIPE, stderr=diagnostics, **spawn_kwargs())
+        with _MacOSHelperCache(compiler) as persistent:
+            binary = persistent.binary(root)
+            try:
+                helper = subprocess.Popen([str(binary), row["name"]], stdin=subprocess.DEVNULL,
+                                          stdout=subprocess.PIPE, stderr=diagnostics, **spawn_kwargs())
+            except OSError:
+                if not persistent.path:
+                    raise
+                from .util import log
+                log("⚠ macOS helper 快取無法啟動；刪除該筆並重新編譯一次")
+                binary = persistent.binary(root, rebuild=True)
+                helper = subprocess.Popen([str(binary), row["name"]], stdin=subprocess.DEVNULL,
+                                          stdout=subprocess.PIPE, stderr=diagnostics, **spawn_kwargs())
         first_format = cmd.index("-f")
         input_end = cmd.index("-i", first_format) + 2
         native_cmd = [*cmd[:first_format], "-f", "matroska", "-i", "pipe:0", *cmd[input_end:]]

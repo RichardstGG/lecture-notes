@@ -298,11 +298,34 @@ class NativeProcessTests(unittest.TestCase):
         for revoke in (True, False):
             with self.subTest(revoke=revoke):
                 command, marker = self.tree_command()
-                station.write_json(self.root / "window.json", {
-                    "schema_version": 1, "profiles": ["gpu"], "expires_at": time.time() + 3,
+                window = self.root / "window.json"
+                station.write_json(window, {
+                    "schema_version": 1, "profiles": ["gpu"],
+                    "expires_at": time.time() + (30 if revoke else 3),
                 })
-                timer = threading.Timer(2, lambda: (self.root / "window.json").unlink(missing_ok=True))
+                errors, revoked = [], threading.Event()
+
+                def revoke_window():
+                    try:
+                        deadline = time.monotonic() + 3
+                        while True:
+                            try:
+                                window.unlink()
+                                revoked.set()
+                                return
+                            except PermissionError as exc:
+                                if getattr(exc, "winerror", None) not in (5, 32, 33) or time.monotonic() >= deadline:
+                                    raise
+                                time.sleep(.01)
+                    except BaseException as exc:
+                        errors.append(exc)
+
+                timer = threading.Timer(2, revoke_window)
+                # Reproduce a real Windows reader denying deletion, then release it.
+                reader = window.open("rb") if revoke else None
+                release = threading.Timer(2.5, reader.close) if revoke else None
                 if revoke:
+                    release.start()
                     timer.start()
                 try:
                     with self.assertRaisesRegex(station.Blocked, "test_window_closed"):
@@ -312,6 +335,13 @@ class NativeProcessTests(unittest.TestCase):
                     if revoke:
                         timer.cancel()
                         timer.join()
+                        release.cancel()
+                        release.join()
+                        reader.close()
+                self.assertEqual(errors, [], "Fixture thread errors must fail the test")
+                if revoke:
+                    self.assertTrue(revoked.is_set(), "Revocation must not pass through expiry")
+                    self.assertFalse(window.exists())
                 self.assertTrue(marker.exists(), "Tree did not start before fixture revocation")
                 for pid in json.loads(marker.read_text()):
                     self.assert_pid_exited(pid)
