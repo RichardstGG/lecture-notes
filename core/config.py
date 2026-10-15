@@ -558,7 +558,7 @@ def load(course_arg=None, sets=(), model=None, source=None, create_missing=False
     return cfg, created
 
 
-def load_meeting(meeting_id=None, *, sets=(), source=None):
+def load_meeting(meeting_id=None, *, sets=(), source=None, config_file=None):
     """default -> local -> meetings/<id>.toml -> CLI; never loads courses."""
     default = load_toml(DEFAULT_FILE)
     data = copy.deepcopy(default)
@@ -567,10 +567,14 @@ def load_meeting(meeting_id=None, *, sets=(), source=None):
         over = load_toml(LOCAL_FILE)
         warnings += [f"local.toml：未知的設定項目 {k}" for k in _unknown_keys(default, over)]
         data = deep_merge(data, over)
-    path = meeting_path(meeting_id) if meeting_id is not None else None
+    if config_file is not None and meeting_id is not None:
+        raise ConfigError("meeting id 與驗證檔案不可同時指定")
+    path = Path(config_file) if config_file is not None else (meeting_path(meeting_id) if meeting_id is not None else None)
+    if path is not None and path.is_symlink():
+        raise ConfigError("會議設定不可使用 symlink")
     if path is not None:
         if not path.is_file():
-            raise ConfigError(f"找不到會議設定：{meeting_id}")
+            raise ConfigError(f"找不到會議設定：{config_file if config_file is not None else meeting_id}")
         over = load_toml(path)
         if set(over) - MEETING_SECTIONS:
             raise ConfigError("會議設定只允許 meeting、whisper、audio、vad、transcript、diarization")

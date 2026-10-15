@@ -12,7 +12,7 @@ vi.mock("./api", () => ({ api: {
   }),
   status: vi.fn(), courses: vi.fn(), models: vi.fn(), sessions: vi.fn(), session: vi.fn(),
   devices: vi.fn(), course: vi.fn(), termCandidates: vi.fn(), sharing: vi.fn(), sharingNetwork: vi.fn(),
-  start: vi.fn(), stop: vi.fn(),
+  start: vi.fn(), stop: vi.fn(), meetings: vi.fn().mockResolvedValue([]),
 } }));
 
 const oldLecture: SessionSummary = { id: "lecture/old", course: "原有課程", started_at: "", updated_at: "", has_transcript: true, has_notes: true, has_recording: false };
@@ -104,7 +104,7 @@ describe("workbench navigation", () => {
     await waitFor(() => expect(api.stop).toHaveBeenCalledOnce());
     await waitFor(() => expect(screen.getByRole("button", { name: "立即停止" }).hasAttribute("disabled")).toBe(false));
     fireEvent.click(screen.getByRole("link", { name: "本機設定" }));
-    expect(screen.getByText(/背景工作進行中：課堂 · 原有課程 · 收尾中/)).toBeTruthy();
+    expect(screen.getByText(/背景工作進行中：課堂 · 原有課程 · session 配置中 · 收尾中/)).toBeTruthy();
     fireEvent.click(screen.getByRole("button", { name: "回到工作台" }));
     expect(screen.getByRole("button", { name: "正在停止…" }).getAttribute("aria-busy")).toBe("true");
     expect(api.stop).toHaveBeenCalledExactlyOnceWith(false);
@@ -144,4 +144,33 @@ describe("workbench navigation", () => {
     expect(screen.getByText(/尚無會議紀錄/)).toBeTruthy();
     expect(api.session).not.toHaveBeenCalled();
   });
+  it("updates the cross-page banner through recording, both diarization stages and completion", async () => {
+    class Stream {
+      static status: Stream;
+      listeners = new Map<string, (event: MessageEvent<string>) => void>();
+      constructor(url: string) { if (url === "/api/v1/status/stream") Stream.status = this; }
+      addEventListener(type: string, listener: (event: MessageEvent<string>) => void) { this.listeners.set(type, listener); }
+      close() {}
+      emit(value: unknown) { this.listeners.get("status")?.({ data: JSON.stringify(value) } as MessageEvent<string>); }
+    }
+    vi.stubGlobal("EventSource", Stream);
+    render(<App />);
+    await screen.findByText("舊逐字稿");
+    const running = { schema_version: 2, running: true, work_type: "meeting", course: "真實會議", session: "/outputs/meetings/one", mode: "live" };
+    await act(async () => Stream.status.emit({ ...running, status: { phase: "recording", transcribed: 60 } }));
+    expect(screen.getByText(/背景工作進行中：會議.*meetings\/one.*錄音中.*已處理 1:00/)).toBeTruthy();
+    fireEvent.click(screen.getByRole("link", { name: "本機設定" }));
+    await act(async () => Stream.status.emit({ ...running, mode: "diarize", status: { phase: "diarizing",
+      diarization: { stage: "segmentation", processed_seconds: 120, total_seconds: null, requested_speakers: 3, speakers_found: 2 } } }));
+    expect(screen.getByText(/發言者辨識 2:00/)).toBeTruthy();
+    await act(async () => Stream.status.emit({ ...running, mode: "diarize", status: { phase: "diarizing",
+      diarization: { stage: "retranscription", processed_seconds: 300, total_seconds: 600, requested_speakers: 3, speakers_found: 2 } } }));
+    expect(screen.getByText(/重新轉錄 5:00 \/ 10:00/)).toBeTruthy();
+    fireEvent.click(screen.getByRole("button", { name: "回到工作台" }));
+    expect(screen.getByRole("progressbar", { name: "會議辨識進度" }).getAttribute("aria-valuenow")).toBe("50");
+    await act(async () => Stream.status.emit({ schema_version: 2, running: false }));
+    expect(screen.queryByText(/背景工作進行中/)).toBeNull();
+    expect(api.stop).not.toHaveBeenCalled();
+  });
+
 });

@@ -112,6 +112,18 @@ class LecClient:
             raise LecCommandError("cli_invalid_response", "lec courses returned an invalid response")
         return result
 
+    async def meetings(self):
+        result = await self.run_json("meetings", "--json")
+        if (not isinstance(result, dict) or result.get("schema_version") != 1
+                or not isinstance(result.get("meetings"), list)
+                or not all(isinstance(item, dict) for item in result["meetings"])):
+            raise LecCommandError("cli_invalid_response", "Invalid meeting inventory")
+        return result["meetings"]
+
+    async def validate_meeting(self, path):
+        return await self.run_text("config", "--work-type", "meeting",
+                                   "--validate-file", str(Path(path).resolve()))
+
     async def models(self):
         result = await self.run_json("models", "--json")
         if not isinstance(result, dict) or not isinstance(result.get("schema_version"), int):

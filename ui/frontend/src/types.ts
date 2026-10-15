@@ -61,6 +61,28 @@ export interface Course {
   error?: string;
 }
 
+export interface Meeting {
+  id: string;
+  file: string;
+  name?: string;
+  num_speakers?: number;
+  error?: string;
+}
+
+export interface MeetingDetail {
+  api_version: number;
+  id: string;
+  file: string;
+  content: string;
+}
+
+export interface MeetingRunRequest {
+  meeting_id: string;
+  speakers: number;
+  input_file?: string;
+  source?: string;
+}
+
 export interface ModelInfo {
   id: string;
   path: string;
@@ -238,6 +260,16 @@ export interface SessionDetail {
   transcript: ContentFile;
   notes: ContentFile;
   speaker_transcript?: ContentFile;
+  source?: {
+    kind: "recording" | "import";
+    original_name: string;
+    duration_seconds: number;
+    requested_speakers: number;
+  };
+  speakers?: {
+    actual_speakers: number;
+    speakers: { id: string; speech_seconds: number; segment_count: number }[];
+  };
 }
 
 export interface ContentEvent {
@@ -258,6 +290,8 @@ export interface RunRequest {
 }
 
 export interface ActionResponse {
+  session?: string;
+  work_type?: string;
   accepted: boolean;
   operation: string;
   pid?: number;
