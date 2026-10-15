@@ -35,3 +35,7 @@
 
 會議工作台以單一 `minmax(0, 1fr)` grid 欄限制寬度；場次增加時，歷史卡片只在 `.meeting-history-list` 內水平捲動，不撐寬整頁。
 會議匯入使用 upload 回應的 `path` 作為 input_file、`name` 作為選用 original_name；CLI 以選用 --original-name 保存經過濾、最多 255 字元的顯示名稱。名稱不參與磁碟路徑選擇；未提供時仍沿用直接 --file 的 basename。
+
+後端測試依賴使用 `python3 -m pip install -r ui/backend/requirements-dev.txt` 安裝（建議在 virtualenv 內）。此檔沿用正式 `requirements.txt`，另加入 HTTP／ASGI 測試使用的 httpx，讓執行環境與測試環境的依賴分開；不需要 pytest。安裝後在 repo 根目錄執行 `python3 -m unittest`。
+
+分享測試先在 `127.0.0.1` 驗證 HTTP 與偽造 Host／Origin 的 403，再以一秒上限探測 `127.0.0.2`。可連線就完整測試兩個本機位址；缺少 loopback 別名（例如 macOS 預設）時，以明確原因 skip 該雙位址測試並關閉分享 listener，不修改系統網路設定。其他 Host 防護測試照常執行。
