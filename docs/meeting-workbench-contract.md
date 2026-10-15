@@ -64,13 +64,13 @@ Claude 引擎層提供同步可呼叫介面 `diarize_session(request, progress, 
 
 已提供 `lec meetings --json` 及 `lec config --work-type meeting` 唯讀查詢。以下執行命令與其 JSON／退出碼已由 CLI 實作；API 寫入已接線。
 
-CLI：`lec meeting run <id> --speakers N [--file PATH] [--source ID] [--set section.key=value] [--json]`；`lec meeting diarize <session-path> --speakers N [--set diarization.key=value] [--json]`；`lec meetings --json` 列設定。`--speakers` 為本次預計人數，錄音時寫入來源 metadata，重跑可更改。既有 `lec run`、`lec summarize`、`lec config`、`lec status --json`、`lec stop` 語法與既有退出碼不變。新增命令的 `--json` 在工作結束時只輸出一個 `{schema_version:1, accepted:true, work_type:"meeting", operation:"run"|"diarize", session, pid, outcome:"done"|"aborted"}`；參數錯誤 exit 2、忙碌 exit 3、作業錯誤 exit 1、使用者取消 exit 130，錯誤 JSON 用 `{schema_version:1, accepted:false, error:{code,message}}`，stderr 不含私有音訊內容。長工作進度以另一個 `lec status --json` / status 檔查詢；CLI 工作命令同步執行，不持續輸出 JSONL。既有 `lec status --json` 頂層 shape 保留，新增可選 `work_type`；`running:false` 時仍可只有 schema/running。
+CLI：`lec meeting run <id> --speakers N [--file PATH] [--original-name NAME] [--source ID] [--set section.key=value] [--json]`；`lec meeting diarize <session-path> --speakers N [--set diarization.key=value] [--json]`；`lec meetings --json` 列設定。`--speakers` 為本次預計人數，錄音時寫入來源 metadata，重跑可更改。既有 `lec run`、`lec summarize`、`lec config`、`lec status --json`、`lec stop` 語法與既有退出碼不變。新增命令的 `--json` 在工作結束時只輸出一個 `{schema_version:1, accepted:true, work_type:"meeting", operation:"run"|"diarize", session, pid, outcome:"done"|"aborted"}`；參數錯誤 exit 2、忙碌 exit 3、作業錯誤 exit 1、使用者取消 exit 130，錯誤 JSON 用 `{schema_version:1, accepted:false, error:{code,message}}`，stderr 不含私有音訊內容。長工作進度以另一個 `lec status --json` / status 檔查詢；CLI 工作命令同步執行，不持續輸出 JSONL。既有 `lec status --json` 頂層 shape 保留，新增可選 `work_type`；`running:false` 時仍可只有 schema/running。
 
 已實作的 `status.json` schema 2 容器只增加 `work_type`、`stop_reason`、`diarization`。`diarization` 為 null 或 `{stage, processed_seconds, total_seconds, requested_speakers, speakers_found, actual_speakers}`；完成前 `actual_speakers=null`。既有欄位與意義保留。`run.json` schema 2 只增加 `work_type`；`events.jsonl` schema 1 保留既有事件，新增 `diarization_progress` / `diarization_cancelled` 類型與相同數值欄位。讀 schema 1 時缺值依上方 lecture 規則處理；schema 2 讀取器需容忍未知附加欄位。新 reader 不要求所有舊 session 重寫。`config.used.toml` 新增 `[work] type="meeting"` 或 `"lecture"`；舊缺值為 lecture，TOML 既有鍵不改。`meetings/*.toml` 為會議專用，不沿用課程 namespace。
 
 session API／SSE 已提供會議雙稿與 `speaker_transcript` content event；會議設定與執行端點已接線。
 
-API v1 保持既有端點和 shape，新增 `GET /api/v1/meetings`、`POST /api/v1/meetings`、`GET /api/v1/meetings/{id}`、`PUT /api/v1/meetings/{id}`（設定列表、建立、讀取、修改）、`POST /api/v1/meeting-runs`（`meeting_id,speakers,input_file?,source?`）、`POST /api/v1/sessions/{id}/diarize`（`speakers` 必填）、既有 `POST /api/v1/runs/stop` 停目前唯一工作。既有 `/api/v1/status`、sessions 列表／細節新增可選 `work_type` 與 `diarization`；meeting 詳細資料再加可選 `speaker_transcript` 與 `speakers` 檔案內容，不刪 `transcript` / `notes`。所有新寫入端點驗證 id、來源檔、參數和鎖；錯誤 envelope 沿用 `{error:{code,message}}`，忙碌 409、錯參數 400、無來源 422、找不到 404。SSE status 繼續傳全快照；session stream 新 target `speaker_transcript` 用 replace/append，舊 target 不變。API version 保持 1，新增可選欄位而非改現有欄位型別。
+API v1 保持既有端點和 shape，新增 `GET /api/v1/meetings`、`POST /api/v1/meetings`、`GET /api/v1/meetings/{id}`、`PUT /api/v1/meetings/{id}`（設定列表、建立、讀取、修改）、`POST /api/v1/meeting-runs`（`meeting_id,speakers,input_file?,source?,original_name?`）、`POST /api/v1/sessions/{id}/diarize`（`speakers` 必填）、既有 `POST /api/v1/runs/stop` 停目前唯一工作。既有 `/api/v1/status`、sessions 列表／細節新增可選 `work_type` 與 `diarization`；meeting 詳細資料再加可選 `speaker_transcript` 與 `speakers` 檔案內容，不刪 `transcript` / `notes`。所有新寫入端點驗證 id、來源檔、參數和鎖；錯誤 envelope 沿用 `{error:{code,message}}`，忙碌 409、錯參數 400、無來源 422、找不到 404。SSE status 繼續傳全快照；session stream 新 target `speaker_transcript` 用 replace/append，舊 target 不變。API version 保持 1，新增可選欄位而非改現有欄位型別。
 
 ### 會議寫入 API（2026-10-15）
 
@@ -80,7 +80,7 @@ API v1 保持既有端點和 shape，新增 `GET /api/v1/meetings`、`POST /api/
 | `POST /api/v1/meetings` | `{id,content?}`；content 預設空名稱的 meeting 表格 | 200，`{api_version:1,id,file,content}` |
 | `GET /api/v1/meetings/{id}` | 可攜單一檔名 | 200，同上 |
 | `PUT /api/v1/meetings/{id}` | `{content}`，完整取代該 TOML | 200，同上 |
-| `POST /api/v1/meeting-runs` | `{meeting_id,speakers,input_file?,source?}` | 202，既有 action envelope 加可選 `work_type`、`session` |
+| `POST /api/v1/meeting-runs` | `{meeting_id,speakers,input_file?,source?,original_name?}` | 202，既有 action envelope 加可選 `work_type`、`session` |
 | `POST /api/v1/sessions/{id}/diarize` | `{speakers}` | 202，同上，`operation=diarize` |
 
 `speakers` 必填且只接受整數 1..30，不接受 bool／字串／小數；無效 JSON、未知欄位與錯參數回 400。
@@ -104,7 +104,11 @@ CLI／作業啟動失敗回 502，CLI 不可用或啟動確認逾時回 503。
 等待上限沿用 CLI timeout（預設 30 秒），尚未確認則回 503 `startup_pending`；行程繼續，應先查 status 再重試。
 請求取消、換頁、SSE 斷線或 API event loop 關閉都不停止 detached CLI。停止仍只呼叫既有 stop API 寫 stop／stop_force。
 
-匯入先走既有 `/api/v1/audio-uploads`，其 staging path 原樣傳 `--file`；CLI 複製進 session 後才轉錄，重跑只讀 session 的來源。
+匯入先走既有 `/api/v1/audio-uploads`，其 staging path 原樣傳 `--file`，upload 回應的 `name` 以選用 `original_name` 傳給 API，再由 `--original-name=NAME` 傳到 CLI。CLI 複製進 session 後才轉錄，重跑只讀 session 的來源。
+`original_name`／`--original-name` 僅在匯入時使用，不搭配 input_file／--file 回 400／exit 2。
+API 的原始欄位上限 4096 字元；API 與 CLI 都先移除不可列印字元（含控制字元與方向格式控制）、去除前後空白，再截斷至 255 個 Unicode 字元；清理後為空回 400／exit 2。
+此名稱只寫 `source.json.original_name` 供顯示，不用於來源／session 路徑、副檔名判斷、複製或讀取；磁碟來源仍為 `source_audio.<輸入檔副檔名>`。
+舊 API 呼叫與直接 CLI `--file PATH` 未提供此欄位／選項時仍沿用 PATH 的 basename。既有 exit code、JSON envelope、API v1、source/status/run/events schema 版本不變；不改寫舊 session 的 metadata。
 Session API 新增可選 `source`（有效來源 metadata）與 `speakers`（manifest 指定的結構化結果）；不提供音檔下載。
 Session SSE 保留原有 `speaker_transcript` append／replace，來源或發言者資料改變時另發既有 `snapshot`，更新人數／收折列表。
 原稿與既有 generation 不被重跑或取消覆蓋，status/run/events 的 schema 版本不變。
