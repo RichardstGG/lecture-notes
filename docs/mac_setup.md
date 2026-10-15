@@ -17,7 +17,7 @@
 xcode-select --install
 ```
 
-它提供編譯引擎用的 C++ 編譯器，以及錄音需要的 `swiftc`：macOS 的即時錄音透過一支小型原生程式擷取麥克風，每次開始錄音時用 `swiftc` 編譯。
+它提供編譯引擎用的 C++ 編譯器，以及錄音需要的 `swiftc`：macOS 的即時錄音透過一支小型原生程式擷取麥克風，第一次錄音時用 `swiftc` 編譯並快取在 `~/Library/Application Support/lecture-notes/native-capture/`，之後只有原始碼或 `swiftc` 版本變了才重新編譯（細節見 [platform-macos.md](platform-macos.md#原生-helper-編譯快取issue-87)）。
 缺少 `swiftc` 時即時錄音會直接失敗，`lec doctor` 也會顯示 FAIL。
 
 接著安裝其他套件：
