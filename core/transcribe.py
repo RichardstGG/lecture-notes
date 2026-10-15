@@ -692,7 +692,11 @@ class Transcriber:
             if self.cfg["audio"]["keep_recording"]:
                 rec = self.session / f"recording_{datetime.now():%H%M%S}.ogg"
                 self.recording_path = rec
-                cmd += ["-ac", "1", "-ar", str(SR), "-c:a", "libopus", "-b:a", "32k", str(rec)]
+                # -flush_packets 1：每個 Ogg page（約 1 秒）就寫進磁碟。ffmpeg 7 起寫檔有
+                # 256 KiB 緩衝，32 kbps 要累積約 45 秒才落地；強停、當機或斷電時，
+                # 短錄音會變成 0 bytes、長錄音少掉最後一段。這份存檔是會後處理唯一的來源。
+                cmd += ["-ac", "1", "-ar", str(SR), "-c:a", "libopus", "-b:a", "32k",
+                        "-flush_packets", "1", str(rec)]
         else:
             cmd = ["ffmpeg", "-hide_banner", "-loglevel", "error", "-nostdin", "-i", self.file,
                    "-ac", "1", "-ar", str(SR), "-f", "s16le", "pipe:1"]

@@ -292,7 +292,9 @@ class _Encoder:
         self.written = 0
         cmd = ["ffmpeg", "-hide_banner", "-loglevel", "error", "-nostdin", "-y",
                "-f", "s16le", "-ar", str(SR), "-ac", "1", "-i", "pipe:0",
-               "-c:a", "libopus", "-b:a", "32k", str(self.path)]
+               "-c:a", "libopus", "-b:a", "32k",
+               "-flush_packets", "1",     # 與 keep_recording 相同：異常結束也只少約 1 秒
+               str(self.path)]
         self.proc = popen(cmd, stdin=subprocess.PIPE, stdout=subprocess.DEVNULL,
                           stderr=subprocess.PIPE, **P.spawn_kwargs())
 
