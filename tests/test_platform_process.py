@@ -191,13 +191,12 @@ class KillTests(unittest.TestCase):
             calls.append(sig)
             raise PermissionError
 
-        # Windows 的 os 沒有 WNOHANG／killpg：這裡模擬 POSIX 路徑，常數也要一併補上
         with mock.patch.object(P, "IS_WINDOWS", False), \
                 mock.patch.object(P.signal, "SIGKILL", SIGKILL, create=True), \
-                mock.patch.object(P.os, "WNOHANG", 1, create=True), \
                 mock.patch.object(P.os, "killpg", create=True, side_effect=fake_killpg), \
                 mock.patch.object(P.os, "kill") as kill, \
                 mock.patch.object(P, "pid_alive", return_value=False), \
+                mock.patch.object(P.os, "WNOHANG", 1, create=True), \
                 mock.patch.object(P.os, "waitpid", side_effect=ChildProcessError) as waitpid:
             P.kill_tree(123, timeout=1)
             kill.assert_called_once_with(123, signal.SIGTERM)

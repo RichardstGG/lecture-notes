@@ -18,14 +18,13 @@ import subprocess
 import tempfile
 import threading
 import time
+import traceback
 import unittest
 from pathlib import Path
 from unittest import mock
 
 from . import _pathfix  # noqa: F401
 from core import util as U
-
-_REAL_SLEEP = time.sleep    # AtomicWriteRetryTests.setUp 會把 time.sleep 換成記錄器
 
 
 class HmsTests(unittest.TestCase):
@@ -296,77 +295,119 @@ class AtomicWriteRetryTests(unittest.TestCase):
         self.assertEqual(self.target.read_text(encoding="utf-8"), "old")
         self.assertEqual(self._entries(), ["status.json"])
 
-    def test_readers_never_see_a_partial_file_while_writers_hit_transient_denials(self):
-        # 重現診斷的 test_get_survives_atomic_write_churn：寫入端不斷 replace，讀取端不斷讀，
-        # 其中三成的 replace 先遇到暫時性占用。寫入端不可以失敗，讀取端不可以讀到半個檔。
-        #
-        # 在真的 Windows 上，讀取端開著檔時 os.replace 也會被系統拒絕，所以：
-        # - 退避要真的等（setUp 為了確定性地檢查退避序列，把 sleep 換成了記錄器）；
-        # - 每次寫入最多注入 3 次失敗（只有真的 replace 成功才歸零，真實的失敗不算），
-        #   保證剩下的重試留給真實的占用；
-        # - 讀取端每次讀完停 2ms：零間隔狂讀會讓檔案幾乎一直被開著，與 UI 每 2 秒輪詢差太遠；
-        # - 讀取端在 replace 當下開檔可能拿到 PermissionError，那是合法的「暫時打不開」，
-        #   不是讀到半個檔，計數後重讀；其他任何例外都帶回主執行緒。
+    def test_every_replace_publishes_a_complete_file_while_denials_are_injected(self):
+        # 診斷的 test_get_survives_atomic_write_churn 的固定版本：三成的 replace 先遇到暫時性占用，
+        # 寫入端不可以失敗；每次真的 replace 完，目標檔都要是完整的新內容。
+        # 刻意不開讀取執行緒：在真的 Windows 上，讀者開著檔案會讓 os.replace 遇到「真的」占用，
+        # 而這裡的退避被 mock 成不等待，八次重試會瞬間用完——那是測試自己造成的失敗，不是程式的。
+        # 真實的讀寫併發交給下方 AtomicWriteChurnTests（不 mock 任何東西）。
         rng = random.Random(7)
         real = os.replace
-        calls = {"n": 0, "denied": 0, "real_denied": 0, "injected_this_write": 0}
+        calls = {"n": 0, "denied": 0}
+        published = []
 
         def flaky(src, dst):
             calls["n"] += 1
-            if calls["injected_this_write"] < 3 and rng.random() < 0.3:
+            if rng.random() < 0.3:
                 calls["denied"] += 1
-                calls["injected_this_write"] += 1
                 raise winerror(rng.choice([5, 32, 33]))
-            try:
-                result = real(src, dst)
-            except PermissionError:
-                calls["real_denied"] += 1        # Windows 真實的占用；讓重試機制處理
-                raise
-            calls["injected_this_write"] = 0
-            return result
+            real(src, dst)
+            published.append(json.loads(Path(dst).read_text(encoding="utf-8"))["elapsed"])
 
         self.target.write_text(json.dumps({"elapsed": -1}), encoding="utf-8")
-        failures, bad_reads, reader_errors, done = [], [], [], threading.Event()
-        reads = {"ok": 0, "denied": 0}
+        with mock.patch.object(U.os, "replace", flaky):
+            for i in range(200):
+                U.atomic_write(self.target, json.dumps({"phase": "recording", "elapsed": i}))
+        self.assertEqual(published, list(range(200)), "每次 replace 都發布一份完整、依序的新檔")
+        self.assertGreater(calls["denied"], 20, "要真的注入了足夠多的暫時性失敗，這個測試才有意義")
+        self.assertTrue(self.sleeps, "注入的占用要走過退避")
+        self.assertEqual(json.loads(self.target.read_text(encoding="utf-8"))["elapsed"], 199)
+        self.assertEqual(self._entries(), ["status.json"])
+
+
+class AtomicWriteChurnTests(unittest.TestCase):
+    """真的讀寫併發：不 mock os.replace、退避或平台判斷。
+
+    Linux／macOS 上讀者不會擋住 replace；Windows 上讀者開著檔案時，os.replace 會遇到真的
+    sharing violation（由 _replace_with_retry 有限度地重試），讀者自己開檔也可能遇到暫時性的
+    PermissionError（檔案正被換掉）。兩個執行緒的任何非預期例外都收集回主執行緒，不靠
+    「執行緒默默死掉、測試照樣綠燈」。"""
+
+    WRITES = 100
+    # 讀者連續遇到占用超過這麼久，就不是「檔案正被換掉」，而是真的讀不到（例如權限錯誤）。
+    READER_BUSY_LIMIT = 2.0
+
+    def setUp(self):
+        self.tmp = tempfile.TemporaryDirectory()
+        self.addCleanup(self.tmp.cleanup)
+        self.target = Path(self.tmp.name) / "status.json"
+
+    def test_readers_never_see_a_partial_file_during_real_replace_churn(self):
+        def describe(e):
+            # Windows 測試站只上傳摘要、日誌裡只有 repr；把 errno／winerror／發生位置一起帶回來。
+            return (f"{type(e).__name__} errno={getattr(e, 'errno', None)} "
+                    f"winerror={getattr(e, 'winerror', None)}: {e}\n"
+                    + "".join(traceback.format_exception(e)[-3:]))
+
+        self.target.write_text(json.dumps({"elapsed": -1}), encoding="utf-8")
+        errors, bad_reads, done = [], [], threading.Event()
+        reads = {"ok": 0, "busy": 0}
 
         def writer():
             try:
-                for i in range(200):
+                for i in range(self.WRITES):
                     U.atomic_write(self.target, json.dumps({"phase": "recording", "elapsed": i}))
             except BaseException as e:           # noqa: BLE001 - 要把任何失敗帶回主執行緒
-                failures.append(e)
+                errors.append(("writer", describe(e)))
             finally:
                 done.set()
 
         def reader():
+            last, busy_since = -1, None
             try:
                 while not done.is_set():
                     try:
-                        json.loads(self.target.read_text(encoding="utf-8"))
-                        reads["ok"] += 1
-                    except PermissionError:      # Windows：replace 進行中暫時打不開
-                        reads["denied"] += 1
+                        text = self.target.read_text(encoding="utf-8")
+                    except PermissionError as e:
+                        # Windows 上讀者開檔時，若目標正被 os.replace 換掉，open() 會拒絕存取。
+                        # open() 走 C runtime，例外只帶 errno 13、沒有 winerror（os.replace 走 Win32
+                        # API 才有），所以不能套用 replace 端的 _is_transient_replace_error。
+                        # 只在 Windows 上把 EACCES 當成暫時占用重讀，而且有時限：連續占用太久就是真的錯誤。
+                        if not (U._on_windows() and e.errno == errno.EACCES):
+                            raise
+                        busy_since = busy_since or time.monotonic()
+                        if time.monotonic() - busy_since > self.READER_BUSY_LIMIT:
+                            raise
+                        reads["busy"] += 1
+                        done.wait(0.001)
+                        continue
+                    busy_since = None
+                    try:
+                        elapsed = json.loads(text)["elapsed"]
                     except ValueError as e:
                         bad_reads.append(e)
-                    _REAL_SLEEP(0.002)
-            except BaseException as e:           # noqa: BLE001 - 執行緒裡的例外不能悄悄消失
-                reader_errors.append(e)
+                        continue
+                    if elapsed < last:
+                        bad_reads.append(f"讀到比上一次舊的內容：{elapsed} < {last}")
+                    last = elapsed
+                    reads["ok"] += 1
+                    # 像 UI 輪詢一樣稍微讓出時間；不讓出的話讀者幾乎一直開著檔案，
+                    # Windows 上等於人為製造長時間占用，而不是驗證原子性。
+                    done.wait(0.001)
+            except BaseException as e:           # noqa: BLE001
+                errors.append(("reader", describe(e)))
 
-        with mock.patch.object(U.os, "replace", flaky), \
-                mock.patch.object(U.time, "sleep", _REAL_SLEEP):
-            threads = [threading.Thread(target=writer), threading.Thread(target=reader)]
-            for t in threads:
-                t.start()
-            for t in threads:
-                t.join(timeout=60)
-        self.assertFalse(any(t.is_alive() for t in threads), "兩個執行緒都要在時限內結束")
-        self.assertEqual(failures, [], f"replace 呼叫 {calls}，讀取 {reads}")
-        self.assertEqual(reader_errors, [])
-        self.assertEqual(bad_reads, [], "原子 replace：讀者只會看到舊檔或新檔")
-        self.assertGreater(reads["ok"], 0, "讀取端要真的讀到內容，這個測試才有意義")
-        self.assertGreater(calls["denied"], 20, "要真的注入了足夠多的暫時性失敗，這個測試才有意義")
-        self.assertEqual(json.loads(self.target.read_text(encoding="utf-8"))["elapsed"], 199)
-        self.assertEqual(self._entries(), ["status.json"])
+        threads = [threading.Thread(target=writer), threading.Thread(target=reader)]
+        for t in threads:
+            t.start()
+        for t in threads:
+            t.join(timeout=60)
+        self.assertFalse(any(t.is_alive() for t in threads), "讀寫執行緒要在時限內結束")
+        self.assertEqual(errors, [])
+        self.assertEqual(bad_reads, [], "原子 replace：讀者只會看到舊檔或新檔，而且不會倒退")
+        self.assertGreater(reads["ok"], 0, "讀者要真的讀到東西，這個測試才有意義")
+        self.assertEqual(json.loads(self.target.read_text(encoding="utf-8"))["elapsed"], self.WRITES - 1)
+        self.assertEqual(sorted(p.name for p in self.target.parent.iterdir()), ["status.json"])
 
 
 class JsonTests(unittest.TestCase):
