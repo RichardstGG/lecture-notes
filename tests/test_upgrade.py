@@ -1,4 +1,6 @@
 """Tests for the cross-platform one-command upgrade workflow."""
+import contextlib
+import io
 import subprocess
 import sys
 import tempfile
@@ -36,6 +38,24 @@ class UpgradeTests(unittest.TestCase):
 
         self.assertTrue(changed)
         run.assert_called_once_with(["git", "-C", self.root, "pull", "--ff-only"])
+
+    def test_detached_head_explains_both_ways_forward_without_pulling(self):
+        with mock.patch.object(U, "git_output", side_effect=[""]), \
+                mock.patch.object(U, "run") as run, \
+                self.assertRaises(U.UpgradeError) as error:
+            U.update_checkout()
+        message = str(error.exception)
+        self.assertIn("detached HEAD", message)
+        self.assertIn("git switch main", message)
+        self.assertIn("--skip-pull", message)
+        run.assert_not_called()
+
+    def test_skip_pull_is_documented_in_help(self):
+        # 錯誤訊息會叫使用者用 --skip-pull，所以它不能是隱藏選項。
+        out = io.StringIO()
+        with contextlib.redirect_stdout(out), self.assertRaises(SystemExit):
+            U.parse_args(["--help"])
+        self.assertIn("--skip-pull", out.getvalue())
 
     def test_update_checkout_refuses_tracked_changes(self):
         with mock.patch.object(

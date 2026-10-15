@@ -55,7 +55,13 @@ def update_checkout():
         raise UpgradeError(f"{ROOT} 不是 Git checkout，請先 clone lecture-notes")
     branch = git_output("branch", "--show-current")
     if not branch:
-        raise UpgradeError("目前是 detached HEAD；請先切回 main 再升級")
+        # 固定在某個 commit 驗收時（例如 git switch --detach <SHA>）也是 detached；
+        # 這時不該替使用者決定要拉哪個分支，把兩條路都講清楚。
+        raise UpgradeError(
+            "目前是 detached HEAD，不知道要更新哪個分支，所以沒有拉取程式碼。\n"
+            "  要更新到最新版：git switch main 後再執行 upgrade.py\n"
+            "  要固定在目前這個 commit、只更新引擎與依賴：python3 upgrade.py --skip-pull"
+        )
     changes = git_output("status", "--porcelain", "--untracked-files=no")
     if changes:
         raise UpgradeError(
@@ -156,7 +162,8 @@ def parse_args(argv=None):
     parser.add_argument("--generator", metavar="NAME", help="傳給 cmake -G 的 generator")
     parser.add_argument("--rebuild", action="store_true", help="強制重編本機引擎")
     parser.add_argument("--import-models", metavar="DIR", help="從指定資料夾搬入模型")
-    parser.add_argument("--skip-pull", action="store_true", help=argparse.SUPPRESS)
+    parser.add_argument("--skip-pull", action="store_true",
+                        help="不更新程式碼，只在目前的 checkout 上更新引擎與依賴（例如固定在某個 commit 驗收）")
     parser.add_argument("--skip-engines", action="store_true", help="略過本機引擎更新")
     parser.add_argument("--skip-diarization", action="store_true",
                         help="略過會議發言者辨識的依賴與模型（約 50MB）")
