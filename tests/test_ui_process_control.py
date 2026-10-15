@@ -1,16 +1,18 @@
 """Tests for background CLI launching and structured configuration overrides."""
 import asyncio
+import subprocess
 import sys
 import tempfile
 import textwrap
 import time
 import unittest
 from pathlib import Path
+from unittest.mock import patch
 
 from tests import _pathfix  # noqa: F401
 from ui.backend.cli_client import LecCommandError
 from ui.backend.process_control import (ControlError, LecProcessLauncher,
-                                        _override_args, _toml_value)
+                                        _is_descendant, _override_args, _process_parents, _toml_value)
 
 
 class OverrideTests(unittest.TestCase):
@@ -33,6 +35,29 @@ class OverrideTests(unittest.TestCase):
         for value in ({"nested": True}, float("nan")):
             with self.subTest(value=value), self.assertRaises(ControlError):
                 _override_args({"summary.value": value})
+
+
+class ProcessAncestryTests(unittest.TestCase):
+    def test_posix_snapshot_parses_pid_and_parent_columns(self):
+        with patch('ui.backend.process_control.os.name', 'posix'), \
+                patch('ui.backend.process_control.subprocess.run',
+                      return_value=subprocess.CompletedProcess([], 0, ' 10 1\n20 10\n')) as run:
+            self.assertEqual(_process_parents(), {10: 1, 20: 10})
+        run.assert_called_once_with(
+            ['ps', '-A', '-o', 'pid=,ppid='], check=True,
+            capture_output=True, text=True, timeout=2)
+
+    def test_only_descendants_are_accepted_and_cycles_terminate(self):
+        with patch('ui.backend.process_control._process_parents',
+                   return_value={20: 10, 30: 20, 40: 50, 50: 40}):
+            self.assertTrue(_is_descendant(30, 10))
+            for pid in (40, 999, -1, None, '30', True):
+                with self.subTest(pid=pid):
+                    self.assertFalse(_is_descendant(pid, 10))
+
+    def test_snapshot_failure_does_not_confirm_startup(self):
+        with patch('ui.backend.process_control._process_parents', side_effect=OSError):
+            self.assertFalse(_is_descendant(30, 10))
 
 
 class LauncherTests(unittest.IsolatedAsyncioTestCase):
@@ -124,7 +149,9 @@ class LauncherTests(unittest.IsolatedAsyncioTestCase):
         with self.assertRaises(ControlError) as result:
             await launcher.start("meeting", wait_for_session=another_job, startup_timeout=.01)
         self.assertEqual((result.exception.code, result.exception.status_code), ("startup_pending", 503))
-        await asyncio.sleep(.25)
+        deadline = time.monotonic() + 5
+        while not marker.exists() and time.monotonic() < deadline:
+            await asyncio.sleep(.02)
         self.assertTrue(marker.exists())
 
     async def test_cancelling_startup_wait_does_not_stop_child(self):
@@ -140,11 +167,15 @@ class LauncherTests(unittest.IsolatedAsyncioTestCase):
             await asyncio.Future()
         task = asyncio.create_task(launcher.start("meeting", wait_for_session=status))
         await entered.wait()
+        process = next(iter(launcher._processes))
         task.cancel()
         with self.assertRaises(asyncio.CancelledError):
             await task
-        await asyncio.sleep(.25)
+        deadline = time.monotonic() + 5
+        while not (self.root / "finished").exists() and time.monotonic() < deadline:
+            await asyncio.sleep(.02)
         self.assertTrue((self.root / "finished").exists())
+        self.assertEqual(await asyncio.to_thread(process.wait, timeout=2), 0)
 
 
 class DetachedLauncherTests(unittest.TestCase):
