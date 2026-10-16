@@ -3,7 +3,9 @@
 全部用暫存資料夾與 mock 取代真正的 git clone、cmake 編譯與網路下載，
 不需要實際編譯 whisper.cpp / llama.cpp，也不會動到 repo 裡真正的 engines.lock。
 """
+import contextlib
 import hashlib
+import io
 import tempfile
 import unittest
 import zipfile
@@ -406,6 +408,142 @@ class ConfigureHintTests(unittest.TestCase):
         configure = [c for c in calls if "-S" in c][0]
         self.assertEqual(configure[configure.index("-G") + 1], "Visual Studio 17 2022")
         self.assertNotIn("GENERATOR=", stamp)
+
+
+class EngineUpToDateTests(unittest.TestCase):
+    """engine_up_to_date：判斷 build() 會不會直接略過，而且不需要 cmake。"""
+    REF, BACKEND = "abc1234", "vulkan"
+
+    def setUp(self):
+        tmp = tempfile.TemporaryDirectory()
+        self.addCleanup(tmp.cleanup)
+        self.dir = Path(tmp.name) / "whisper.cpp"
+        (self.dir / ".git").mkdir(parents=True)
+        (self.dir / "build").mkdir()
+        self.binary = self.dir / "build" / "whisper-server"
+        self.binary.write_bytes(b"x")
+        self.stamp = self.dir / "build" / ".lec-build"
+        self.head = self.REF + "0" * 33
+        self.lock = {"WHISPER_REF": self.REF}
+        self.engines = {"whisper": {"key": "WHISPER_REF", "dir": self.dir, "args": ["-DX=1"],
+                                    "targets": ["whisper-server"]}}
+        self.write_stamp()
+        for patcher in (
+                mock.patch.dict(SE.ENGINES, self.engines, clear=True),
+                mock.patch.object(SE, "out", side_effect=lambda cmd: self.head),
+                mock.patch.object(P, "build_stamp_path", return_value=self.stamp),
+                mock.patch.object(P, "find_engine_bin", side_effect=lambda d, t: self.binary)):
+            patcher.start()
+            self.addCleanup(patcher.stop)
+
+    def write_stamp(self, text=None):
+        self.stamp.write_text((text or f"{self.head} BACKEND={self.BACKEND} -DX=1") + "\n", encoding="utf-8")
+
+    def check(self, **kw):
+        return SE.engine_up_to_date("whisper", self.BACKEND, kw.pop("lock", self.lock), **kw)
+
+    def test_current_engine_is_up_to_date_without_any_build_tool(self):
+        with mock.patch.object(SE.shutil, "which", return_value=None):   # 沒有 cmake、沒有 git 都一樣
+            self.assertTrue(self.check())
+
+    def test_each_missing_condition_means_not_up_to_date(self):
+        self.assertFalse(self.check(lock={}), "engines.lock 沒有記錄")
+        self.head = "f" * 40
+        self.assertFalse(self.check(), "原始碼不在鎖定版本")
+        self.head = self.REF + "0" * 33
+        self.binary.unlink()
+        self.assertFalse(self.check(), "執行檔不存在")
+        self.binary.write_bytes(b"x")
+        self.stamp.unlink()
+        self.assertFalse(self.check(), "沒有 build stamp")
+        self.write_stamp()
+        self.assertTrue(self.check())
+
+    def test_stamp_must_match_backend_and_generator(self):
+        self.assertFalse(SE.engine_up_to_date("whisper", "cpu", self.lock), "後端不同要重編")
+        self.assertFalse(self.check(generator="Ninja"), "generator 不同要重編")
+        self.write_stamp(f"{self.head} BACKEND={self.BACKEND} GENERATOR=Ninja -DX=1")
+        self.assertTrue(self.check(generator="Ninja"))
+
+    def test_unreadable_git_head_is_not_up_to_date(self):
+        self.head = ""        # out() 在 git 失敗時回空字串
+        self.assertFalse(self.check())
+
+
+class SkipToolCheckWhenNothingToBuildTests(unittest.TestCase):
+    """main()：引擎都已是最新版就不要求編譯工具；否則照舊，並且錯誤訊息講清楚為什麼。"""
+
+    def run_main(self, argv, up_to_date):
+        import sys
+        patches = [mock.patch.object(sys, "argv", ["setup_engines.py", *argv]),
+                   mock.patch.object(SE, "lock_read", return_value={"WHISPER_REF": "w", "LLAMA_REF": "l"}),
+                   mock.patch.object(SE, "engine_up_to_date", side_effect=lambda n, *a, **k: up_to_date[n]),
+                   mock.patch.object(SE, "check_tools", return_value=4),
+                   mock.patch.object(SE, "pick_generator", return_value=None),
+                   mock.patch.object(SE, "fetch_repo"), mock.patch.object(SE, "build"),
+                   mock.patch.object(SE, "check_bin"), mock.patch.object(SE, "lock_write"),
+                   mock.patch.object(SE, "ensure_whisper_model"),
+                   mock.patch.object(SE, "report_llama_runtime"),
+                   mock.patch.object(P, "find_engine_bin", return_value=Path("x")),
+                   mock.patch.object(P, "find_msvc", return_value=None)]
+        with contextlib.ExitStack() as stack:
+            mocks = [stack.enter_context(p) for p in patches]
+            with contextlib.redirect_stdout(io.StringIO()) as out:
+                code = SE.main()
+        return code, mocks[3], out.getvalue()      # mocks[3] 是 check_tools
+
+    def test_everything_current_skips_the_tool_check_but_still_runs_build(self):
+        code, tools, output = self.run_main([], {"whisper": True, "llama": True})
+        self.assertEqual(code, 0)
+        tools.assert_not_called()
+        self.assertIn("略過編譯工具檢查", output)
+
+    def test_one_pending_engine_still_requires_tools_and_names_it(self):
+        _, tools, _ = self.run_main([], {"whisper": True, "llama": False})
+        tools.assert_called_once()
+        self.assertEqual(tools.call_args.kwargs["needed"], ["llama"])
+
+    def test_rebuild_and_update_always_check_tools(self):
+        for flag in ("--rebuild", "--update"):
+            with self.subTest(flag=flag):
+                _, tools, _ = self.run_main(["whisper", flag], {"whisper": True})
+                tools.assert_called_once()
+                self.assertEqual(tools.call_args.kwargs["needed"], ["whisper"])
+
+    def test_whisper_only_target_ignores_a_missing_llama(self):
+        # 會議與轉錄只需要 whisper：llama 沒編也不能擋住它
+        code, tools, _ = self.run_main(["whisper"], {"whisper": True, "llama": False})
+        self.assertEqual(code, 0)
+        tools.assert_not_called()
+
+
+class MissingToolsMessageTests(unittest.TestCase):
+    def missing_output(self, needed):
+        with mock.patch.object(P, "NAME", "windows"), \
+                mock.patch.object(SE.shutil, "which", side_effect=lambda n: "git" if n == "git" else None), \
+                mock.patch.object(P, "missing_build_tools", return_value=[]), \
+                contextlib.redirect_stdout(io.StringIO()) as out, \
+                self.assertRaises(SystemExit):
+            SE.check_tools("vulkan", None, needed=needed)
+        return out.getvalue()
+
+    def test_names_the_engines_that_need_building(self):
+        text = self.missing_output(["whisper", "llama"])
+        self.assertIn("缺少：cmake", text)
+        self.assertIn("需要編譯：whisper、llama", text)
+
+    def test_llama_pending_points_meeting_and_transcribe_users_to_whisper_only(self):
+        text = self.missing_output(["llama"])
+        self.assertIn("--whisper-only", text)
+        self.assertIn("setup_engines.py whisper", text)
+
+    def test_whisper_only_failure_does_not_suggest_skipping_llama(self):
+        self.assertNotIn("--whisper-only", self.missing_output(["whisper"]))
+
+    def test_without_needed_the_message_is_unchanged(self):
+        text = self.missing_output(())
+        self.assertNotIn("需要編譯", text)
+        self.assertNotIn("--whisper-only", text)
 
 
 if __name__ == "__main__":
