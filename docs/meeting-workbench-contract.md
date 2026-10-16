@@ -97,7 +97,9 @@ CLI／作業啟動失敗回 502，CLI 不可用或啟動確認逾時回 503。
 原有 CLI 語法、exit code 與設定合併規則不變。UI 不 import `core`。
 
 **啟動確認**：API 為每次會議 CLI 分開收集唯一的 stdout envelope，stderr 留在本機 process log。
-不以固定 150ms 存活判定成功；輪詢既有 `lec status --json`，只有 `running=true`、PID 等於本次子行程且已發布 session，才回 202。
+不以固定 150ms 存活判定成功；輪詢既有 `lec status --json`，只有 `running=true`、已發布 session，且 PID 等於本次子行程或經 OS 行程快照確認為其後代，才回 202。
+Windows venv 的 `python.exe` 會另啟動直譯器；後代判斷涵蓋此包裝器，不接受無關 CLI 的 PID。
+行程快照查詢失敗時不確認啟動，繼續輪詢至原有 timeout；不更改直譯器、phase、停止機制、CLI 參數／exit code 或 status／run／events schema。
 若在 session 配置前退出（即使超過 150ms），先讀該行程的 error envelope：busy→409、input_invalid／exit 2→400、source_missing→422；不會一律 202。
 很快結束的成功／取消工作亦回 202，並以 `completed=true,exit_code,session` 表達已完成。
 配置 session 後發生的引擎／模型／解碼錯誤屬已接受工作的結果，由 status SSE 與 session 歷史呈現。

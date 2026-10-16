@@ -4,6 +4,7 @@ import hashlib
 import json
 import sys
 import tempfile
+import time
 import unittest
 from pathlib import Path
 from urllib.parse import quote
@@ -212,6 +213,66 @@ class MeetingApiTests(unittest.IsolatedAsyncioTestCase):
             rejected = await self.http.post('/api/v1/meeting-runs', json=data)
             self.assertEqual(rejected.status_code, 400, rejected.text)
             self.assertEqual(rejected.json()['error']['code'], 'input_invalid')
+
+    async def test_wrapper_pid_startup_and_external_lock_winner(self):
+        # subprocess, deliberately not exec: status must name a different PID.
+        wrapper = self.root / 'wrapper.py'
+        wrapper.write_text(
+            "import subprocess, sys, time\n"
+            "from pathlib import Path\n"
+            "while Path('hold-wrapper').exists(): time.sleep(.02)\n"
+            "sys.exit(subprocess.call(sys.argv[1:]))\n", encoding='utf-8')
+        self.launcher.command = (sys.executable, str(wrapper), *self.client.command)
+        self.client.timeout = 5
+        started = time.monotonic()
+        response = await self.http.post('/api/v1/meeting-runs', json=dict(meeting_id='team', speakers=2))
+        self.assertEqual(response.status_code, 202, response.text)
+        self.assertLess(time.monotonic() - started, 5)
+        self.assertFalse(response.json()['completed'])
+        status = await self.client.status()
+        self.assertNotEqual(status['pid'], response.json()['pid'])
+        self.assertEqual(status['session'], response.json()['session'])
+        await self.http.post('/api/v1/runs/stop', json=dict(force=True))
+        await self.idle()
+        await asyncio.gather(*self.launcher._tasks)
+
+        # Let an independent CLI win AFTER the API's idle check and Popen.
+        hold = self.root / 'hold-wrapper'
+        hold.touch()
+        foreign_seen = asyncio.Event()
+        read_status = self.client.status
+        async def observed_status():
+            status = await read_status()
+            if status['running']:
+                foreign_seen.set()
+            return status
+        self.client.status = observed_status
+        pending = asyncio.create_task(self.http.post(
+            '/api/v1/meeting-runs', json=dict(meeting_id='team', speakers=2)))
+        deadline = time.monotonic() + 5
+        while not self.launcher._processes and time.monotonic() < deadline:
+            await asyncio.sleep(.02)
+        self.assertTrue(self.launcher._processes)
+        external = await asyncio.create_subprocess_exec(
+            *self.client.command, 'meeting', 'run', 'team', '--speakers', '2', '--json',
+            cwd=self.root, stdout=asyncio.subprocess.DEVNULL, stderr=asyncio.subprocess.DEVNULL)
+        try:
+            deadline = time.monotonic() + 5
+            while not (await read_status())['running'] and time.monotonic() < deadline:
+                await asyncio.sleep(.02)
+            self.assertTrue((await read_status())['running'])
+            await asyncio.wait_for(foreign_seen.wait(), 5)
+            await asyncio.sleep(.1)  # Allow the API to process the observed status.
+            self.assertFalse(pending.done())
+            hold.unlink()
+            rejected = await pending
+            self.assertEqual(rejected.status_code, 409, rejected.text)
+            self.assertEqual(rejected.json()['error']['code'], 'busy')
+        finally:
+            hold.unlink(missing_ok=True)
+            await self.http.post('/api/v1/runs/stop', json=dict(force=True))
+            await asyncio.wait_for(external.wait(), 5)
+            await pending
 
     async def test_simultaneous_work_only_one_succeeds_and_force_is_clean(self):
         # Independent control instances bypass the in-process asyncio lock;

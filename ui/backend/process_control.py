@@ -74,6 +74,68 @@ def _cli_value(value, name):
     return value
 
 
+def _process_parents():
+    """Read an OS process snapshot without importing core or adding dependencies."""
+    if os.name != "nt":
+        result = subprocess.run(
+            ["ps", "-A", "-o", "pid=,ppid="], check=True,
+            capture_output=True, text=True, timeout=2,
+        )
+        return dict(tuple(map(int, line.split())) for line in result.stdout.splitlines())
+
+    import ctypes
+    from ctypes import wintypes
+
+    class ProcessEntry(ctypes.Structure):
+        _fields_ = [("size", wintypes.DWORD), ("usage", wintypes.DWORD),
+                    ("pid", wintypes.DWORD), ("heap", ctypes.c_size_t),
+                    ("module", wintypes.DWORD), ("threads", wintypes.DWORD),
+                    ("parent", wintypes.DWORD), ("priority", wintypes.LONG),
+                    ("flags", wintypes.DWORD), ("exe", wintypes.WCHAR * 260)]
+
+    kernel = ctypes.WinDLL("kernel32", use_last_error=True)
+    kernel.CreateToolhelp32Snapshot.argtypes = [wintypes.DWORD, wintypes.DWORD]
+    kernel.CreateToolhelp32Snapshot.restype = wintypes.HANDLE
+    for name in ("Process32FirstW", "Process32NextW"):
+        function = getattr(kernel, name)
+        function.argtypes = [wintypes.HANDLE, ctypes.POINTER(ProcessEntry)]
+        function.restype = wintypes.BOOL
+    kernel.CloseHandle.argtypes = [wintypes.HANDLE]
+    kernel.CloseHandle.restype = wintypes.BOOL
+    snapshot = kernel.CreateToolhelp32Snapshot(2, 0)  # TH32CS_SNAPPROCESS
+    if snapshot == ctypes.c_void_p(-1).value:
+        raise ctypes.WinError(ctypes.get_last_error())
+    try:
+        entry = ProcessEntry()
+        entry.size = ctypes.sizeof(entry)
+        parents = {}
+        found = kernel.Process32FirstW(snapshot, ctypes.byref(entry))
+        while found:
+            parents[entry.pid] = entry.parent
+            found = kernel.Process32NextW(snapshot, ctypes.byref(entry))
+        if ctypes.get_last_error() != 18:  # ERROR_NO_MORE_FILES
+            raise ctypes.WinError(ctypes.get_last_error())
+        return parents
+    finally:
+        kernel.CloseHandle(snapshot)
+
+
+def _is_descendant(pid, ancestor):
+    if type(pid) is not int or pid <= 0:
+        return False
+    try:
+        parents = _process_parents()
+    except (OSError, ValueError, subprocess.SubprocessError):
+        return False  # Fail closed; a later poll may confirm startup.
+    seen = set()
+    while pid in parents and pid not in seen:
+        seen.add(pid)
+        pid = parents[pid]
+        if pid == ancestor:
+            return True
+    return False
+
+
 class LecProcessLauncher:
     """Spawn a detached CLI child and asynchronously reap it while the API lives."""
 
@@ -161,9 +223,15 @@ class LecProcessLauncher:
                     status = await wait_for_session()
                     # A different CLI may have won the lock. Only acknowledge
                     # our child after it publishes its own allocated session.
-                    if (process.poll() is None and status.get("running")
-                            and status.get("pid") == process.pid and status.get("session")):
-                        return LaunchResult(process.pid, session=status["session"])
+                    if status.get("running") and status.get("session"):
+                        pid = status.get("pid")
+                        owned = pid == process.pid or await asyncio.to_thread(
+                            _is_descendant, pid, process.pid,
+                        )
+                        # Windows venv python.exe forwards to a child interpreter.
+                        # Recheck our launcher after the OS snapshot, too.
+                        if owned and process.poll() is None:
+                            return LaunchResult(process.pid, session=status["session"])
                     if asyncio.get_running_loop().time() >= deadline:
                         raise ControlError("startup_pending",
                                            "Startup not confirmed; check status before retrying", 503)
