@@ -82,7 +82,7 @@ jobs:
           path: target
           persist-credentials: false
       - name: Run station profile
-        shell: powershell
+        shell: powershell -NoLogo -NoProfile -NonInteractive -ExecutionPolicy Bypass -File "{0}"
         env:
           TARGET_SHA: ${{ inputs.target_sha }}
           TEST_PROFILE: ${{ inputs.profile }}
