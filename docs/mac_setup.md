@@ -50,6 +50,7 @@ python3 setup.py
 - 先看它會做什麼而不安裝：`python3 setup.py --dry-run`
 - 不問問題、全用偵測到的預設值：`python3 setup.py --yes`
 - 只需要逐字稿、不做總結：`python3 setup.py --whisper-only`，之後可跳過步驟 4，並用 `lec run <課名> --transcribe-only`。
+  **會議功能**（`lec meeting run`／`lec meeting diarize`）也只需要 whisper，不會用到 llama.cpp 與總結模型；此時 `lec doctor` 對 llama-server 與 Qwen3-8B 的錯誤可以忽略。
 - 外部摘要 API 不在這裡設定，用 Web UI 的「本機設定 → 摘要 API 上游」。
 
 想自己控制編譯細節，見 README 的「[手動編譯](../README.md#手動編譯)」。
@@ -140,7 +141,7 @@ python3 upgrade.py
 
 它會更新 Git checkout、依 `engines.lock` 編譯引擎、更新 `.venv` 與 Web UI，預設也會裝會議發言者辨識的依賴與模型（約 50MB）。
 
-- 只用逐字稿、不裝 llama.cpp：`python3 upgrade.py --whisper-only`
+- 只用逐字稿或會議功能、不裝 llama.cpp：`python3 upgrade.py --whisper-only`（只處理 whisper.cpp；它已編好時不需要 cmake 等編譯工具）
 - 不需要會議功能：加 `--skip-diarization`（說明見 [diarize-install.md](diarize-install.md)）
 - 其他選項：`python3 upgrade.py --help`
 
