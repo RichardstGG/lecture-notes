@@ -28,7 +28,7 @@
 **會議紀錄（開發中，部分可試用）**
 
 - 錄製會議或匯入會議錄音並產生逐字稿；會後自動區分不同的發言者，產生標示發言者的逐字稿。
-- 錄音、匯入、停止、發言者區分與重新辨識都可以在圖形介面中操作，也可以用指令操作（目前在 Linux 驗證過）。發言者區分的準確度仍在驗證中。
+- 錄音、匯入、停止、發言者區分與重新辨識都可以在圖形介面中操作，也可以用指令操作。Linux、macOS、Windows 都各在一台電腦上實際驗收過，macOS 與 Windows 仍屬實驗中。發言者區分的準確度仍在驗證中。
 - 規劃中：同時收錄電腦播放的聲音（例如線上會議中其他人的發言）與自己的麥克風。
 
 **桌面應用程式（規劃中）**
@@ -86,8 +86,8 @@
 | 平台 | 錄音 | GPU 後端 | 狀態 |
 |---|---|---|---|
 | Linux（PulseAudio / PipeWire） | pulse | Vulkan | 已實測（Debian 13、Intel Arc 140V） |
-| macOS | AVFoundation 原生擷取（需 `swiftc`） | Metal | 實驗中；單來源錄音已實機驗證 |
-| Windows | dshow | Vulkan（可改 CUDA） | 實驗中，實測中 |
+| macOS | AVFoundation 原生擷取（需 `swiftc`） | Metal | 實驗中；會議流程已實機驗收（一台 Apple Silicon） |
+| Windows | dshow | Vulkan（可改 CUDA） | 實驗中；會議流程已實機驗收（一台 Windows 11，錄音未含人聲） |
 
 共同需求：Python 3.11+、ffmpeg、git、cmake，以及 C++ 編譯環境（Windows 沒有編譯環境時可用預編譯檔）。
 Web UI 另需 Node.js 22.22+。
@@ -358,7 +358,7 @@ npm run dev
 
 會議工作台的目標：同時錄「系統輸出＋麥克風」兩個來源，會後分辨發言者並產生帶代號的逐字稿。
 **目前可以用 CLI 或 Web UI 從頭跑完一場會議（實驗中）**：單一來源錄音或匯入 → 原稿 → 會後發言者辨識。
-Linux 已做過 CLI 與 UI 真機驗收；雙來源錄音還沒開放，辨識準確度尚未用標註樣本驗證（品質優化列在 v2.x）。
+三個平台都做過 CLI 與 UI 真機驗收（各一台；Windows 錄音未含人聲，有人聲時的即時轉錄延遲未測）；雙來源錄音還沒開放，辨識準確度尚未用標註樣本驗證（品質優化列在 v2.x）。
 
 ```bash
 cp meetings/examples/template.toml meetings/週會.toml      # 改 name、num_speakers
@@ -367,7 +367,7 @@ lec meeting run 週會 --speakers 4 --file 錄音.m4a          # 或匯入既有
 lec meeting diarize outputs/meetings/週會_20261015_140000 --speakers 4
 ```
 
-- 會議不做總結（不啟動 llama.cpp）。輸出在 `outputs/meetings/<名稱>_<YYYYMMDD_HHMMSS>/`，除了 `transcript.md`／`.srt` 原稿，一定會保存來源音訊 `source_audio.*` 與 `source.json`（含 SHA-256），之後可以重跑辨識。
+- 會議不做總結，不需要 llama.cpp 與 Qwen3-8B：只用會議的電腦可用 `upgrade.py --whisper-only`，`lec doctor` 對這兩項的錯誤可以忽略。輸出在 `outputs/meetings/<名稱>_<YYYYMMDD_HHMMSS>/`，除了 `transcript.md`／`.srt` 原稿，一定會保存來源音訊 `source_audio.*` 與 `source.json`（含 SHA-256），之後可以重跑辨識。
 - 辨識結果寫在 `diarization/<generation>/`（`transcript.speakers.md`、`speakers.json`），成功後才以 `diarization.current.json` 原子切換；失敗或取消保留上一版。
 - `--json` 結束時輸出一個結果物件；exit code：參數錯誤 2、已有工作在跑 3、作業錯誤 1、使用者取消 130。
 - 辨識需要 sherpa-onnx 與兩個模型（`upgrade.py` 預設會裝，`lec doctor` 有「發言者辨識」一項可檢查）。
@@ -379,7 +379,7 @@ lec meeting diarize outputs/meetings/週會_20261015_140000 --speakers 4
 | 單工作鎖與狀態 | `run.lock` 原子 OS 鎖；status／run 為 schema 2（新增 `work_type`、`stop_reason`、`diarization`），events 維持 schema 1，reader 相容舊檔 | [docs/meeting-workbench-lock-status.md](docs/meeting-workbench-lock-status.md) |
 | 會後發言者辨識 `core/diarize.py` | 由 `lec meeting diarize` 呼叫；**準確度未驗證** | [docs/diarize-install.md](docs/diarize-install.md)、[評分器](docs/diarize-evaluation.md) |
 | 雙音源錄音 `core/capture.py` | 引擎層完成，僅 Linux；**錄音入口仍拒絕 `capture_mode = "dual"`，硬體驗收未做** | [docs/platform-dual-capture.md](docs/platform-dual-capture.md)、[docs/meeting-workbench-dual-audio.md](docs/meeting-workbench-dual-audio.md) |
-| UI 會議頁 | 會議設定、錄音／匯入、停止／強停、辨識／取消／重跑都已接上正式 API；Linux 已做 UI 真機驗收 | [ui/WORKBENCH.md](ui/WORKBENCH.md) |
+| UI 會議頁 | 會議設定、錄音／匯入、停止／強停、辨識／取消／重跑都已接上正式 API；三個平台都做過 UI 真機驗收 | [ui/WORKBENCH.md](ui/WORKBENCH.md) |
 
 實作順序與剩餘工作：[docs/meeting-workbench-implementation.md](docs/meeting-workbench-implementation.md)。
 
@@ -476,7 +476,7 @@ core/diarize_worker.py 發言者辨識的分群子行程
 
 ### 開發
 
-- 測試：`python3 -m unittest`（純標準函式庫）。UI 的測試需要 `ui/backend/requirements.txt` 的 fastapi，沒安裝時 `tests/test_ui_backend_*.py` 會失敗，不代表程式壞掉。
+- 測試：`python3 -m unittest`（純標準函式庫）。UI 的測試需要 `ui/backend/requirements-dev.txt`（fastapi 與 httpx），沒安裝時 `tests/test_ui_backend_*.py` 會失敗，不代表程式壞掉。
 - 分支：`main`。程式、設定範例、prompts、`samples/` 範例素材與 `engines.lock` 進 git；本機設定、個人課程、原始錄音與 outputs 已由 `.gitignore` 排除。
 - 本專案由 Claude Code、Codex 分工開發，Antigravity 獨立審查，maintainer 最終審查與合併；分工與流程見 [AGENTS.md](AGENTS.md)、[CLAUDE.md](CLAUDE.md)、[CODEX.md](CODEX.md)。
 - 升級引擎：`python3 setup_engines.py --update` → `lec run 課名 --file <錄音>` 與 `./bench_llm.sh` 確認沒問題 → `git commit engines.lock`。
