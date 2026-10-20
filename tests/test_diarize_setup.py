@@ -242,7 +242,10 @@ class CliTargetTests(unittest.TestCase):
 
     def test_default_run_does_not_download_the_diarization_models(self):
         # 預設（不指定目標）只編 whisper 與 llama；會議模型只在明確要求或 upgrade.py 時才取
+        # engine_up_to_date 固定為 False：否則這個測試取決於開發機上的引擎有沒有編好，
+        # 引擎都是最新版時 check_tools 會被略過，SystemExit 根本不會發生。
         with mock.patch.object(SE, "fetch_diarization_models") as fetch, \
+                mock.patch.object(SE, "engine_up_to_date", return_value=False), \
                 mock.patch.object(SE, "check_tools", side_effect=SystemExit(1)):
             with self.assertRaises(SystemExit):
                 self.run_main([])

@@ -82,6 +82,39 @@ class SummaryModeTests(unittest.TestCase):
         st, _, _ = DOC.missing_engine_item("llama-server", "LLAMA_REF", "/x/llama-server", True)
         self.assertEqual(st, DOC.FAIL)
 
+    def test_missing_llama_failure_says_it_is_only_for_lecture_summaries(self):
+        # 只用會議的人看到 doctor 的 llama／Qwen 錯誤，要知道那是課堂總結才需要的，以及怎麼收掉
+        _, _, detail = DOC.missing_engine_item("llama-server", "LLAMA_REF", "/x/llama-server", True)
+        self.assertIn("課堂總結需要", detail)
+        self.assertIn("會議不使用 llama.cpp", detail)
+        self.assertIn("[summary] enabled = false", detail)
+        self.assertIn("setup_engines.py", detail, "仍要告訴需要總結的人怎麼安裝")
+
+    def test_missing_whisper_failure_does_not_claim_to_be_lecture_only(self):
+        _, _, detail = DOC.missing_engine_item("whisper-server", "WHISPER_REF", "/x/whisper-server", True)
+        self.assertNotIn("課堂總結", detail)
+
+    def test_missing_llm_model_failure_is_scoped_to_lecture_summaries(self):
+        status, label, detail = DOC.missing_model_item("LLM 模型（qwen3-8b）", "/m/q.gguf", True)
+        self.assertEqual((status, label), (DOC.FAIL, "LLM 模型（qwen3-8b）"))
+        self.assertIn("/m/q.gguf", detail)
+        self.assertIn("課堂總結需要", detail)
+        self.assertIn("[summary] enabled = false", detail)
+
+    def test_missing_whisper_model_is_always_a_plain_failure(self):
+        for local_llm in (True, False):
+            status, _, detail = DOC.missing_model_item("whisper 模型", "/m/w.bin", local_llm, whisper=True)
+            self.assertEqual(status, DOC.FAIL)
+            self.assertNotIn("課堂總結", detail)
+
+    def test_missing_llm_model_stays_a_warning_without_a_local_llm(self):
+        status, _, detail = DOC.missing_model_item("LLM 模型（x）", "/m/q.gguf", False)
+        self.assertEqual(status, DOC.WARN)
+        self.assertIn("只轉錄", detail)
+        status, _, detail = DOC.missing_model_item("LLM 模型（x）", "/m/q.gguf", False, "lab")
+        self.assertEqual(status, DOC.WARN)
+        self.assertIn("外部 API", detail)
+
     def test_missing_whisper_is_always_failure(self):
         for on in (True, False):
             st, _, _ = DOC.missing_engine_item("whisper-server", "WHISPER_REF", "/x/whisper-server", on)

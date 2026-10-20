@@ -71,6 +71,23 @@ def _engine_setup_hint():
     return "python3 setup_engines.py"
 
 
+# llama.cpp 與 Qwen3-8B 只有「課堂總結」會用到；會議（錄音、匯入、會後辨識）與只轉錄都不載入。
+# doctor 預設看課堂設定（總結預設開啟），所以只用會議的人也會看到這兩項，要說清楚可以忽略。
+_LECTURE_SUMMARY_NOTE = ("課堂總結需要。只用會議或只轉錄可忽略，會議不使用 llama.cpp；"
+                         "在 config/local.toml 設 [summary] enabled = false，這項就只算警告")
+
+
+def missing_model_item(label, path, local_llm, upstream="local", whisper=False):
+    """找不到模型檔時的 (status, label, detail)。whisper 一律必要。"""
+    if whisper:
+        return (FAIL, label, f"找不到 {path}")
+    if local_llm:
+        return (FAIL, label, f"找不到 {path}（{_LECTURE_SUMMARY_NOTE}）")
+    if upstream not in (None, "", "local"):
+        return (WARN, label, f"找不到 {path}（外部 API 不需要本機 GGUF）")
+    return (WARN, label, f"找不到 {path}（只轉錄模式不需要）")
+
+
 def missing_engine_item(name, key, binary, summary_on, upstream="local"):
     """找不到引擎執行檔時的 (status, name, detail)。
 
@@ -84,6 +101,9 @@ def missing_engine_item(name, key, binary, summary_on, upstream="local"):
     if key == "LLAMA_REF" and upstream not in (None, "", "local"):
         return (WARN, name,
                 f"找不到 {binary}（總結使用外部 API 上游 {upstream}，不需要本機 llama.cpp）")
+    if key == "LLAMA_REF":
+        return (FAIL, name,
+                f"找不到 {binary}（執行 {_engine_setup_hint()}；{_LECTURE_SUMMARY_NOTE}）")
     return (FAIL, name, f"找不到 {binary}（執行 {_engine_setup_hint()}）")
 
 
@@ -236,12 +256,9 @@ def run(course=None, sets=(), mic=False):
                         (f"LLM 模型（{cfg['summary']['model']}）", Path(cfg.llm_model()["path"]))):
         if path.is_file():
             add(OK, label, f"{path.name}（{path.stat().st_size / 1e9:.1f} GB）")
-        elif label.startswith("whisper") or local_llm:
-            add(FAIL, label, f"找不到 {path}")
-        elif upstream not in (None, "", "local"):
-            add(WARN, label, f"找不到 {path}（外部 API 不需要本機 GGUF）")
         else:
-            add(WARN, label, f"找不到 {path}（只轉錄模式不需要）")
+            add(*missing_model_item(label, path, local_llm, upstream,
+                                    whisper=label.startswith("whisper")))
 
     b = Path(l.binary())
     if os.access(b, os.X_OK):

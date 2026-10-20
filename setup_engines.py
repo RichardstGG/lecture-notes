@@ -206,14 +206,20 @@ def pick_generator(requested, msvc):
 
 
 # ---------------------------------------------------------------- 前置檢查
-def check_tools(backend, msvc=_UNSET):
+def check_tools(backend, msvc=_UNSET, needed=()):
+    """needed：這次真的要編譯的引擎名稱（whisper／llama），只用來讓錯誤訊息講清楚為什麼要工具。"""
     missing = ["git"] if not shutil.which("git") else []
     if not shutil.which("cmake"):
         missing.append("cmake")
     missing += P.missing_build_tools(backend, msvc="probe" if msvc is _UNSET else msvc)
     if missing:
         print("缺少：" + "、".join(missing))
+        if needed:
+            print("  需要編譯：" + "、".join(needed))
         print({"linux": "  " + APT_HINT, "macos": "  " + BREW_HINT}.get(P.NAME, WIN_HINT))
+        if "llama" in needed:
+            print("  只做會議或轉錄、不需要課堂總結（或總結改用外部 API）時，不必編譯 llama.cpp：\n"
+                  "  python3 upgrade.py --whisper-only（或 python3 setup_engines.py whisper）")
         sys.exit(1)
     jobs = os.cpu_count() or 4
     print(f"✔ 工具齊全（後端 {backend}，平行 {jobs} 工作）")
@@ -267,6 +273,28 @@ def build(directory, backend, args, targets, jobs, rebuild, generator=None, cmak
         run(["cmake", "--build", directory / "build", "--config", "Release",
              "-j", str(jobs), "--target", t])
     stamp_file.write_text(want + "\n", encoding="utf-8")
+
+
+def engine_up_to_date(name, backend, lock, generator=None):
+    """build() 會直接略過這個引擎嗎？沒有副作用，也不需要編譯工具鏈。
+
+    條件與 build()／fetch_repo() 一致：engines.lock 有記錄、原始碼已在鎖定版本、
+    執行檔都在、build stamp 與這次的後端／參數相同。任何一項不成立就回 False，
+    讓呼叫端照原本的流程檢查工具並編譯。
+    """
+    e = ENGINES[name]
+    ref, directory = lock.get(e["key"]), e["dir"]
+    if not ref or not (directory / ".git").is_dir():
+        return False
+    head = out(["git", "-C", directory, "rev-parse", "-q", "--verify", "HEAD"])
+    if not head or not head.startswith(ref):
+        return False
+    stamp_file = P.build_stamp_path(directory)
+    if not stamp_file.exists() or not all(P.find_engine_bin(directory, t).is_file()
+                                           for t in e["targets"]):
+        return False
+    return stamp_file.read_text(encoding="utf-8").strip() == build_stamp(
+        directory, backend, e["args"], generator)
 
 
 def check_bin(path, backend):
@@ -625,10 +653,18 @@ def main(argv=None):
                     build_stamp(e["dir"], backend, e["args"], args.generator) + "\n", encoding="utf-8")
         return 0
 
-    step("檢查編譯工具")
-    msvc = P.find_msvc() if P.NAME == "windows" else None
-    jobs = check_tools(backend, msvc)
-    cmake_generator = pick_generator(args.generator, msvc)
+    # 引擎都已是鎖定版本、而且已編好時，build() 會直接略過，這時要求 cmake 等工具沒有意義
+    # （例如換了一個 PATH 不同的終端機，或只剩預先編好的 whisper）。
+    pending = [n for n in names
+               if args.update or args.rebuild or not engine_up_to_date(n, backend, lock, args.generator)]
+    jobs, cmake_generator = os.cpu_count() or 4, None
+    if pending:
+        step("檢查編譯工具")
+        msvc = P.find_msvc() if P.NAME == "windows" else None
+        jobs = check_tools(backend, msvc, needed=pending)
+        cmake_generator = pick_generator(args.generator, msvc)
+    else:
+        print("▶ 引擎都已是鎖定版本且已編好，略過編譯工具檢查")
 
     for name in names:
         e = ENGINES[name]
