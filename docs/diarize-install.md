@@ -67,7 +67,7 @@ GitHub release 的資產 tag 是**可變的**，下載到什麼不能直接信�
 | 真的建 `.venv`、`pip install`、下載兩個模型、第二次略過 | Manual test（Linux） | 通過 |
 | 安裝出來的 `.venv` 與 `models/` 被引擎靠預設探索找到並跑完真 sherpa 冒煙測試（不設任何環境變數） | Manual test（Linux） | 通過 |
 | 在無網路介面的環境執行 | Manual test（Linux） | 通過 |
-| macOS、Windows | **Not tested** | 依 PyPI 頁面所列有這兩個平台的 `sherpa-onnx` wheel（macOS arm64／x86-64、Windows x64／arm64），但**沒有在真機裝過或跑過**。`.venv` 路徑與 `python.exe` 位置的邏輯有單元測試，其餘未驗證。維持「實驗中」。 |
+| macOS、Windows | Hardware test | 會議 v1 真機驗收（Apple Silicon，2026-10-15／18；Windows 11，2026-10-16／20）裝好依賴與模型並跑完會後辨識，見 `docs/meeting-workbench-implementation.md` 里程碑 5。Intel Mac 與 Windows arm64 未測。 |
 | 辨識準確度 | **Not tested** | 唯一可用的真實會議錄音有 20.2% 音訊遺失，不能當依據。見 `docs/meeting-workbench-implementation.md`。 |
 
 ## 疑難排解
