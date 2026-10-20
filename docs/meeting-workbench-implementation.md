@@ -50,16 +50,51 @@
        從 UI 重跑辨識 → `done`。
      - UI 現場錄音 15 分 31 秒 →「正常停止」→ `done`；capture `lost_ratio` 0.008%；每分鐘取樣 RSS 穩定（lec 約 25 MB、
        whisper-server 約 99 MB 不含 GPU 記憶體、ffmpeg 約 18 MB），轉錄佇列維持 0。會後辨識約 75 秒完成。
-   - **v1 收尾前要修（Codex，UI）**：
-     1. 會議工作台水平裁切：`.meeting-workbench` 的 grid 欄寬為 `auto`，`.meeting-history-list` 的 min-content 隨場次增加
-        （6 場時 1360px）把欄撐到 1411px，外層只有 1009px 寬且不可水平捲動，卡片右側（含「開始辨識」按鈕）被切掉。
-     2. UI 匯入時 `source.json` 的 `original_name` 記成上傳暫存的隨機檔名（例：`b6417e….ogg`），不是使用者的原始檔名。
-   - **尚未驗收**：Windows／macOS 的 UI 流程。
+   - **UI 驗收發現的兩個問題已由 #106 修正**（Linux 於 PR 審查時再以真實 UI 確認）：
+     1. 會議工作台水平裁切：`.meeting-workbench` 的 grid 欄寬為 `auto`，歷史卡片列的 min-content 隨場次增加把欄撐寬，
+        卡片右側（含「開始辨識」按鈕）被切掉。現在只有歷史列自己水平捲動。
+     2. UI 匯入時 `source.json` 的 `original_name` 記成上傳暫存的隨機檔名，不是使用者的原始檔名。
+   - **2026-10-15、10-18 macOS 真機驗收（Hardware test＋Manual test，Apple M5 Pro、macOS 27.0.1、ffmpeg 9.0.1，各一輪）**：
+     - 第一輪（main `a28bcc3`）：匯入與會後辨識（約 30 秒）、取消保留舊 generation、重跑、搶鎖 `busy`；CLI 與 UI 的錄音正常停止／強停／
+       Ctrl+C；UI 檔案選擇器匯入（顯示原始檔名）、刪除上傳暫存後辨識、跨頁、800px 版面；UI 啟動通知約 0.47 秒，沒有 503。
+       原生擷取（avfoundation helper）`lost_ratio` 與原生 PTS 遺失皆為 0；helper 第一次編譯、之後使用快取（目錄 `0700`）。
+       15 分鐘 UI 錄音 `lost_ratio` 0、86,171 次 callback 0 個空隙；每分鐘取樣 lag ≤ 1.3 秒、queue ≤ 1，lec 約 35–42 MiB、
+       whisper-server 約 1.8 GiB（RSS，不含全部 GPU 記憶體）、helper 約 26 MiB 沒有持續增長；會後辨識 89 秒。
+       Metal 的 SRT 與 `samples/expected` 位元組相同。自動測試 1121 項，唯一錯誤是 `127.0.0.2` 逾時（已由 #107 修正）。
+     - 第二輪（main `fb3c039`，#107／#108／#110 重測）：完整測試 1131 項 0 失敗 0 錯誤（略過 11）、`npm audit` 0 個漏洞；
+       強停錄音檔 CLI 142,814 bytes／29.0 秒、UI 80,993 bytes／16.0 秒，皆非空、可完整解碼、無 `source.json`；正常停止
+       60.73 秒、`lost_ratio` 0；UI 啟動通知約 0.27 秒、pid 與 `lec status` 相等、重複送出回 409 `run_active`。
+   - **2026-10-16、10-20 Windows 真機驗收（Hardware test＋Manual test，Windows 11 Pro 10.0.26200、Ryzen 9 5900X、
+     RX 6600 XT／Vulkan、ffmpeg 9.0.2，各一輪）**：
+     - 10-16（main `fb3c039`，非錄音）：匯入、會後辨識約 209 秒、取消保留舊 generation、重跑、`busy`；UI 檔案選擇器匯入
+       「會議 測試 test8min.ogg」顯示原始檔名、刪除暫存後辨識、跨頁、800px 版面；三個 session 的 `PermissionError`／`WinError 5/32/33` 為 0。
+       #110 的檔案匯入：API 回傳的 launcher pid（venv `python.exe` 啟動器）與 `lec status`／`run.json` 的實際 pid 不同，
+       仍在約 0.7 秒回 202、沒有 503。Windows 的 SRT 與 Linux／macOS 基準不同（100 行對 104 行；AMD Vulkan），不算失敗。
+     - 10-20（main `ff88453`，錄音）：CLI 正常停止／強停／真正的 `CTRL_C_EVENT` 為 `done`／`aborted`／`done`，來源發布規則正確；
+       #108 強停錄音檔 CLI 52,337 bytes／29.178 秒、UI 59,457 bytes／32.098 秒，皆非空、可解碼；#110 錄音按鈕啟動 0.740 秒／202
+       （launcher pid 66116 → 實際 pid 71396 = `status` = `run.json`），重複送出回 409 `run_active`；跨頁、強停、7 個 session 的
+       `session.log` 權限錯誤為 0。15 分鐘錄音來源 917.677 秒、`lost_ratio` 0.0089%（74 個最長 2 毫秒的空隙）、記憶體持平
+       （lec 約 33 MiB、whisper-server 約 1.6 GiB、ffmpeg 約 34 MiB）。#112 在沒有 cmake 的 process 中：`setup_engines.py whisper`
+       與 `upgrade.py --skip-pull --whisper-only --skip-ui` exit 0；`setup_engines.py llama` exit 1 並附說明；doctor 的新訊息正確。
+     - **限制**：這台 Windows 的麥克風輸入近乎靜音（`mean` 約 −91 dB），VAD 略過全部 153 段，所以**有人聲時 Windows 的即時轉錄延遲與積壓沒有測**；
+       對該錄音的會後辨識回 `empty_result`、不發布 generation、原稿與來源保留，這是契約規定的行為（沒有可用發言不當成功），不是失敗。
+       Windows 上對「有人聲的匯入檔」的會後辨識已於 10-16 驗證成功。
+   - **強停錄音的尾端損失（#108 修正後，三個平台一致）**：Linux 1.13 秒、macOS 1.3／1.1 秒、Windows 1.12／1.20 秒
+     （最終 `status` 的 `elapsed` 減去檔案長度）。原因是 ffmpeg 的 Ogg 封裝預設 `page_duration` 為 1 秒，被強制結束時最後一個未寫出的
+     page 會遺失，另有約 0.1–0.3 秒的編碼與管線緩衝，所以預期是約 1–1.5 秒；超過 2 秒或檔案為空才算異常。
+   - **仍然只有一台機器的證據**：三個平台各一台，macOS 為 Apple Silicon（Intel Mac 未測），Windows 為 AMD GPU。macOS／Windows 仍標 beta／實驗中。
    - 觀察（v2.x 品質範圍，不阻擋 v1）：
      - 強停後 `last_error` 的 `ffmpeg 結束代碼 -9` 與 `lec stop` 對會議仍寫「補做總結」兩項已由 #104 修正。
      - 真實環境錄音的帶代號稿比原稿稀疏許多（58 秒只留 6 段）。
      - 15 分鐘錄音裡 VAD 略過 119 段、只送 4 段；後 12 分鐘確實無人說話（會後辨識同樣只在前 2 分 40 秒找到語音），
        但前 1 分鐘幾句很短、很小聲的應答（「對，對」「嗯嗯」）被 VAD 判為「幾乎無人聲」略過，會後辨識則有抓到。
+   - **其他觀察（小問題，不阻擋 v1；三項屬 Codex 範圍，已整理給 maintainer）**：
+     - `empty_result` 對使用者的訊息是「會後辨識失敗，請依錯誤代碼檢查本機環境」，對近乎靜音的來源有誤導；
+       較貼切的說法是「沒有偵測到可用的發言（來源可能幾乎無聲）」（`core/session.py` 的錯誤映射）。
+     - UI 強制停止後，status 的 `servers.whisper` 仍是 `ok`，實際引擎行程已被終止。
+     - 會後辨識進行中切到課堂工作台，主卡片把 `mode=diarize` 顯示成「載入模型 · 現場錄音」；上方提示列正確。
+     - 數個 UI 測試用 1 秒的子行程逾時（例如 `test_courses_rejects_wrong_json_shape`），在辨識負載下的 Windows 上會波動；
+       空載的 Windows basic 全數通過。
 
 ## 契約檢查點
 
