@@ -1,6 +1,6 @@
 """lec doctor 的平台分支與「編譯工具」項目（Mock test，不需要 Mac 或 Windows 實機）。
 
-doctor.run() 裡有幾處會因作業系統而不同：「作業系統」那行的實測／實驗中措辭、
+doctor.run() 裡有幾處會因作業系統而不同：「作業系統」那行的支援措辭、
 要檢查哪些外部指令（pactl / systemd-inhibit / caffeinate）、錄音後端，以及編譯工具鏈。
 本檔以 mock 把三個平台的分支都走過一次，不將它當作實機驗證，
 避免跨平台重構時在這裡靜默壞掉。
@@ -55,17 +55,12 @@ def run_doctor(name, *, missing_tools=(), msvc=None, which=None, stamp_backend=N
 class DoctorPlatformBranchTests(unittest.TestCase):
     """三個平台各跑一次 doctor.run()，檢查平台相關的項目。"""
 
-    def test_linux_is_the_only_tested_platform(self):
-        item = run_doctor("linux")[0]["作業系統"]
-        self.assertEqual(item["status"], DOC.OK)
-        self.assertIn("已實測", item["detail"])
-
-    def test_macos_and_windows_stay_experimental(self):
-        for name in ("macos", "windows"):
+    def test_all_platforms_are_supported(self):
+        for name in ("linux", "macos", "windows"):
             with self.subTest(name=name):
                 item = run_doctor(name)[0]["作業系統"]
-                self.assertEqual(item["status"], DOC.WARN)
-                self.assertIn("實驗中", item["detail"])
+                self.assertEqual(item["status"], DOC.OK)
+                self.assertIn("正式支援", item["detail"])
 
     def test_audio_backend_per_platform(self):
         for name, backend in (("linux", "pulse"), ("macos", "avfoundation"),
