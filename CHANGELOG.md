@@ -23,6 +23,11 @@
 
 | 版本 | 合併日期 | PR | 內容 |
 |---|---|---|---|
+| v1.9.10 | 2026-10-20 | [#113](https://github.com/RichardstGG/lecture-notes/pull/113) | 會議 v1 三平台真機驗收紀錄與安裝說明同步 |
+| v1.9.09 | 2026-10-20 | [#112](https://github.com/RichardstGG/lecture-notes/pull/112) | 引擎已是最新版時不再要求 cmake；doctor 說明 llama 只有課堂總結需要 |
+| v1.9.08 | 2026-10-16 | [#111](https://github.com/RichardstGG/lecture-notes/pull/111) | Windows 測試站不再被 PowerShell 執行原則擋下 |
+| v1.9.07 | 2026-10-16 | [#110](https://github.com/RichardstGG/lecture-notes/pull/110) | Windows 上 UI 開始會議不再誤報啟動逾時 |
+| v1.9.06 | 2026-10-15 | [#109](https://github.com/RichardstGG/lecture-notes/pull/109) | CHANGELOG、README 與 macOS 安裝說明依進度更新 |
 | v1.9.05 | 2026-10-15 | [#108](https://github.com/RichardstGG/lecture-notes/pull/108) | 強停的錄音不再是空檔；upgrade 說明 detached HEAD 的處理 |
 | v1.9.04 | 2026-10-15 | [#107](https://github.com/RichardstGG/lecture-notes/pull/107) | UI 測試相容 macOS，補上測試依賴與前端安全更新 |
 | v1.9.03 | 2026-10-15 | [#106](https://github.com/RichardstGG/lecture-notes/pull/106) | 會議頁版面不再被撐寬，匯入保留原始檔名 |
