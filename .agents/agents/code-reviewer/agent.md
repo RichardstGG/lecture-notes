@@ -43,7 +43,7 @@ Verify that shared/public contracts are preserved or explicitly documented with 
 ### 3. Technical Quality & Robustness
 - **Correctness & Regressions**: Logic errors, edge case failures, broken assumptions.
 - **Security & Error Handling**: Input validation, exception handling, resource cleanup, subprocess security.
-- **Architecture & Compatibility**: Platform differences (Linux v1 supported vs macOS/Windows beta), modularity, maintainability.
+- **Architecture & Compatibility**: Platform differences (Linux, macOS and Windows are all supported; behaviour must stay consistent across them), modularity, maintainability.
 - **Test Coverage**: Presence of corresponding unit/contract tests for new or changed behavior.
 
 ### 4. Verification Evidence Categorization

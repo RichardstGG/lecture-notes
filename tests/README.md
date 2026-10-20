@@ -33,7 +33,7 @@ python3 -m unittest tests.test_platform_parsers -v
 | `test_devices_permission_hint.py` | 麥克風權限錯誤訊息（啟發式，非窮舉） |
 | `test_devices_sources.py` | 來源解析（`devices.resolve()` 與執行期 `resolve_source()` 的差別）、音量判斷門檻、列不出裝置時的提示 |
 | `test_doctor_helpers.py` | `core/doctor.py` 的小工具函式，以及只轉錄、外部摘要 API 下不把缺少的 llama／GGUF 當成失敗 |
-| `test_doctor_platform.py` | `lec doctor` 的平台分支（實測／實驗中措辭、平台專屬指令、錄音後端）與「編譯工具」項目 |
+| `test_doctor_platform.py` | `lec doctor` 的平台分支（正式支援措辭、平台專屬指令、錄音後端）與「編譯工具」項目 |
 | `test_capture_aligner.py` | 雙來源時間軸對齊（`TrackAligner`，模擬時鐘）：起點補零、抖動、管線卡住與真實掉音的區分、快慢兩種時脈漂移、混音 |
 | `test_capture_session.py` | 雙來源擷取協調（`MultiCapture`，假擷取行程＋真的 ffmpeg 編碼）：單路故障、停滯、靜音不是故障、串流被轉接、啟動失敗不留檔、停止／強制停止、`verify_capture` |
 | `test_capture_pulse_integration.py` | 對真實 PulseAudio／PipeWire 的整合測試（虛擬裝置），**預設跳過**，要 `LEC_TEST_PULSE=1` |

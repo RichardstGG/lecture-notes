@@ -180,8 +180,7 @@ def run(course=None, sets=(), mic=False):
 
     # ---- 系統
     add(OK if sys.version_info >= (3, 11) else FAIL, "Python", platform.python_version())
-    tested = {"linux": "已實測", "macos": "實驗中", "windows": "實驗中"}[P.NAME]
-    add(OK if P.NAME == "linux" else WARN, "作業系統", f"{P.describe()}｜{tested}")
+    add(OK, "作業系統", f"{P.describe()}｜正式支援")
     add(OK, "錄音後端", P.audio_backend())
     tools = [("ffmpeg", True, "錄音與解碼"), ("opencc", False, "台灣繁體用語轉換"),
              ("git", False, "setup_engines.py 取得原始碼"), ("cmake", False, "編譯引擎")]

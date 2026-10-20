@@ -1,7 +1,6 @@
 # Windows 安裝
 
-狀態：**實驗中（beta）**。已在 Windows 實機跑過 CUDA 編譯、處理音檔與列出錄音裝置；
-其餘行為大多只有 mock 與靜態驗證，請不要當成「已支援」。已知限制與實機驗證步驟見 [platform-windows.md](platform-windows.md)。
+狀態：**正式支援**。課堂與會議流程已在 Windows 11 實機驗收。已知限制與實機驗證步驟見 [platform-windows.md](platform-windows.md)。
 
 錄音用 DirectShow，GPU 預設 Vulkan（可改 CUDA）。
 

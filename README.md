@@ -25,10 +25,10 @@
 - 教室內分享：在同一個網路內產生連結或 QR code，讓同學以唯讀方式即時閱讀逐字稿與筆記。
 - 若使用者有運算能力更強的伺服器，也可以改由該伺服器整理筆記（此時逐字稿會傳送到使用者指定的伺服器）。
 
-**會議紀錄（開發中，部分可試用）**
+**會議紀錄**
 
 - 錄製會議或匯入會議錄音並產生逐字稿；會後自動區分不同的發言者，產生標示發言者的逐字稿。
-- 錄音、匯入、停止、發言者區分與重新辨識都可以在圖形介面中操作，也可以用指令操作（目前在 Linux 驗證過）。發言者區分的準確度仍在驗證中。
+- 錄音、匯入、停止、發言者區分與重新辨識都可以在圖形介面中操作，也可以用指令操作，Linux、macOS、Windows 都能使用。發言者區分的準確度仍在持續改進。
 - 規劃中：同時收錄電腦播放的聲音（例如線上會議中其他人的發言）與自己的麥克風。
 
 **桌面應用程式（規劃中）**
@@ -40,7 +40,7 @@
 | 版本 | 內容 | 狀態 |
 |---|---|---|
 | V1.0 | 課堂紀錄與基本操作介面 | 已完成 |
-| V2.0 | 會議紀錄與會議工作介面 | 開發中（錄製、發言者區分與操作介面可試用，準確度驗證中） |
+| V2.0 | 會議紀錄與會議工作介面 | 已完成 |
 | V3.0 | 打包成桌面應用程式 | 規劃中 |
 
 ### 使用須知
@@ -51,8 +51,8 @@
 
 | 平台 | 支援程度 | 安裝說明 |
 |---|---|---|
-| Windows | 實驗中 | [docs/windows_setup.md](docs/windows_setup.md) |
-| macOS | 實驗中 | [docs/mac_setup.md](docs/mac_setup.md) |
+| Windows | 正式支援 | [docs/windows_setup.md](docs/windows_setup.md) |
+| macOS | 正式支援 | [docs/mac_setup.md](docs/mac_setup.md) |
 | Linux | 正式支援 | [docs/linux_setup.md](docs/linux_setup.md) |
 
 - **版本歷史**：[CHANGELOG.md](CHANGELOG.md)，列出每次更新對應的版本號。
@@ -78,7 +78,7 @@
 - **Web UI**：FastAPI（只綁 `127.0.0.1`）＋ React／TypeScript／Vite。UI 不 import `core`，只透過 `lec` 子指令與狀態檔溝通（見「給 UI 的介面」）。內網唯讀分享是另一個獨立的服務，不掛載主控 API。
 - **停止機制**：UI 與 `lec stop` 在輸出資料夾寫 `stop`／`stop_force` 檔，由程式輪詢，三個平台一致，不送 OS signal。
 - **單一工作鎖**：課堂、補做總結、會議錄音與會後辨識共用 `<狀態資料夾>/run.lock` 的 OS 鎖，同時只會有一個工作在跑。
-- **會議（開發中）**：`lec meeting run` 錄音或匯入（不做總結，保存來源音訊），`lec meeting diarize` 以 sherpa-onnx 做會後發言者辨識（`core/diarize.py`）；雙音源錄音引擎（`core/capture.py`）已完成但尚未開放。見「會議功能」。
+- **會議**：`lec meeting run` 錄音或匯入（不做總結，保存來源音訊），`lec meeting diarize` 以 sherpa-onnx 做會後發言者辨識（`core/diarize.py`）；雙音源錄音引擎（`core/capture.py`）已完成但尚未開放。見「會議功能」。
 - **效能參考**（Debian 13、Intel Arc 140V）：whisper large-v3-turbo 約 6–7 倍即時；Qwen3-8B 每節總結約 77–95 秒。
 
 ### 平台支援
@@ -86,13 +86,13 @@
 | 平台 | 錄音 | GPU 後端 | 狀態 |
 |---|---|---|---|
 | Linux（PulseAudio / PipeWire） | pulse | Vulkan | 已實測（Debian 13、Intel Arc 140V） |
-| macOS | AVFoundation 原生擷取（需 `swiftc`） | Metal | 實驗中；單來源錄音已實機驗證 |
-| Windows | dshow | Vulkan（可改 CUDA） | 實驗中，實測中 |
+| macOS | AVFoundation 原生擷取（需 `swiftc`） | Metal | 已實測（Apple Silicon） |
+| Windows | dshow | Vulkan（可改 CUDA） | 已實測（Windows 11、AMD Radeon） |
 
 共同需求：Python 3.11+、ffmpeg、git、cmake，以及 C++ 編譯環境（Windows 沒有編譯環境時可用預編譯檔）。
 Web UI 另需 Node.js 22.22+。
 
-Linux 為正式支援；macOS、Windows 仍是 beta，大部分行為只有 mock 與靜態驗證，在真機驗證前不要當成「已支援」。
+Linux、macOS、Windows 皆為正式支援。
 各平台的安裝步驟見「開始使用」；細節與已知限制：[Linux](docs/platform-linux.md)、[macOS](docs/platform-macos.md)、[Windows](docs/platform-windows.md)。
 
 ### 手動編譯
@@ -145,9 +145,9 @@ Windows 不想裝編譯環境時可用 `--prebuilt` 下載官方預編譯檔，�
 | `lec doctor [課名] [--mic]` | 檢查環境（回報問題請附上輸出，`--json` 給 UI） |
 | `lec status` / `lec stop` | 查看 / 停止目前的執行（`--json`、`--force`） |
 | `lec --start-ui [--port N]` | 啟動本機 Web UI（見「Web UI」） |
-| `lec meetings [--json]` | 列出 `meetings/*.toml` 的會議設定（實驗中，不錄音） |
-| `lec meeting run 會議 --speakers N` | 會議錄音（實驗中）：只轉錄、不總結，保存來源音訊；`--file 錄音` 改為匯入，`--source` 換錄音來源 |
-| `lec meeting diarize <資料夾> --speakers N` | 會後發言者辨識（實驗中），產生帶代號的逐字稿；沿用錄音時的設定快照，可用 `--set diarization.鍵=值` 覆寫 |
+| `lec meetings [--json]` | 列出 `meetings/*.toml` 的會議設定（不錄音） |
+| `lec meeting run 會議 --speakers N` | 會議錄音：只轉錄、不總結，保存來源音訊；`--file 錄音` 改為匯入，`--source` 換錄音來源 |
+| `lec meeting diarize <資料夾> --speakers N` | 會後發言者辨識，產生帶代號的逐字稿；沿用錄音時的設定快照，可用 `--set diarization.鍵=值` 覆寫 |
 | `lec capture-capabilities [--json]` | 查詢雙音源錄音的整合狀態（實驗中，不開啟任何裝置） |
 
 `--file` 可用任何 ffmpeg 能解碼的檔案：mp3、m4a/aac、wav、flac、ogg/opus、wma、webm，以及 mp4/mkv/mov 等影片（自動取音軌）。
@@ -297,7 +297,7 @@ lec --start-ui                           # Windows：python lec --start-ui
 #### 頁面
 
 - **課堂**：處理控制、逐字稿／課堂筆記／術語候選、歷史紀錄、內網分享、課程設定。
-- **會議**（實驗中）：建立／編輯會議設定、現場錄音或匯入、正常停止／強停、啟動會後辨識／取消／重跑，並查看原稿、帶代號的逐字稿與辨識進度。只開放單一來源，雙來源選項停用。見「會議功能」。
+- **會議**：建立／編輯會議設定、現場錄音或匯入、正常停止／強停、啟動會後辨識／取消／重跑，並查看原稿、帶代號的逐字稿與辨識進度。只開放單一來源，雙來源選項停用。見「會議功能」。
 - **本機設定**：麥克風、裝置診斷、摘要 API 上游。
 
 各區塊網址與導覽細節見 [ui/WORKBENCH.md](ui/WORKBENCH.md)。
@@ -354,11 +354,11 @@ npm run dev
 開發頁面在 <http://127.0.0.1:5173>，Vite 會把 `/api` proxy 到 port `8765`。
 完整 backend API 與環境變數見 `docs/ui-backend.md`。
 
-### 會議功能（開發中，V2.0）
+### 會議功能（V2.0）
 
 會議工作台的目標：同時錄「系統輸出＋麥克風」兩個來源，會後分辨發言者並產生帶代號的逐字稿。
-**目前可以用 CLI 或 Web UI 從頭跑完一場會議（實驗中）**：單一來源錄音或匯入 → 原稿 → 會後發言者辨識。
-Linux 已做過 CLI 與 UI 真機驗收；雙來源錄音還沒開放，辨識準確度尚未用標註樣本驗證（品質優化列在 v2.x）。
+**目前可以用 CLI 或 Web UI 從頭跑完一場會議**：單一來源錄音或匯入 → 原稿 → 會後發言者辨識。
+Linux、macOS、Windows 都做過 CLI 與 UI 真機驗收；雙來源錄音還沒開放，辨識準確度尚未用標註樣本驗證（品質優化列在 v2.x）。
 
 ```bash
 cp meetings/examples/template.toml meetings/週會.toml      # 改 name、num_speakers
@@ -367,7 +367,7 @@ lec meeting run 週會 --speakers 4 --file 錄音.m4a          # 或匯入既有
 lec meeting diarize outputs/meetings/週會_20261015_140000 --speakers 4
 ```
 
-- 會議不做總結（不啟動 llama.cpp）。輸出在 `outputs/meetings/<名稱>_<YYYYMMDD_HHMMSS>/`，除了 `transcript.md`／`.srt` 原稿，一定會保存來源音訊 `source_audio.*` 與 `source.json`（含 SHA-256），之後可以重跑辨識。
+- 會議不做總結，不需要 llama.cpp 與 Qwen3-8B：只用會議的電腦可用 `upgrade.py --whisper-only`，`lec doctor` 對這兩項的錯誤可以忽略。輸出在 `outputs/meetings/<名稱>_<YYYYMMDD_HHMMSS>/`，除了 `transcript.md`／`.srt` 原稿，一定會保存來源音訊 `source_audio.*` 與 `source.json`（含 SHA-256），之後可以重跑辨識。
 - 辨識結果寫在 `diarization/<generation>/`（`transcript.speakers.md`、`speakers.json`），成功後才以 `diarization.current.json` 原子切換；失敗或取消保留上一版。
 - `--json` 結束時輸出一個結果物件；exit code：參數錯誤 2、已有工作在跑 3、作業錯誤 1、使用者取消 130。
 - 辨識需要 sherpa-onnx 與兩個模型（`upgrade.py` 預設會裝，`lec doctor` 有「發言者辨識」一項可檢查）。
@@ -375,11 +375,11 @@ lec meeting diarize outputs/meetings/週會_20261015_140000 --speakers 4
 | 元件 | 現況 | 文件 |
 |---|---|---|
 | 會議設定與資料層 | `meetings/*.toml`、`lec meetings`、`lec config --work-type meeting` | [docs/meeting-workbench-config.md](docs/meeting-workbench-config.md) |
-| 會議 CLI | `lec meeting run`／`lec meeting diarize` 已接上錄音、匯入、來源保存與辨識（實驗中） | [docs/meeting-workbench-contract.md](docs/meeting-workbench-contract.md) |
+| 會議 CLI | `lec meeting run`／`lec meeting diarize` 已接上錄音、匯入、來源保存與辨識 | [docs/meeting-workbench-contract.md](docs/meeting-workbench-contract.md) |
 | 單工作鎖與狀態 | `run.lock` 原子 OS 鎖；status／run 為 schema 2（新增 `work_type`、`stop_reason`、`diarization`），events 維持 schema 1，reader 相容舊檔 | [docs/meeting-workbench-lock-status.md](docs/meeting-workbench-lock-status.md) |
 | 會後發言者辨識 `core/diarize.py` | 由 `lec meeting diarize` 呼叫；**準確度未驗證** | [docs/diarize-install.md](docs/diarize-install.md)、[評分器](docs/diarize-evaluation.md) |
 | 雙音源錄音 `core/capture.py` | 引擎層完成，僅 Linux；**錄音入口仍拒絕 `capture_mode = "dual"`，硬體驗收未做** | [docs/platform-dual-capture.md](docs/platform-dual-capture.md)、[docs/meeting-workbench-dual-audio.md](docs/meeting-workbench-dual-audio.md) |
-| UI 會議頁 | 會議設定、錄音／匯入、停止／強停、辨識／取消／重跑都已接上正式 API；Linux 已做 UI 真機驗收 | [ui/WORKBENCH.md](ui/WORKBENCH.md) |
+| UI 會議頁 | 會議設定、錄音／匯入、停止／強停、辨識／取消／重跑都已接上正式 API；三個平台都做過 UI 真機驗收 | [ui/WORKBENCH.md](ui/WORKBENCH.md) |
 
 實作順序與剩餘工作：[docs/meeting-workbench-implementation.md](docs/meeting-workbench-implementation.md)。
 
@@ -476,7 +476,7 @@ core/diarize_worker.py 發言者辨識的分群子行程
 
 ### 開發
 
-- 測試：`python3 -m unittest`（純標準函式庫）。UI 的測試需要 `ui/backend/requirements.txt` 的 fastapi，沒安裝時 `tests/test_ui_backend_*.py` 會失敗，不代表程式壞掉。
+- 測試：`python3 -m unittest`（純標準函式庫）。UI 的測試需要 `ui/backend/requirements-dev.txt`（fastapi 與 httpx），沒安裝時 `tests/test_ui_backend_*.py` 會失敗，不代表程式壞掉。
 - 分支：`main`。程式、設定範例、prompts、`samples/` 範例素材與 `engines.lock` 進 git；本機設定、個人課程、原始錄音與 outputs 已由 `.gitignore` 排除。
 - 本專案由 Claude Code、Codex 分工開發，Antigravity 獨立審查，maintainer 最終審查與合併；分工與流程見 [AGENTS.md](AGENTS.md)、[CLAUDE.md](CLAUDE.md)、[CODEX.md](CODEX.md)。
 - 升級引擎：`python3 setup_engines.py --update` → `lec run 課名 --file <錄音>` 與 `./bench_llm.sh` 確認沒問題 → `git commit engines.lock`。

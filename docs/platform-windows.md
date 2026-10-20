@@ -1,6 +1,6 @@
-# Windows 平台備忘（實測中）
+# Windows 平台備忘
 
-狀態：**實測中**。已在 Windows 實機跑過 `setup_engines.py --backend cuda`、
+狀態：**正式支援**（maintainer 2026-10-20 決定，依據會議 v1 真機驗收）。下面標了日期的段落是當時的紀錄。已在 Windows 實機跑過 `setup_engines.py --backend cuda`、
 `lec run --file`（CUDA）與 `lec devices`，下面標註「實機」的段落是依實機結果修正的；
 其餘仍是依文件推導與 mock test。
 
@@ -156,8 +156,7 @@ Intel 內顯不會被問 CUDA。摘要用的外部 API 在 Web UI 設定，啟�
 雜湊不符會刪掉下載的檔、拒絕安裝。CUDA / 純 CPU 的 llama 預編譯檔還沒有自動下載，
 仍是 [windows_setup.md](windows_setup.md) 說的手動放置，或裝好編譯環境後不要加 `--prebuilt`。
 
-Windows 仍然標成「實驗中」。這條安裝路徑有單元測試，也有下面這一筆檔案模式的實機紀錄。
-麥克風錄音、`lec stop`、UI 還沒在這台機器上重跑，確認前不要把平台改成「已支援」。
+這條安裝路徑有單元測試，也有下面這一筆檔案模式的實機紀錄。
 
 **實機回報（2026-10-08，Windows 11、Intel Iris Xe、沒有 MSVC、沒有 Vulkan SDK）**：
 `python setup_engines.py --prebuilt` 結束碼 0。whisper-server 是 v1.9.0 CPU，
@@ -465,5 +464,4 @@ $global:out | Out-File -FilePath $R -Encoding utf8
 要驗這些項目的話，照上面「實機驗證流程」那一節跑，不用自己想順序；
 每一步都標了對應的風險項目編號。
 
-在以上項目至少跑過一輪之前，README 與 `lec doctor` 都刻意維持「實驗中」而
-不是「已支援」的措辭，請不要在這些項目確認之前把 Windows 改標成正式支援。
+2026-10-20 起 README 與 `lec doctor` 將 Windows 標為正式支援；上面各項仍是發生問題時優先查的方向。

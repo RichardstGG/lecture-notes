@@ -82,7 +82,7 @@
    - **強停錄音的尾端損失（#108 修正後，三個平台一致）**：Linux 1.13 秒、macOS 1.3／1.1 秒、Windows 1.12／1.20 秒
      （最終 `status` 的 `elapsed` 減去檔案長度）。原因是 ffmpeg 的 Ogg 封裝預設 `page_duration` 為 1 秒，被強制結束時最後一個未寫出的
      page 會遺失，另有約 0.1–0.3 秒的編碼與管線緩衝，所以預期是約 1–1.5 秒；超過 2 秒或檔案為空才算異常。
-   - **仍然只有一台機器的證據**：三個平台各一台，macOS 為 Apple Silicon（Intel Mac 未測），Windows 為 AMD GPU。macOS／Windows 仍標 beta／實驗中。
+   - **仍然只有一台機器的證據**：三個平台各一台，macOS 為 Apple Silicon（Intel Mac 未測），Windows 為 AMD GPU。maintainer 2026-10-20 決定 macOS／Windows 改標正式支援。
    - 觀察（v2.x 品質範圍，不阻擋 v1）：
      - 強停後 `last_error` 的 `ffmpeg 結束代碼 -9` 與 `lec stop` 對會議仍寫「補做總結」兩項已由 #104 修正。
      - 真實環境錄音的帶代號稿比原稿稀疏許多（58 秒只留 6 段）。

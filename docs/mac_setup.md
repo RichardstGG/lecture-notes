@@ -1,7 +1,6 @@
 # macOS 安裝
 
-狀態：**實驗中（beta）**。錄音用 AVFoundation 原生擷取、GPU 用 Metal。單一麥克風的課堂錄音已在 Apple Silicon 真機驗證（31 分鐘、無音訊遺失），
-其他行為大多只有 mock 與靜態驗證，請不要當成「已支援」。已知限制與實機驗證步驟見 [platform-macos.md](platform-macos.md)。
+狀態：**正式支援**。錄音用 AVFoundation 原生擷取、GPU 用 Metal。課堂與會議流程已在 Apple Silicon 實機驗收。已知限制與實機驗證步驟見 [platform-macos.md](platform-macos.md)。
 
 需要：Homebrew、Python 3.11+、ffmpeg、git、cmake、Xcode Command Line Tools；用 Web UI 另需 Node.js 22.22+。
 
