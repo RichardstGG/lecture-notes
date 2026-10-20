@@ -17,13 +17,20 @@
 - 日期是台北時間（UTC+8）的合併日期。
 - 這份檔案由 maintainer 累積一批 PR 後交給 Antigravity 更新，再由 Claude 復核。流程和提示詞見 [docs/changelog-update.md](docs/changelog-update.md)。
 
+## v2.0：會議紀錄與會議工作台
+
+**V2.0 里程碑**（maintainer 2026-10-20 指定 #113）：會議的錄音、匯入、會後發言者辨識與 Web UI 控制在 Linux、macOS、Windows 完成真機驗收，macOS 與 Windows 改為正式支援。
+
+| 版本 | 合併日期 | PR | 內容 |
+|---|---|---|---|
+| v2.0.00 | 2026-10-20 | [#113](https://github.com/RichardstGG/lecture-notes/pull/113) | 會議 v1 三平台真機驗收紀錄與安裝說明同步 |
+
 ## v1.9：會議 Web UI 控制
 
 會議的錄音、匯入、停止、會後辨識與重跑都能從 Web UI 操作（Linux、單一來源），並完成 Linux 真機 CLI 與 UI 驗收。
 
 | 版本 | 合併日期 | PR | 內容 |
 |---|---|---|---|
-| v1.9.10 | 2026-10-20 | [#113](https://github.com/RichardstGG/lecture-notes/pull/113) | 會議 v1 三平台真機驗收紀錄與安裝說明同步 |
 | v1.9.09 | 2026-10-20 | [#112](https://github.com/RichardstGG/lecture-notes/pull/112) | 引擎已是最新版時不再要求 cmake；doctor 說明 llama 只有課堂總結需要 |
 | v1.9.08 | 2026-10-16 | [#111](https://github.com/RichardstGG/lecture-notes/pull/111) | Windows 測試站不再被 PowerShell 執行原則擋下 |
 | v1.9.07 | 2026-10-16 | [#110](https://github.com/RichardstGG/lecture-notes/pull/110) | Windows 上 UI 開始會議不再誤報啟動逾時 |
