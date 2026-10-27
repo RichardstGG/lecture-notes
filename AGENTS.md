@@ -1,7 +1,7 @@
 # Project Agent Instructions
 
 These instructions apply to every agent working anywhere in this repository.
-Claude Code follows `CLAUDE.md`, Codex follows `CODEX.md`, and the Antigravity independent reviewer follows `.agents/agents/code-reviewer/agent.md` for role-specific guidance.
+Claude Code follows `CLAUDE.md`, the Codex worker follows the "For the Codex worker" section at the end of this file, and the Antigravity independent reviewer follows `.agents/agents/code-reviewer/agent.md` for role-specific guidance.
 
 ## Source of truth and scope
 
@@ -10,27 +10,24 @@ Claude Code follows `CLAUDE.md`, Codex follows `CODEX.md`, and the Antigravity i
 - Keep each branch and pull request limited to one coherent task. Do not mix unrelated cleanup, formatting, generated files, recordings, models, outputs, logs, caches, local configuration, or machine-specific paths into a change.
 - Treat changes to CLI arguments, exit codes, JSON or TOML schemas, API endpoints, lifecycle phases, filesystem layout, runtime state, configuration keys, and other public interfaces as shared contract changes. Document and test them explicitly.
 
-## Autonomous Pull Request workflow
+## Pull Request workflow
 
-Developers use an autonomous Pull Request workflow. During development, continuously evaluate whether the current work has reached a coherent and independently reviewable milestone.
+Work is tracked as GitHub issues. Claude Code plans each issue, including a Scope that lists the paths the worker may write.
+Codex implements the issue in its own worktree on an `ai/issue-N` branch based on the default branch, and never commits or pushes.
+Claude Code then verifies on the host, commits, pushes, and opens a draft Pull Request. The step-by-step procedure is `.claude/skills/ai-run/SKILL.md`.
 
 Use this principle:
 
-> One PR = one coherent, reviewable change.
+> One PR = one coherent, reviewable change (one issue).
 
-Do not create Pull Requests for trivial, incomplete, or temporary intermediate checkpoints.
+Before opening a Pull Request, Claude Code:
 
-When a developer reaches a meaningful milestone, automatically:
+1. Reviews the complete diff and confirms it contains only the intended change.
+2. Runs `./scripts/ai/verify.sh` on the host and any targeted manual validation.
+3. Commits only the files the worker reported changing.
+4. Reports the Pull Request URL, commits, behavior changes, verification results, compatibility impact, and known limitations to the user.
 
-1. Review the complete diff and confirm it contains only the intended change.
-2. Run all applicable automated tests, lint checks, type checks, builds, and targeted manual validation.
-3. Create or use an appropriately named branch with the developer's agent-specific prefix, based on the current default branch. Do not build an unnecessary dependency on an unmerged branch.
-4. Create focused commits containing only the relevant files and changes.
-5. Push the working branch to the remote.
-6. Create a GitHub Pull Request targeting the repository's default branch.
-7. Report the Pull Request URL, commits, behavior changes, verification results, compatibility impact, and known limitations to the user.
-
-The review lifecycle is: developer Pull Request → Antigravity independent review → developer fixes findings if needed → human maintainer gives final approval or requests changes → human maintainer merges. Antigravity normally reviews without creating an implementation branch.
+The review lifecycle is: draft Pull Request → Antigravity independent review → fixes applied through a fresh Codex run if needed → human maintainer gives final approval or requests changes → human maintainer merges. Antigravity normally reviews without creating an implementation branch.
 
 The following restrictions are mandatory:
 
@@ -44,9 +41,6 @@ If subsequent work depends on the Pull Request being merged, stop after reportin
 
 ## Windows test station
 
-- Codex owns `.github/workflows/windows-station.yml`, `tools/windows_runner/`,
-  `tests/test_windows_runner.py`, and `docs/windows-test-station.md` (maintainer-authorized).
-  Existing platform/engine ownership remains unchanged.
 - For path/encoding, CLI/API, settings, or UI launch changes, request the `basic`
   Windows profile after local checks and pushing a reviewable commit. Pure docs or
   prompt changes normally do not need it. Assess affected behavior, not only filenames.
@@ -64,15 +58,14 @@ If subsequent work depends on the Pull Request being merged, stop after reportin
   skipped tests must be reported explicitly, never as a pass. Read the result before
   claiming Windows verification. Report mock versus actual hardware evidence separately.
 - Upload only the station summary. Keep raw logs, recordings, transcripts, models,
-  machine configuration and credentials local. Station failures are reported to the
-  implementation owner; they do not transfer ownership or permit automatic merge.
+  machine configuration and credentials local. Station failures are reported on the
+  issue or Pull Request; they do not permit automatic merge.
 
 ## Changelog
 
-- `CHANGELOG.md` is co-owned by Claude and Antigravity (maintainer-authorized).
-  Do not update it in feature or fix Pull Requests.
-- The maintainer periodically hands Antigravity the prompt in `docs/changelog-update.md`
-  (Claude-owned). Antigravity edits only `CHANGELOG.md` on an `antigravity/changelog-*`
+- Do not update `CHANGELOG.md` in feature or fix Pull Requests.
+- The maintainer periodically hands Antigravity the prompt in `docs/changelog-update.md`.
+  Antigravity edits only `CHANGELOG.md` on an `antigravity/changelog-*`
   branch and opens a Pull Request; Claude reviews it with the checklist in that file.
   This is the only implementation work Antigravity performs; it still never approves or merges.
   The same rule is in `.agents/agents/code-reviewer/agent.md`.

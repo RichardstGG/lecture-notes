@@ -465,7 +465,7 @@ core/diarize_worker.py 發言者辨識的分群子行程
 | 總結品質評估 | [ui/QUALITY_EVALUATION.md](ui/QUALITY_EVALUATION.md) |
 | 會議工作台 | 見「會議功能」 |
 | 版本歷史 | [CHANGELOG.md](CHANGELOG.md)（更新流程：[docs/changelog-update.md](docs/changelog-update.md)） |
-| 給開發者與 agent | [CLAUDE.md](CLAUDE.md)、[CODEX.md](CODEX.md)、[AGENTS.md](AGENTS.md) |
+| 給開發者與 agent | [CLAUDE.md](CLAUDE.md)、[AGENTS.md](AGENTS.md) |
 
 ### 範例音檔
 
@@ -478,7 +478,7 @@ core/diarize_worker.py 發言者辨識的分群子行程
 
 - 測試：`python3 -m unittest`（純標準函式庫）。UI 的測試需要 `ui/backend/requirements-dev.txt`（fastapi 與 httpx），沒安裝時 `tests/test_ui_backend_*.py` 會失敗，不代表程式壞掉。
 - 分支：`main`。程式、設定範例、prompts、`samples/` 範例素材與 `engines.lock` 進 git；本機設定、個人課程、原始錄音與 outputs 已由 `.gitignore` 排除。
-- 本專案由 Claude Code、Codex 分工開發，Antigravity 獨立審查，maintainer 最終審查與合併；分工與流程見 [AGENTS.md](AGENTS.md)、[CLAUDE.md](CLAUDE.md)、[CODEX.md](CODEX.md)。
+- 本專案以 GitHub issue 驅動：Claude Code 規劃與驗證、Codex 在 issue 專屬 worktree 實作，Antigravity 獨立審查，maintainer 最終審查與合併；流程見 [AGENTS.md](AGENTS.md)、[CLAUDE.md](CLAUDE.md)。
 - 升級引擎：`python3 setup_engines.py --update` → `lec run 課名 --file <錄音>` 與 `./bench_llm.sh` 確認沒問題 → `git commit engines.lock`。
 - 回報問題時附上 `lec doctor --json` 與該堂課的 `session.log`。
 - 授權：MIT（見 LICENSE）。whisper.cpp、llama.cpp 為 MIT，Qwen3 模型為 Apache-2.0，皆在執行時自行取得。

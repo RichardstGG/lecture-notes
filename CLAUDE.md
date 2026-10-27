@@ -28,41 +28,16 @@ python3 setup.py --dry-run --yes         # 互動式安裝：只印會做什麼�
 
 UI 的測試需要 `python3 -m pip install -r ui/backend/requirements-dev.txt`（fastapi、uvicorn，加上測試用的 httpx）；沒安裝時 `tests/test_ui_backend_*.py` 與 `tests/test_ui_sharing.py` 會失敗，這不是程式壞掉。
 
-## 檔案所有權（開發者分工）
+## 開發流程與檔案規則
 
-這個 repo 的開發工作由 Claude Code 與 Codex 分工，各自獨立分支、透過 PR 整合。開發者建立 PR 後，由 Antigravity（設定見 `.agents/agents/code-reviewer/agent.md`）進行獨立程式碼審查，最後由 human maintainer 進行最終審查與合併。**Claude Code 在這裡扮演 Claude 這一邊。**
+開發流程（GitHub issue → Codex 在 issue 專屬 worktree 實作 → Claude 在本機驗證、commit、開 draft PR → Antigravity 獨立審查 → maintainer review 與合併）見 @AGENTS.md 與 `.claude/skills/ai-run/SKILL.md`；Antigravity 的設定在 `.agents/agents/code-reviewer/agent.md`。
 
-分工的原則是**「機器面」對「契約面」**：Claude 負責跟這台機器、原生行程與引擎打交道的部分；Codex 負責對外的契約面（CLI 參數、設定 schema、生命週期編排、狀態檔、UI）。遇到新檔案先問它屬於哪一邊，而不是看誰先寫的。
-
-| | Claude（你） | Codex |
-|---|---|---|
-| **`core/`** | `platform.py`、`devices.py`、`doctor.py`、`servers.py`、`transcribe.py`、`util.py`、`capture.py`、`diarize.py`、`diarize_worker.py` | `cli.py`、`config.py`、`session.py`、`status.py`、`summarize.py`、`terms.py` |
-| **其他** | `setup.py`、`setup_engines.py`、`upgrade.py`、`linux_setup.sh`／`mac_setup.command`／`windows_setup.bat`、`docs/platform-*.md`、`engines.lock`、`docs/changelog-update.md`、`.agents/agents/code-reviewer/agent.md`、`README.old.md`（凍結，不再更新）、平台與引擎相關測試 | `ui/`（含 `ui/quality_eval.py`、`ui/SHARING.md`）、UI API/schema、UI contract tests、`prompts/summary.md`、`config/template.toml`、`meetings/` 範本 |
-| **共用** | `README.md`、`AGENTS.md`、`config/default.toml`、`docs/meeting-workbench-*.md`、`docs/{windows,mac,linux}_setup.md` | ← 同左 |
-| **與 Antigravity 共有** | `CHANGELOG.md` | — |
-| **凍結** | `samples/*`、`tools/make_sample.py` | ← 同左（見下方「樣本檔案」） |
-| **`tools/`** | `dual_capture_check.py`、`score_diarization.py` | `windows_runner/`（見 AGENTS.md 的 Windows test station） |
-
-為什麼這樣切（依實際相依關係，不是依誰先寫的）：
-
-- `servers.py` 是全 repo 第二高的原生耦合（10 處 `subprocess`／`P.spawn_kwargs`／`P.kill_tree`／`P.env_with_libs`／`P.find_engine_bin`，僅次於 `platform.py` 的 17 處），而且 `doctor.py`（Claude）直接 import 它。它是引擎行程層，不是契約層。
-- `transcribe.py` 驅動 ffmpeg 並透過 `P.resolve_source`／`P.ffmpeg_input`／`P.spawn_kwargs` 取得音訊；最難的部分全在 Claude 的平台抽象上。
-- `summarize.py` 原生耦合為 0，但讀 16 處設定鍵（全 repo 最高），是純設定／產品邏輯；glossary 功能與 `ui/quality_eval.py` 都是 Codex 做的。
-- `terms.py` 原生耦合為 0，只相依 `summarize.py`，而且只被 `lec terms`（`cli.py`）與 UI 的 TermCandidates 消費，與 summarize 同一群。
-- `util.py` 雙方都用，但 `pid_alive` 委派給 `platform.py`、`opencc_convert` 要 shell out，編碼與 subprocess 的跨平台問題一向由 Claude 處理（例如 `7abccf8` 的 Windows UTF-8 修正）。
-- `config/default.toml` 設為共用，是因為 `core/config.py` 會拿它驗證未知鍵，**任何一方加功能都必須在這裡加鍵**；若歸單一所有者，每個功能都要走一次 CROSS_AGENT_REQUEST，成本不合理。
-
-規則：
-
-- Claude 的實作分支使用 `claude/<task-name>`，**base 一律明確指定 `origin/main`**（這個 checkout 可能同時被別的對話使用，不要相信當下的 HEAD；必要時用 `git worktree`）。
-- 只改自己擁有的範圍。需要動到對方的檔案時，**停下來**，用 CROSS_AGENT_REQUEST 格式回報給使用者，不要自己改、也不要混進自己的 commit。
-- CROSS_AGENT_REQUEST 內容：Requester／Target agent／類型（blocking or non-blocking）／目的／現有行為／問題／建議行為／涉及檔案／是否改變 public contract／相容性影響／建議測試／Requester 目前能否繼續其他工作。
-- **共用檔案**：要改就獨立成一個 commit。`config/default.toml` 只加（或只改）自己程式會讀的鍵，並在同一個 PR 補上說明；`docs/meeting-workbench-*.md` 由改動行為的那一方在同一個 PR 內更新。新的平台文件放 `docs/platform-*.md`。安裝步驟改變時（例如改了 `setup.py`、`upgrade.py`、啟動檔），同一個 PR 內更新對應的 `docs/*_setup.md`。
-- **`core/util.py` 的加法例外**：任何一方都可以在自己的 commit 裡新增「純 stdlib、無副作用」的小工具函式，不必先發 CROSS_AGENT_REQUEST；但修改或刪除既有函式的簽章與行為仍走正常流程。
-- **測試歸屬**跟著被斷言的那個 contract：斷言 CLI JSON／API／狀態檔契約的歸 Codex，斷言平台與引擎行為的歸 Claude。檔名以被測模組命名。
-- **`CHANGELOG.md`** 不跟著 PR 更新：maintainer 累積一批後交給 Antigravity 更新，Claude 負責復核。提示詞與復核清單在 `docs/changelog-update.md`。自己的 PR 不要順手改 `CHANGELOG.md`。
-- 若某個檔案在這張表裡找不到，**不要自行假設是自己的**——停下來問 maintainer。
-- 若之後改成單一 agent 開發，這一整節可以刪掉。
+- 建分支時 **base 一律明確指定 `origin/main`**（這個 checkout 可能同時被別的對話使用，不要相信當下的 HEAD；必要時用 `git worktree`）。
+- `config/default.toml`：`core/config.py` 會拿它驗證未知鍵，新增設定鍵一定要加在這裡，並在同一個 PR 補上說明。
+- 改動會議行為的 PR 同時更新 `docs/meeting-workbench-*.md`。新的平台文件放 `docs/platform-*.md`。安裝步驟改變時（例如改了 `setup.py`、`upgrade.py`、啟動檔），同一個 PR 內更新對應的 `docs/*_setup.md`。
+- 測試檔名以被測模組命名。
+- **`CHANGELOG.md`** 不跟著 PR 更新：maintainer 累積一批後交給 Antigravity 更新，Claude 負責復核。提示詞與復核清單在 `docs/changelog-update.md`。
+- `README.old.md` 已凍結，不再更新；`samples/*`、`tools/make_sample.py` 同樣凍結（見下方「樣本檔案」）。
 
 ## 不可擅自改動的 public contract
 
@@ -70,7 +45,7 @@ UI 的測試需要 `python3 -m pip install -r ui/backend/requirements-dev.txt`�
 - **phase 名稱**：課堂 `starting → loading → recording/transcribing → summarizing → finishing → done/failed/aborted`；會議錄音／匯入省略 summarizing，會後辨識為 `starting → loading → diarizing → finishing → done/failed/aborted`。
 - **設定合併順序**：`config/default.toml` → `config/local.toml`（本機，不進 git）→ `courses/<課名>.toml`（不進 git）→ 指令列（`--model` / `--source` / `--set 區塊.鍵=值`）
 - **UI 不得 import core**：只能讀寫設定檔、呼叫 `lec` 子指令（多半有 `--json`）、讀 `status.json` / `events.jsonl` / `run.json`
-  - 反方向也要留意：平台偵測邏輯會因此在 `core/platform.py`（Claude）與 `ui/backend/share_network.py`（Codex，硬寫 Linux 的 `ip`）各有一份。改動其中一邊時確認另一邊。
+  - 反方向也要留意：平台偵測邏輯會因此在 `core/platform.py` 與 `ui/backend/share_network.py`（硬寫 Linux 的 `ip`）各有一份。改動其中一邊時確認另一邊。
 - **總結模型固定 Qwen3-8B**（`[models.*]` 設定驅動，不要在程式裡寫死模型清單）
 - CLI 指令與既有參數名稱、exit code、JSON/TOML schema 同樣算 contract，要改必須先說明現況、差異、相容性，並補 contract test。
 
@@ -94,4 +69,4 @@ UI 的測試需要 `python3 -m pip install -r ui/backend/requirements-dev.txt`�
 - 效能參考：whisper large-v3-turbo 約 6–7x 即時；Qwen3-8B 每段總結約 77–95 秒
 - 不進 git：`outputs/`、`models/`、`whisper.cpp/`、`llama.cpp/`、`config/local.toml`、`courses/*.toml`
 - 歷史背景文件：`docs/handoff-2026-09-17.md`（已過時，與 repo 現況衝突時以 repo 為準）
-- 這個 checkout 可能同時被多個對話操作（也有 Codex 的 worktree 在 `~/.codex/worktrees/`）。開工前確認分支，建分支時明確指定 `origin/main`。
+- 這個 checkout 可能同時被多個對話操作（Codex 的 issue worktree 在 `.tmp/wt-issue-N`）。開工前確認分支，建分支時明確指定 `origin/main`。

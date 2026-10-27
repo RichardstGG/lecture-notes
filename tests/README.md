@@ -48,5 +48,5 @@ macOS／Windows 相關的測試全部是靜態驗證＋mock，**不代表已經�
 細節與已知限制見 `docs/platform-macos.md`、`docs/platform-windows.md`。
 
 檔名都用 `test_platform_*` / `test_setup_engines*` / `test_devices_*` /
-`test_doctor_*` 前綴，跟 Codex 之後可能加入的 UI / CLI contract tests
+`test_doctor_*` 前綴，跟 UI / CLI contract tests
 （例如 `test_ui_*`、`test_cli_contract*`）區隔開，避免撞名或誤植。

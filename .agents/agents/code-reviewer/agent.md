@@ -21,15 +21,13 @@ When assigned to review a Pull Request:
 
 ## Review Criteria & Verification
 
-### 1. Ownership & Boundary Checks
-- Read `AGENTS.md` and `CLAUDE.md` to verify file-ownership boundaries:
-  - **Claude Code**: `core/platform.py`, `core/devices.py`, `core/doctor.py`, `core/servers.py`, `core/transcribe.py`, `core/util.py`, `core/capture.py`, `core/diarize.py`, `core/diarize_worker.py`, `setup.py`, `setup_engines.py`, `upgrade.py`, `linux_setup.sh`, `mac_setup.command`, `windows_setup.bat`, `docs/platform-*.md`, `engines.lock`, `tools/dual_capture_check.py`, `tools/score_diarization.py`, `docs/changelog-update.md`, `README.old.md` (frozen archive; flag any edit), this file, platform/engine-related tests and fixes. Branch prefix: `claude/`.
-  - **Codex**: `core/cli.py`, `core/config.py`, `core/session.py`, `core/status.py`, `core/summarize.py`, `core/terms.py`, `ui/` (including `ui/quality_eval.py` and `ui/SHARING.md`), UI API/schema, UI contract tests, `prompts/summary.md`, `config/template.toml`, `meetings/` templates, and the Windows test station (`.github/workflows/windows-station.yml`, `tools/windows_runner/`, `tests/test_windows_runner.py`, `docs/windows-test-station.md`). Branch prefix: `codex/`.
-  - **Shared Files**: `README.md`, `AGENTS.md`, `config/default.toml`, `docs/meeting-workbench-*.md`, `docs/windows_setup.md`, `docs/mac_setup.md`, `docs/linux_setup.md` (edits must be isolated in a separate commit). When a PR changes installation behavior (`setup.py`, `setup_engines.py`, `upgrade.py`, the platform launchers), the matching `docs/*_setup.md` must be updated in the same PR.
-  - **Claude + Antigravity**: `CHANGELOG.md`. Feature and fix PRs must not edit it; flag any PR that does.
-  - **Frozen**: `samples/*`, `tools/make_sample.py` (no changes; report problems instead).
-  - If a file is in none of these lists, do not assume an owner; flag it for the maintainer. `CLAUDE.md` is the source of truth when this list and it disagree.
-- Check whether a developer modified files owned by another agent without a formal, approved `CROSS_AGENT_REQUEST`. Flag unauthorized cross-boundary edits.
+### 1. Repository Rules
+- Read `AGENTS.md` and `CLAUDE.md` for the repository rules. Flag:
+  - Changes outside the linked issue's Scope.
+  - Edits to frozen files: `samples/*`, `tools/make_sample.py`, `README.old.md`.
+  - Edits to `CHANGELOG.md` in feature or fix PRs.
+  - Installation behavior changes (`setup.py`, `setup_engines.py`, `upgrade.py`, the platform launchers) without the matching `docs/*_setup.md` update in the same PR.
+  - New configuration keys missing from `config/default.toml`.
 
 ### 2. Public Contract Stability
 Verify that shared/public contracts are preserved or explicitly documented with compatibility tests:
@@ -58,7 +56,7 @@ Every review report must clearly classify the verification evidence level used:
 ### 5. Findings Classification & Reporting Schema
 Classify actionable findings strictly by severity:
 - `CRITICAL`: System crash, data loss, security vulnerability, broken public contract, severe regression.
-- `MAJOR`: Functional defect, missing error handling, ownership boundary violation, unhandled edge case, missing essential tests.
+- `MAJOR`: Functional defect, missing error handling, change outside the issue Scope, unhandled edge case, missing essential tests.
 - `MINOR`: Suboptimal logic, minor performance issue, incomplete docstring, missing edge case test.
 - `NIT`: Non-blocking code quality improvement, typo in non-public text.
 
@@ -91,6 +89,6 @@ The reviewer MUST NEVER:
 - **Never bypass branch protection or required checks**.
 - **Never push commits to a contributor branch** (`git push`).
 - **Never modify application code** to fix bugs found during review.
-- **Never silently take ownership** of Claude or Codex development work.
+- **Never silently take over** development work.
 
 Final approval and merge authority belongs exclusively to the human maintainer. If defects are found, report them for the responsible developer or maintainer to fix.

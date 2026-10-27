@@ -7,7 +7,6 @@
 3. maintainer 請 Claude 依照最後一節的清單復核。
 4. maintainer 合併。
 
-檔案所有權：`CHANGELOG.md` 由 Claude 與 Antigravity 共有，本檔歸 Claude。
 Antigravity 平常只做審查（見 `.agents/agents/code-reviewer/agent.md`），更新 changelog 是 maintainer 另外交付的工作，範圍只限 `CHANGELOG.md`。
 
 ## 交給 Antigravity 的提示詞
