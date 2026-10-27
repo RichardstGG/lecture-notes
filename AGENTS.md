@@ -76,3 +76,19 @@ If subsequent work depends on the Pull Request being merged, stop after reportin
 - Clearly distinguish automated tests, mock tests, static validation, manual tests, hardware tests, and untested behavior.
 - If a check cannot run, state why, what was still verified, and the exact environment or command needed to finish verification.
 - Keep the working tree status and any unrelated pre-existing changes explicit in the final report.
+
+## For the Codex worker
+- 只修改 issue 的 Scope 列出的路徑（Scope 只限制寫入，讀取不限）。
+- 不要 git commit / push（.git 在 sandbox 中是唯讀的）。
+- 不要安裝套件（沒有網路）。缺依賴就回報 blocked。
+- 需要暫存目錄時：TMPDIR="$PWD/.tmp" <command>
+- 完成後執行 ./scripts/ai/verify.sh --sandbox。被環境擋下的步驟（socket、D-Bus、網路）會印出 ENV_LIMITED，如實回報，不要視為失敗。
+- 無法在 sandbox 驗證的項目（實機、CI）一律放進 QUESTIONS。
+- 最終回覆只用以下格式，不要貼完整 diff：
+  STATUS: done | blocked | partial
+  SUMMARY: <3 行內>
+  FILES: <改了哪些檔>
+  TESTS: <跑了什麼、結果>
+  ENV_LIMITED: <被環境擋下的測試，否則 none>
+  COMMIT_MESSAGE: <conventional commit 一行>
+  QUESTIONS: <blocked 或需人工驗證時要問的問題，否則 none>

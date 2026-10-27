@@ -23,6 +23,7 @@ __pycache__/
 .venv/
 
 # Frontend dependencies and generated build output
-ui/frontend/node_modules/
+ui/frontend/node_modules
 ui/frontend/dist/
 *.tsbuildinfo
+.tmp/
