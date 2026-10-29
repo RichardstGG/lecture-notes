@@ -43,6 +43,7 @@ async function poll() {
     $('join-form').hidden = true;
     $('reader').hidden = false;
     const meeting = data.work_type === 'meeting';
+    document.body.classList.toggle('meeting', meeting);
     $('course').textContent = data.course || (meeting ? '會議逐字稿' : '課堂逐字稿與筆記');
     $('transcript-heading').textContent = meeting ? '原逐字稿' : '即時逐字稿';
     $('secondary-heading').textContent = meeting ? '帶發言者逐字稿' : '課堂筆記';
