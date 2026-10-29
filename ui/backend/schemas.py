@@ -360,6 +360,7 @@ class ShareOpenRequest(BaseModel):
     host: str = Field(min_length=1, max_length=15)
     advertise_host: str | None = Field(default=None, min_length=1, max_length=15)
     port: int = Field(default=8766, ge=1024, le=65535, strict=True)
+    share_audio: bool = Field(default=False, strict=True)
 
 
 class ShareParticipant(BaseModel):
@@ -374,6 +375,7 @@ class ShareStatus(BaseModel):
     participants: list[ShareParticipant]
     session_id: str | None = None
     work_type: str | None = None
+    share_audio: bool | None = None
     url: str | None = None
     max_online: int | None = None
     bind_host: str | None = None

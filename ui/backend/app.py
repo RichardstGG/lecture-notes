@@ -259,7 +259,8 @@ def create_app(
     async def sharing_open(payload: ShareOpenRequest, request: Request, response: Response):
         check_share_control(request)
         response.headers["Cache-Control"] = "no-store"
-        return await sharing.open(payload.session_id, payload.host, payload.port, payload.advertise_host)
+        return await sharing.open(payload.session_id, payload.host, payload.port, payload.advertise_host,
+                                  share_audio=payload.share_audio)
 
     @app.post("/api/v1/sharing/close", response_model=ShareStatus, response_model_exclude_none=True)
     async def sharing_close(request: Request, response: Response):

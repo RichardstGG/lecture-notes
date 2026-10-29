@@ -94,8 +94,8 @@ export const api = {
   captureCapabilities: () => request<CaptureCapabilities>("/api/v1/capture-capabilities"),
   sharingNetwork: () => request<SharingNetwork>("/api/v1/sharing/network"),
   sharing: () => request<SharingStatus>("/api/v1/sharing"),
-  openSharing: (session_id: string, host: string, port: number, advertise_host?: string) => request<SharingStatus>(
-    "/api/v1/sharing/open", { method: "POST", body: JSON.stringify({ session_id, host, port, advertise_host }) },
+  openSharing: (session_id: string, host: string, port: number, advertise_host?: string, share_audio = false) => request<SharingStatus>(
+    "/api/v1/sharing/open", { method: "POST", body: JSON.stringify({ session_id, host, port, advertise_host, share_audio }) },
   ),
   closeSharing: () => request<SharingStatus>(
     "/api/v1/sharing/close", { method: "POST", body: "{}" },

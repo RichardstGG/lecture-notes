@@ -1,5 +1,6 @@
 """Sharing contracts using synthetic session files, ASGI and loopback HTTP clients."""
 import asyncio
+import hashlib
 import json
 import socket
 import tempfile
@@ -8,6 +9,7 @@ from pathlib import Path
 from unittest.mock import patch
 
 import httpx
+import anyio
 
 from tests import _pathfix  # noqa: F401
 from ui.backend.app import create_app
@@ -72,6 +74,8 @@ class SharingTests(unittest.IsolatedAsyncioTestCase):
         self.assertNotIn('course/first', response.text)
         self.assertNotIn('PRIVATE OTHER SESSION', response.text)
         self.assertEqual(response.headers['cache-control'], 'no-store')
+        self.assertIn("media-src 'self'", response.headers['content-security-policy'])
+        self.assertFalse(response.json()['audio'])
         for target in ('transcript', 'notes'):
             response = await client.get(f'/share/v1/download/{target}')
             self.assertEqual(response.status_code, 200)
@@ -86,6 +90,152 @@ class SharingTests(unittest.IsolatedAsyncioTestCase):
         for path in ('/api/v1/runs', '/api/v1/runs/stop', '/api/v1/sharing/close',
                      '/share/v1/comments', '/share/v1/edit'):
             self.assertEqual((await client.post(path, json={})).status_code, 404, path)
+
+    def enable_audio(self):
+        self.room = ShareRoom(self.store, 'course/first', clock=lambda: self.now, share_audio=True)
+        self.app = create_share_app(self.room, '192.168.1.2:8766')
+
+    async def test_audio_requires_cookie_and_explicit_opt_in(self):
+        recording = self.path / 'recording_private.ogg'
+        recording.write_bytes(b'audio' * 100)
+        client = self.client()
+        response = await client.get('/share/v1/audio')
+        self.assertEqual(response.status_code, 401)
+        self.assertEqual(response.json()['error']['code'], 'join_required')
+        await self.join(client)
+        self.assertEqual((await client.get('/share/v1/audio')).status_code, 404)
+        self.assertFalse((await client.get('/share/v1/snapshot')).json()['audio'])
+        self.enable_audio()
+        client = self.client()
+        await self.join(client)
+        response = await client.get('/share/v1/audio?v=version')
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(response.content, recording.read_bytes())
+        self.assertEqual(response.headers['content-type'], 'audio/ogg')
+        self.assertNotIn('content-disposition', response.headers)
+        for private in (recording.name, str(self.path), 'course/first'):
+            self.assertNotIn(private, str(response.headers))
+        response = await client.get('/share/v1/audio', headers={'Range': 'bytes=0-99'})
+        self.assertEqual(response.status_code, 206)
+        self.assertEqual(response.content, recording.read_bytes()[:100])
+        self.assertEqual(response.headers['content-range'], 'bytes 0-99/500')
+        self.assertNotIn('content-disposition', response.headers)
+        for range_value, status in (('bytes=999-1000', 416), ('invalid', 400)):
+            response = await client.get('/share/v1/audio', headers={'Range': range_value})
+            self.assertEqual(response.status_code, status)
+            for private in (recording.name, str(self.path), 'course/first'):
+                self.assertNotIn(private, str(response.headers) + response.text)
+        self.room.close()
+        self.assertEqual((await client.get('/share/v1/audio')).status_code, 410)
+
+    async def test_audio_unavailable_files_and_availability_etag_updates(self):
+        self.enable_audio()
+        client = self.client()
+        await self.join(client)
+        before = await client.get('/share/v1/snapshot')
+        self.assertFalse(before.json()['audio'])
+        self.assertEqual((await client.get('/share/v1/audio')).status_code, 404)
+        recording = self.path / 'recording_one.ogg'
+        recording.write_bytes(b'available audio')
+        self.now += 2
+        after = await client.get('/share/v1/snapshot', headers={'If-None-Match': before.headers['etag']})
+        self.assertEqual(after.status_code, 200)
+        self.assertTrue(after.json()['audio'])
+        self.assertNotEqual(before.headers['etag'], after.headers['etag'])
+        other = self.path / 'recording_two.ogg'
+        other.write_bytes(b'ambiguous audio')
+        self.assertEqual((await client.get('/share/v1/audio')).status_code, 404)
+        self.now += 2
+        self.assertFalse((await client.get('/share/v1/snapshot')).json()['audio'])
+        other.unlink()
+        recording.unlink()
+        recording.symlink_to(self.root / 'second' / 'notes.md')
+        response = await client.get('/share/v1/audio')
+        self.assertEqual(response.status_code, 404)
+        self.assertNotIn(str(self.root), response.text + str(response.headers))
+        self.now += 2
+        self.assertFalse((await client.get('/share/v1/snapshot')).json()['audio'])
+
+    async def test_growing_audio_does_not_exceed_response_content_length(self):
+        recording = self.path / 'recording_one.ogg'
+        original = b'original audio' * 100
+        recording.write_bytes(original)
+        self.enable_audio()
+        client = self.client()
+        await self.join(client)
+        open_file = anyio.open_file
+
+        async def append_before_open(path, *args, **kwargs):
+            with recording.open('ab') as stream:
+                stream.write(b'new audio bytes')
+            return await open_file(path, *args, **kwargs)
+
+        with patch('ui.backend.share_app.anyio.open_file', side_effect=append_before_open):
+            response = await client.get('/share/v1/audio')
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(int(response.headers['content-length']), len(original))
+        self.assertEqual(response.content, original)
+
+    async def test_meeting_audio_uses_validated_source_and_extension_type(self):
+        (self.path / 'status.json').write_text('{"work_type":"meeting"}', encoding='utf-8')
+        recording = self.path / 'source_audio.wav'
+        content = b'meeting audio' * 100
+        recording.write_bytes(content)
+        metadata = dict(schema_version=1, kind='import', original_name='private.wav',
+                        path=recording.name, size_bytes=len(content), sha256=hashlib.sha256(content).hexdigest(),
+                        duration_seconds=10, requested_speakers=2, created_at='2026-10-29T00:00:00Z')
+        (self.path / 'source.json').write_text(json.dumps(metadata), encoding='utf-8')
+        self.enable_audio()
+        client = self.client()
+        await self.join(client)
+        self.assertTrue((await client.get('/share/v1/snapshot')).json()['audio'])
+        response = await client.get('/share/v1/audio', headers={'Range': 'bytes=0-99'})
+        self.assertEqual(response.status_code, 206)
+        self.assertIn(response.headers['content-type'], ('audio/wav', 'audio/x-wav'))
+        self.assertEqual(response.content, content[:100])
+        self.assertNotIn('content-disposition', response.headers)
+        for private in (recording.name, str(self.path), 'course/first', 'private.wav'):
+            self.assertNotIn(private, str(response.headers))
+        (self.path / 'source.json').write_text(json.dumps({**metadata, 'path': '../second/notes.md'}))
+        self.assertEqual((await client.get('/share/v1/audio')).status_code, 404)
+        (self.path / 'source.json').write_text(json.dumps(metadata))
+        recording.unlink()
+        recording.symlink_to(self.root / 'second' / 'notes.md')
+        self.assertEqual((await client.get('/share/v1/audio')).status_code, 404)
+
+    async def test_open_audio_option_is_strict_and_defaults_to_false(self):
+        runtime = ShareRuntime(self.store)
+        app = create_app(settings=BackendSettings(self.root, output_root=self.root), sharing=runtime)
+        async with httpx.AsyncClient(transport=httpx.ASGITransport(app=app),
+                                     base_url='http://127.0.0.1:8765') as client:
+            payload = dict(session_id='course/first', host='192.168.1.2', port=8766)
+            for invalid in ('true', 'false', 0, 1, None, [], {}):
+                response = await client.post('/api/v1/sharing/open', json={**payload, 'share_audio': invalid})
+                self.assertEqual(response.status_code, 422, invalid)
+            # Exercise the real runtime/status wiring; only listener I/O is mocked.
+            with patch('ui.backend.share_runtime.socket.socket'), \
+                    patch('ui.backend.share_runtime.ShareServer') as server_type:
+                server = server_type.return_value
+
+                async def serve(sockets):
+                    server.started = True
+                    while not server.should_exit:
+                        await asyncio.sleep(0.001)
+
+                server.serve = serve
+                try:
+                    for option in ({}, {'share_audio': True}, {'share_audio': False}):
+                        server.started = server.should_exit = False
+                        response = await client.post('/api/v1/sharing/open', json={**payload, **option})
+                        self.assertEqual(response.status_code, 200)
+                        expected = option.get('share_audio', False)
+                        self.assertIs(response.json()['share_audio'], expected)
+                        self.assertIs((await client.get('/api/v1/sharing')).json()['share_audio'], expected)
+                        self.assertIs(runtime.room.share_audio, expected)
+                        await client.post('/api/v1/sharing/close', json={})
+                        self.assertNotIn('share_audio', (await client.get('/api/v1/sharing')).json())
+                finally:
+                    await runtime.close()
 
     async def test_meeting_shares_two_transcripts_without_notes(self):
         meeting = self.root / 'meetings' / 'design'

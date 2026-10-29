@@ -345,6 +345,33 @@ class SessionStore:
                 "session_unavailable", f"Unable to read session: {exc}",
             ) from exc
 
+    def audio_for(self, session_id):
+        """Resolve only an unambiguous, regular audio file inside this session.
+
+        Meeting availability uses the same source metadata validation as the UI;
+        this does not hash audio or import execution code from core.
+        """
+        try:
+            path = self._session_dir(session_id)
+            work_type = self._summary(path)['work_type']
+            if work_type == 'meeting':
+                source = self._meeting_source(path)
+                if source is None:
+                    return None
+                audio = path / source['path']
+            elif work_type == 'lecture':
+                recordings = list(path.glob('recording_*.ogg'))
+                if len(recordings) != 1:
+                    return None
+                audio = recordings[0]
+            else:
+                return None
+            if audio.is_symlink() or not audio.is_file() or audio.resolve().parent != path:
+                return None
+            return audio
+        except (SessionStoreError, OSError):
+            return None
+
     def path_for(self, session_id):
         """Resolve an existing safe session for fixed CLI operations."""
         return self._session_dir(session_id)

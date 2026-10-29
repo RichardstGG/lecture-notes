@@ -323,6 +323,7 @@ export interface SharingStatus {
   active: boolean;
   session_id?: string;
   work_type?: "lecture" | "meeting" | string;
+  share_audio?: boolean;
   url?: string;
   max_online?: number;
   bind_host?: string;

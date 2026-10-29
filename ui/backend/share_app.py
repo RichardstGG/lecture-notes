@@ -1,8 +1,10 @@
 """Independent LAN HTTP application; deliberately imports no control application."""
 import hashlib
 import json
+import mimetypes
 from pathlib import Path
 
+import anyio
 from fastapi import FastAPI, Request
 from fastapi.responses import FileResponse, JSONResponse, Response
 from pydantic import BaseModel, ConfigDict, Field
@@ -11,6 +13,29 @@ from .sharing import ShareError
 
 COOKIE = 'lecture_share_guest'
 STATIC = Path(__file__).with_name('share_static')
+
+
+class AudioFileResponse(FileResponse):
+    """Keep a growing recording's full response within its advertised length.
+
+    FileResponse already bounds Range reads, but its ordinary response reads
+    until EOF, which can move after Content-Length has been captured.
+    """
+
+    async def _handle_simple(self, send, send_header_only):
+        await send({'type': 'http.response.start', 'status': self.status_code, 'headers': self.raw_headers})
+        if send_header_only:
+            await send({'type': 'http.response.body', 'body': b'', 'more_body': False})
+            return
+        remaining = self.stat_result.st_size
+        async with await anyio.open_file(self.path, mode='rb') as stream:
+            while remaining:
+                chunk = await stream.read(min(self.chunk_size, remaining))
+                if not chunk:
+                    break
+                remaining -= len(chunk)
+                await send({'type': 'http.response.body', 'body': chunk, 'more_body': True})
+        await send({'type': 'http.response.body', 'body': b'', 'more_body': False})
 
 
 class JoinRequest(BaseModel):
@@ -46,7 +71,7 @@ def create_share_app(room, authority, *, all_interfaces=False):
         response.headers.update({
             'Cache-Control': 'no-store', 'Referrer-Policy': 'no-referrer',
             'X-Content-Type-Options': 'nosniff',
-            'Content-Security-Policy': "default-src 'none'; script-src 'self'; style-src 'self'; connect-src 'self'; base-uri 'none'; frame-ancestors 'none'; form-action 'self'",
+            'Content-Security-Policy': "default-src 'none'; script-src 'self'; style-src 'self'; connect-src 'self'; media-src 'self'; base-uri 'none'; frame-ancestors 'none'; form-action 'self'",
         })
         return response
 
@@ -73,7 +98,7 @@ def create_share_app(room, authority, *, all_interfaces=False):
     async def snapshot(request: Request):
         room.authorize(request.cookies.get(COOKIE))
         data = room.snapshot()
-        marker = json.dumps([data['version'], data['work_type'], data['course'], data['phase']], ensure_ascii=False)
+        marker = json.dumps([data['version'], data['work_type'], data['course'], data['phase'], data['audio']], ensure_ascii=False)
         etag = '"' + hashlib.sha256(marker.encode()).hexdigest() + '"'
         if request.headers.get('if-none-match') == etag:
             return Response(status_code=304, headers={'ETag': etag})
@@ -85,6 +110,20 @@ def create_share_app(room, authority, *, all_interfaces=False):
         response = JSONResponse({'left': True})
         response.delete_cookie(COOKIE, path='/')
         return response
+
+    @app.get('/share/v1/audio')
+    async def audio(request: Request):
+        room.authorize(request.cookies.get(COOKIE))
+        path = room.audio_path()
+        if path is None:
+            return Response(status_code=404)
+        try:
+            stat = path.stat()
+        except OSError:
+            return Response(status_code=404)
+        # No filename: FileResponse supports Range without Content-Disposition.
+        return AudioFileResponse(path, stat_result=stat,
+                                 media_type=mimetypes.guess_type(path.name)[0] or 'application/octet-stream')
 
     @app.get('/share/v1/download/{target}')
     async def download(target: str, request: Request):

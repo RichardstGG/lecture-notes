@@ -7,6 +7,7 @@ export function SharePanel({ selectedId, workType = "lecture" }: { selectedId?: 
   const [status, setStatus] = useState<SharingStatus>();
   const [host, setHost] = useState("");
   const [allInterfaces, setAllInterfaces] = useState(true);
+  const [shareAudio, setShareAudio] = useState(false);
   const [networkHint, setNetworkHint] = useState("正在偵測預設路由介面…");
   const [port, setPort] = useState("8766");
   const [busy, setBusy] = useState(false);
@@ -68,7 +69,7 @@ export function SharePanel({ selectedId, workType = "lecture" }: { selectedId?: 
     try {
       const value = open
         ? await api.openSharing(selectedId!, allInterfaces ? "0.0.0.0" : host.trim(), Number(port),
-          allInterfaces ? host.trim() : undefined)
+          allInterfaces ? host.trim() : undefined, shareAudio)
         : await api.closeSharing();
       setStatus(value);
     } catch (reason) {
@@ -93,8 +94,14 @@ export function SharePanel({ selectedId, workType = "lecture" }: { selectedId?: 
     </div>
     <p>固定分享一場{sharedType === "meeting" ? "原逐字稿與帶發言者逐字稿" : "逐字稿與筆記"}，最多 20 位在線。停止錄音後仍可閱讀與下載，直到手動關閉分享或主控服務結束。</p>
     {error && <p className="inline-error" role="alert">{error}</p>}
+    <label className="share-listen-option"><input type="checkbox"
+      checked={status?.active ? !!status.share_audio : shareAudio}
+      disabled={busy || !!status?.active}
+      onChange={(event) => setShareAudio(event.target.checked)} />同時分享錄音（訪客可播放原始音訊）</label>
+    <small>原始錄音可能包含旁人聲音；勾選前請確認可分享。沒有保留錄音的場次僅提供文字。</small>
     {status?.active ? <>
       <p><strong>分享場次：</strong>{status.session_id}（不隨目前檢視場次切換）</p>
+      <p>錄音分享：{status.share_audio ? "已開啟（有可用錄音時訪客可播放）" : "未開啟"}</p>
       <p>監聽位址：{status.bind_host || status.advertise_host || "指定內網 IP"}</p>
       {status.url && <figure className="share-qr">
         <QRCodeSVG value={status.url} size={224} marginSize={4} level="M" role="img" aria-label="參與者連結 QR code" />

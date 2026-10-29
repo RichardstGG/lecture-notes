@@ -52,10 +52,11 @@ class ShareRuntime:
                     'error': '分享服務已停止，請重新開啟。'}
         return {'api_version': 1, 'active': True, 'session_id': self.room.session_id,
                 'work_type': self.room.work_type,
+                'share_audio': self.room.share_audio,
                 'url': self.url, 'bind_host': self.bind_host, 'advertise_host': self.advertise_host,
                 'participants': self.room.roster(), 'max_online': 20}
 
-    async def open(self, session_id, host, port, advertise_host=None):
+    async def open(self, session_id, host, port, advertise_host=None, *, share_audio=False):
         async with self.lock:
             if self.status()['active']:
                 raise ShareError('share_already_open', '請先關閉目前分享，再開啟另一場。', 409)
@@ -70,7 +71,7 @@ class ShareRuntime:
                 if advertise_host and advertise_host != host:
                     raise ShareError('invalid_advertise_host', '指定介面時，連結 IP 必須與監聽 IP 相同。')
                 advertise_host = host
-            room = ShareRoom(self.sessions, session_id)
+            room = ShareRoom(self.sessions, session_id, share_audio=share_audio)
             sock = None
             try:
                 sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
