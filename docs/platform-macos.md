@@ -35,6 +35,19 @@
   裝置插拔而改變順序——這點沒辦法在程式面完全解決，建議固定用同一顆麥克風）。
 - 相關解析邏輯的 mock 測試：`tests/test_platform_parsers.py::AvfoundationSourcesTests`。
 
+### 裝置試錄與雙來源擷取
+
+macOS 的雙來源擷取維持禁用，會回報 `unsupported_platform`；詳細限制見
+[雙來源錄音（會議）](platform-dual-capture.md)。雙來源錄音不在 v1 範圍，
+系統輸出擷取留待 v2.x 另開 issue 評估。
+
+裝置試錄（`lec devices --test`、`lec doctor --mic`、UI 試錄的
+`POST /api/v1/devices/test`）刻意沿用 ffmpeg avfoundation，由 `volumedetect`
+計算 3 秒音訊的平均／最大音量（mean／max dB）。這條路徑仍可能因單格音訊暫存覆寫而掉格，
+**只適合電平檢查**：少掉幾格只會讓 mean／max dB 稍有偏差，不影響「有沒有收到聲音」的判斷，
+也不產生要保存的錄音，因此不改用原生 helper。需要完整音訊的課堂單來源即時錄音
+已改走原生 helper，修復方式與實機證據見下節「擷取掉音訊」。
+
 ## 擷取掉音訊（實機量測，2026-10-05／06／14）
 
 **狀態：本台內建麥克風的課堂單來源修復已通過 ≥ 30 分鐘 `lec` 真機驗證；macOS 仍為實驗中。**

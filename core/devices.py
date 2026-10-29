@@ -165,6 +165,7 @@ def test_volume(source, seconds=3, backend=None):
     target = P.resolve_source(source, backend)
     if target is None:   # 列不到任何裝置時 default 會解析成 None；不要把 "audio=None" 交給 ffmpeg
         return None, f"找不到任何錄音裝置（lec devices 沒有列出麥克風）。{hint()}"
+    # macOS 刻意沿用 ffmpeg：短暫掉格不影響電平檢查且不存錄音，見 docs/platform-macos.md#裝置試錄與雙來源擷取。
     cmd = ["ffmpeg", "-hide_banner", "-nostdin", *P.ffmpeg_input(target, backend),
            "-t", str(seconds), "-af", "volumedetect", "-f", "null", "-"]
     try:
