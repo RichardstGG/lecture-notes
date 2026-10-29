@@ -179,6 +179,57 @@ class SessionStoreTests(unittest.TestCase):
         self.assertEqual(detail["notes"]["content"], "# Notes\n")
         self.assertEqual(detail["session"]["elapsed"], 123.4)
 
+    def test_audio_for_requires_one_regular_lecture_recording(self):
+        session = self.make_session('lecture')
+        recording = session / 'recording_100000.ogg'
+        self.assertEqual(self.store.audio_for('lecture'), recording)
+        other = session / 'recording_200000.ogg'
+        other.write_bytes(b'other audio')
+        self.assertIsNone(self.store.audio_for('lecture'))
+        other.unlink()
+        recording.unlink()
+        self.assertIsNone(self.store.audio_for('lecture'))
+        recording.mkdir()
+        self.assertIsNone(self.store.audio_for('lecture'))
+        recording.rmdir()
+        external = self.output / 'external.ogg'
+        external.write_bytes(b'private audio')
+        recording.symlink_to(external)
+        self.assertIsNone(self.store.audio_for('lecture'))
+        recording.unlink()
+        local = session / 'local.ogg'
+        local.write_bytes(b'local audio')
+        recording.symlink_to(local)
+        self.assertIsNone(self.store.audio_for('lecture'))
+        for session_id in ('../lecture', 'missing'):
+            self.assertIsNone(self.store.audio_for(session_id))
+
+    def test_audio_for_meeting_reuses_source_validation(self):
+        session, metadata = self.make_meeting()
+        source = session / metadata['path']
+        self.assertEqual(self.store.audio_for('meetings/one'), source)
+        # A recording_*.ogg must never bypass invalid meeting source metadata.
+        (session / 'recording_100000.ogg').write_bytes(b'not meeting source')
+        with patch.object(self.store, '_meeting_source', return_value=None) as validate:
+            self.assertIsNone(self.store.audio_for('meetings/one'))
+            validate.assert_called()
+        (session / 'source.json').write_text(json.dumps({**metadata, 'path': '../external.ogg'}))
+        self.assertIsNone(self.store.audio_for('meetings/one'))
+        (session / 'source.json').write_text(json.dumps(metadata))
+        source.unlink()
+        self.assertIsNone(self.store.audio_for('meetings/one'))
+        external = self.output / 'external.ogg'
+        external.write_bytes(b'x' * metadata['size_bytes'])
+        source.symlink_to(external)
+        self.assertIsNone(self.store.audio_for('meetings/one'))
+
+    def test_audio_for_rejects_symlinked_session_and_filesystem_errors(self):
+        session = self.make_session('lecture')
+        (self.output / 'linked').symlink_to(session, target_is_directory=True)
+        self.assertIsNone(self.store.audio_for('linked'))
+        with patch.object(self.store, '_summary', side_effect=OSError('private path')):
+            self.assertIsNone(self.store.audio_for('lecture'))
+
     def test_get_survives_atomic_write_churn(self):
         session = self.make_session()
         finished = threading.Event()

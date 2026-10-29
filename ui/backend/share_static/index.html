@@ -19,6 +19,10 @@
   <section id="reader" hidden>
     <div class="bar"><p id="version">目前版本</p><button id="leave" class="secondary" type="button">離開分享</button></div>
     <p class="hint">下載為擷取當下的「目前版本」，整理中的內容可能繼續更新。</p>
+    <div id="audio-player" hidden>
+      <audio id="audio" controls preload="none" src="/share/v1/audio" aria-label="原始錄音"></audio>
+      <p id="audio-status" class="hint" role="status" aria-live="polite"></p>
+    </div>
     <div class="documents">
       <section><div class="toolbar"><h2 id="transcript-heading">即時逐字稿</h2><a class="download" href="/share/v1/download/transcript" download>下載逐字稿（目前版本）</a></div><pre id="transcript"></pre></section>
       <section><div class="toolbar"><h2 id="secondary-heading">課堂筆記</h2><a id="secondary-download" class="download" href="/share/v1/download/notes" download>下載筆記（目前版本）</a></div><pre id="secondary"></pre></section>

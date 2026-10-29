@@ -29,9 +29,10 @@ class Visitor:
 
 
 class ShareRoom:
-    def __init__(self, sessions, session_id, clock=time.monotonic):
+    def __init__(self, sessions, session_id, clock=time.monotonic, *, share_audio=False):
         self.sessions = sessions
         self.session_id = session_id
+        self.share_audio = share_audio
         self.clock = clock
         self.invitation = secrets.token_urlsafe(32)
         self.active = True
@@ -99,6 +100,10 @@ class ShareRoom:
         self.visitors.clear()
         self.cached = None
 
+    def audio_path(self):
+        self.require_active()
+        return self.sessions.audio_for(self.session_id) if self.share_audio else None
+
     def snapshot(self):
         self.require_active()
         now = self.clock()
@@ -123,6 +128,7 @@ class ShareRoom:
             'work_type': work_type,
             'course': session.get('course'),
             'phase': session.get('phase'),
+            'audio': self.audio_path() is not None,
             'transcript': transcript,
             'version': digest,
             'version_label': '目前版本',
