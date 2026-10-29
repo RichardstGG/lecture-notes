@@ -25,12 +25,16 @@ description: Run one ai:ready GitHub issue through Codex in its own worktree, op
 4. `gh pr create --draft --repo RichardstGG/lecture-notes --base main --head ai/issue-N --title ... --body ...`
    body：🤖 標記、`Closes #N`、SUMMARY、TESTS、ENV_LIMITED 與 QUESTIONS（尚待我人工驗證的項目）。
 5. `gh issue edit N --remove-label ai:in-progress --add-label ai:review`
+6. 在 worktree 內 `./scripts/ai/agy-review.sh <PR URL> main`（Antigravity 唯讀 review，由腳本留 PR comment，約 1 分鐘）。
+   結論為 APPROVE 時腳本會把 PR 轉成 ready for review，否則維持 draft；把腳本印出的結果告訴我。
+   exit 3（沒裝 agy）或失敗 → 告訴我原因即可，不影響 PR、不重試。
 
 ## Apply review（我說「PR #X 有 comment」）
 1. 讀取 review comments，整理成 fix brief（逐條列出檔案、行號、要改什麼；我標註「不用改」的略過）。
+   「🤖 Antigravity review」的留言只是參考：只納入我在 comment 中點名要改的條目。
 2. worktree 不在就 `git worktree add .tmp/wt-issue-N ai/issue-N`。
 3. 一律 `--fresh`：prompt 附 issue 全文、目前 `git diff main...`、fix brief。
-4. 同 Finalize 2～3（不 force push），在 PR 留言摘要，label 改 `ai:review`。
+4. 同 Finalize 2～3（不 force push），在 PR 留言摘要，label 改 `ai:review`，再跑一次 Finalize 6。
 
 ## Cleanup（PR merge 後）
 `git worktree remove .tmp/wt-issue-N && git branch -d ai/issue-N && git fetch --prune`
