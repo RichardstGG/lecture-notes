@@ -131,7 +131,7 @@ class MissingToolsTests(unittest.TestCase):
                 mock.patch.object(S.shutil, "which", side_effect=lambda n: None), \
                 mock.patch.object(P, "missing_build_tool_keys", return_value=["cxx", "glslc"]):
             missing, blocking = S.missing_tools("vulkan")
-        self.assertEqual(missing, ["ffmpeg", "git", "cmake", "opencc", "pactl", "cxx", "glslc"])
+        self.assertEqual(missing, ["ffmpeg", "git", "cmake", "opencc", "pactl", "uv", "cxx", "glslc"])
         self.assertNotIn("opencc", blocking)     # 只影響繁體用語轉換，不該擋住安裝
         self.assertIn("ffmpeg", blocking)
         self.assertIn("cxx", blocking)

@@ -1,6 +1,7 @@
 """Tests for the cross-platform one-command upgrade workflow."""
 import contextlib
 import io
+import re
 import subprocess
 import sys
 import tempfile
@@ -129,15 +130,87 @@ class UpgradeTests(unittest.TestCase):
                     return self.completed()
 
                 with mock.patch.object(U, "run", side_effect=record), \
-                        mock.patch.object(U.shutil, "which", return_value="/usr/bin/npm"):
+                        mock.patch.object(U, "venv_ready", return_value=True), \
+                        mock.patch.object(U.shutil, "which",
+                                          side_effect=lambda n: "/usr/bin/npm" if n == "npm" else None):
                     U.install_ui()
 
                 self.assertEqual(calls, [
                     ([python, "-m", "pip", "install", "-r",
-                      self.root / "ui/backend/requirements.txt"], {}),
+                      self.root / "ui/backend/requirements.txt",
+                      "-c", self.root / "requirements.lock"], {}),
                     (["/usr/bin/npm", "ci"], {"cwd": self.root / "ui/frontend"}),
                     (["/usr/bin/npm", "run", "build"], {"cwd": self.root / "ui/frontend"}),
                 ])
+
+    def ensure_venv(self, uv=None):
+        with mock.patch.object(U, "run", return_value=self.completed()) as run, \
+                mock.patch.object(U.shutil, "which", return_value=uv):
+            U.ensure_venv()
+        return [call.args[0] for call in run.call_args_list]
+
+    def test_missing_venv_uses_uv_managed_python(self):
+        self.assertEqual(self.ensure_venv("/bin/uv"), [[
+            "/bin/uv", "venv", "--managed-python", "--python", U.UV_PYTHON,
+            "--seed", "--clear", self.root / ".venv",
+        ]])
+
+    def test_missing_venv_falls_back_to_stdlib_venv_with_clear(self):
+        self.assertEqual(self.ensure_venv(), [
+            [sys.executable, "-m", "venv", "--clear", self.root / ".venv"],
+        ])
+
+    def test_broken_venv_is_rebuilt_after_checking_for_active_run(self):
+        (self.root / ".venv").mkdir()
+        with mock.patch.object(U, "ensure_no_active_run") as guard:
+            calls = self.ensure_venv()
+        guard.assert_called_once_with()
+        self.assertEqual(calls, [[sys.executable, "-m", "venv", "--clear", self.root / ".venv"]])
+
+    def test_active_run_blocks_venv_rebuild(self):
+        (self.root / ".venv").mkdir()
+        error = U.UpgradeError("仍在執行")
+        with mock.patch.object(U, "ensure_no_active_run", side_effect=error), \
+                self.assertRaises(U.UpgradeError):
+            self.ensure_venv()
+
+    def test_venv_ready_rejects_interpreter_that_cannot_start(self):
+        self.assertFalse(U.venv_ready(self.root / ".venv/bin/python", None))
+
+    def test_venv_ready_requires_pinned_uv_venv_only_when_uv_exists(self):
+        config = self.root / ".venv/pyvenv.cfg"
+        config.parent.mkdir()
+        cases = [
+            ("uv = 0.12.16\nversion_info = 3.13\n", "/bin/uv", True),
+            ("version_info = 3.13.5\nuv = 0.12.16\n", "/bin/uv", True),
+            ("uv = 0.12.16\nversion_info = 3.12\n", "/bin/uv", False),
+            ("uv = 0.12.16\nversion_info = 3.130\n", "/bin/uv", False),
+            ("home = /opt/homebrew/bin\nversion = 3.13.5\n", "/bin/uv", False),
+            ("home = /opt/homebrew/bin\nversion = 3.13.5\n", None, True),
+        ]
+        for text, uv, expected in cases:
+            with self.subTest(text=text, uv=uv), \
+                    mock.patch.object(U.subprocess, "run", return_value=self.completed()):
+                config.write_text(text, encoding="utf-8")
+                self.assertEqual(U.venv_ready("python", uv), expected)
+
+    def test_pip_install_uses_uv_with_the_lock_when_available(self):
+        with mock.patch.object(U, "run") as run, \
+                mock.patch.object(U.shutil, "which", return_value="/bin/uv"):
+            U.pip_install("python", "reqs.txt")
+        run.assert_called_once_with([
+            "/bin/uv", "pip", "install", "--python", "python",
+            "-r", "reqs.txt", "-c", self.root / "requirements.lock",
+        ])
+
+    def test_lock_covers_every_direct_requirement(self):
+        repo = Path(U.__file__).resolve().parent
+        lock = (repo / "requirements.lock").read_text(encoding="utf-8")
+        for name in ("requirements-diarize.txt", "ui/backend/requirements.txt"):
+            for line in (repo / name).read_text(encoding="utf-8").splitlines():
+                if line and not line.startswith("#"):
+                    package = re.match(r"[A-Za-z0-9_.-]+", line)[0]
+                    self.assertIn(line if "==" in line else f"{package}==", lock)
 
     def test_windows_venv_python_path(self):
         with mock.patch.object(U.os, "name", "nt"):

@@ -22,7 +22,8 @@ class AudioFileResponse(FileResponse):
     until EOF, which can move after Content-Length has been captured.
     """
 
-    async def _handle_simple(self, send, send_header_only):
+    async def _handle_simple(self, send, send_header_only, send_pathsend=False):
+        # send_pathsend is ignored on purpose: pathsend also reads until EOF.
         await send({'type': 'http.response.start', 'status': self.status_code, 'headers': self.raw_headers})
         if send_header_only:
             await send({'type': 'http.response.body', 'body': b'', 'more_body': False})

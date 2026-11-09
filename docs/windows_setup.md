@@ -59,9 +59,11 @@ cd lecture-notes
 **系統套件**（PowerShell；另需 Visual Studio Build Tools 的「C++ 桌面開發」與 Vulkan SDK）：
 
 ```powershell
-winget install Git.Git Kitware.CMake Gyan.FFmpeg Python.Python.3.13
+winget install Git.Git Kitware.CMake Gyan.FFmpeg Python.Python.3.13 astral-sh.uv
 winget install LunarG.VulkanSDK
 ```
+
+`astral-sh.uv` 可略過；裝了之後專案的 `.venv` 會改用 uv 管理的 Python 3.13，不受系統 Python 升級影響。
 
 **編譯引擎並取得語音模型：**
 

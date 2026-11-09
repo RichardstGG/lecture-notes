@@ -66,6 +66,7 @@ UI 的測試需要 `python3 -m pip install -r ui/backend/requirements-dev.txt`�
 
 - 開發機：Debian 13、Intel Core Ultra 7 258V（Arc 140V iGPU、32GB）、PipeWire，麥克風在 `config/local.toml` 設定
 - 引擎版本鎖在 `engines.lock`，由 `setup_engines.py` checkout 與編譯（靜態連結）
+- `.venv` 的 Python 套件版本鎖在 `requirements.lock`（`uv pip compile` 產生，指令在檔案開頭）；有 uv 時用它管理的 Python（版本見 `upgrade.py` 的 `UV_PYTHON`），沒有時退回 `python -m venv`
 - 效能參考：whisper large-v3-turbo 約 6–7x 即時；Qwen3-8B 每段總結約 77–95 秒
 - 不進 git：`outputs/`、`models/`、`whisper.cpp/`、`llama.cpp/`、`config/local.toml`、`courses/*.toml`
 - 歷史背景文件：`docs/handoff-2026-09-17.md`（已過時，與 repo 現況衝突時以 repo 為準）

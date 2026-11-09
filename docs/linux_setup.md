@@ -12,6 +12,8 @@ sudo apt install ffmpeg curl pulseaudio-utils opencc \
                  git cmake build-essential pkg-config libvulkan-dev glslc vulkan-tools
 ```
 
+建議另外安裝 [uv](https://docs.astral.sh/uv/getting-started/installation/)（apt 沒有這個套件）：專案的 `.venv` 會改用 uv 管理的 Python 3.13，系統升級 Python 不會弄壞 Web UI 與發言者辨識。沒裝也能用；`.venv` 壞掉時重跑 `python3 upgrade.py --skip-engines` 會自動重建。
+
 ## 2. 取得程式
 
 ```bash

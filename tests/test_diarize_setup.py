@@ -265,9 +265,10 @@ class UpgradeDiarizationTests(unittest.TestCase):
         self.addCleanup(tmp.cleanup)
         self.root = Path(tmp.name)
         (self.root / "requirements-diarize.txt").write_text("sherpa-onnx==0\n", encoding="utf-8")
-        patcher = mock.patch.object(U, "ROOT", self.root)
-        patcher.start()
-        self.addCleanup(patcher.stop)
+        for patcher in (mock.patch.object(U, "ROOT", self.root),
+                        mock.patch.object(U.shutil, "which", return_value=None)):
+            patcher.start()
+            self.addCleanup(patcher.stop)
 
     def completed(self):
         return subprocess.CompletedProcess([], 0, stdout="", stderr="")
@@ -289,10 +290,12 @@ class UpgradeDiarizationTests(unittest.TestCase):
             with self.subTest(layout=str(relative)), self.venv_layout(relative):
                 python = self.make_venv()
                 calls = []
-                with mock.patch.object(U, "run", side_effect=lambda c, **k: calls.append(c) or self.completed()):
+                with mock.patch.object(U, "venv_ready", return_value=True), \
+                        mock.patch.object(U, "run", side_effect=lambda c, **k: calls.append(c) or self.completed()):
                     U.install_diarization()
                 self.assertEqual(calls, [
-                    [python, "-m", "pip", "install", "-r", self.root / "requirements-diarize.txt"],
+                    [python, "-m", "pip", "install", "-r", self.root / "requirements-diarize.txt",
+                     "-c", self.root / "requirements.lock"],
                     [sys.executable, self.root / "setup_engines.py", "diarize"],
                 ])
 
@@ -300,7 +303,7 @@ class UpgradeDiarizationTests(unittest.TestCase):
         calls = []
         with mock.patch.object(U, "run", side_effect=lambda c, **k: calls.append(c) or self.completed()):
             U.install_diarization()
-        self.assertEqual(calls[0], [sys.executable, "-m", "venv", self.root / ".venv"])
+        self.assertEqual(calls[0], [sys.executable, "-m", "venv", "--clear", self.root / ".venv"])
         self.assertEqual(len(calls), 3)
 
     def test_pip_failure_stops_before_downloading_models(self):
@@ -311,7 +314,8 @@ class UpgradeDiarizationTests(unittest.TestCase):
         for relative in VENV_LAYOUTS:
             with self.subTest(layout=str(relative)), self.venv_layout(relative):
                 self.make_venv()
-                with mock.patch.object(U, "run", side_effect=run) as r, \
+                with mock.patch.object(U, "venv_ready", return_value=True), \
+                        mock.patch.object(U, "run", side_effect=run) as r, \
                         self.assertRaises(U.UpgradeError):
                     U.install_diarization()
                 self.assertEqual(r.call_count, 1)

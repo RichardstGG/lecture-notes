@@ -22,11 +22,14 @@ xcode-select --install
 接著安裝其他套件：
 
 ```bash
-brew install python cmake ffmpeg opencc
+brew install python uv cmake ffmpeg opencc
 ```
 
 macOS 內建的 `python3` 通常是 3.9，低於需求的 3.11；`brew install python` 會裝新版。
 裝完先開新的終端機，用 `python3 --version` 確認是 3.11 以上。
+
+`uv` 會讓專案的 `.venv` 使用它自己管理的 Python 3.13，Web UI 與發言者辨識就不會被 `brew upgrade` 弄壞。
+沒裝 uv 也能用，但 `.venv` 會綁在 Homebrew 的 Python 上；壞掉時重跑 `python3 upgrade.py --skip-engines` 會自動重建。
 
 ## 2. 取得程式
 
