@@ -38,10 +38,38 @@ describe("meeting workbench controls", () => {
   });
   afterEach(() => { cleanup(); vi.unstubAllGlobals(); });
 
+  it.each([
+    ["meeting-live", "會議設定"], ["meeting-settings", "要編輯的會議設定"],
+  ])("orders %s by the latest meeting start and preserves filtered and unused order without changing selection", async (view, label) => {
+    vi.mocked(api.meetings).mockResolvedValue([
+      { id: "unused", name: "未使用" }, { id: "older", name: "週一會議" },
+      { id: "recent", name: "週二會議" }, { id: "empty", name: "空日期" }, { id: "invalid", name: "壞日期" },
+    ].map((item) => ({ ...item, file: `${item.id}.toml` })));
+    render(<MeetingWorkbench view={view} runtime={idle} sessions={[
+      { ...summary, id: "recent-new", course: "週二會議", started_at: "2026-11-09T00:00:00Z" },
+      { ...summary, id: "older", course: "週一會議", started_at: "2026-11-08T00:00:00Z", updated_at: "2026-11-10T00:00:00Z" },
+      { ...summary, id: "recent-old", course: "週二會議", started_at: "2026-11-01T00:00:00Z" },
+      { ...summary, id: "empty", course: "空日期", updated_at: "2026-11-11T00:00:00Z" },
+      { ...summary, id: "invalid", course: "壞日期", started_at: "invalid", updated_at: "2026-11-12T00:00:00Z" },
+      { ...summary, id: "lecture", course: "未使用", work_type: "lecture", started_at: "2026-11-13T00:00:00Z" },
+    ]} />);
+    const input = screen.getByRole("combobox", { name: label }) as HTMLInputElement;
+    await waitFor(() => expect(input.value).toBe("未使用"));
+    fireEvent.focus(input);
+    expect(within(screen.getByRole("listbox")).getAllByRole("option").map((option) => option.textContent))
+      .toEqual(["週二會議", "週一會議", "未使用", "空日期", "壞日期"]);
+    fireEvent.change(input, { target: { value: "會議" } });
+    expect(within(screen.getByRole("listbox")).getAllByRole("option").map((option) => option.textContent))
+      .toEqual(["週二會議", "週一會議"]);
+    fireEvent.blur(input);
+    expect(input.value).toBe("未使用");
+    expect(api.startMeeting).not.toHaveBeenCalled();
+  });
+
   it("requires a speaker count, keeps dual disabled and starts the selected real configuration", async () => {
     const changed = vi.fn().mockResolvedValue(undefined);
     render(<MeetingWorkbench runtime={idle} onChanged={changed} devices={{ api_version: 1, current: "default", sources: [{ id: "mic", name: "麥克風" }] }} />);
-    await screen.findByRole("option", { name: "團隊" });
+    await waitFor(() => expect((screen.getByRole("combobox", { name: "會議設定" }) as HTMLInputElement).value).toBe("團隊"));
     expect(screen.getByRole("button", { name: "開始錄音" }).hasAttribute("disabled")).toBe(true);
     expect(screen.getByLabelText("錄音來源模式").hasAttribute("disabled")).toBe(true);
     expect(screen.getByRole("option", { name: /v1 不提供/, hidden: true }).hasAttribute("disabled")).toBe(true);
@@ -57,7 +85,7 @@ describe("meeting workbench controls", () => {
   it("imports the staged path with the original display name", async () => {
     vi.mocked(api.uploadAudio).mockResolvedValue({ api_version: 1, name: "original.wav", path: "/tmp/staging/upload.wav", size_bytes: 20 });
     render(<MeetingWorkbench runtime={idle} />);
-    await screen.findByRole("option", { name: "團隊" });
+    await waitFor(() => expect((screen.getByRole("combobox", { name: "會議設定" }) as HTMLInputElement).value).toBe("團隊"));
     fireEvent.change(screen.getByLabelText("輸入方式"), { target: { value: "file" } });
     fireEvent.change(screen.getByLabelText("預計參與人數（必填）"), { target: { value: "4" } });
     expect(screen.getByRole("button", { name: "開始匯入" }).hasAttribute("disabled")).toBe(true);
@@ -70,8 +98,10 @@ describe("meeting workbench controls", () => {
 
   it("creates and updates meeting settings through the real API surface", async () => {
     vi.mocked(api.createMeeting).mockResolvedValue({ api_version: 1, id: "設計", file: "設計.toml", content: "[meeting]" });
-    vi.mocked(api.meeting).mockResolvedValue({ api_version: 1, id: "team", file: "team.toml", content: '[meeting]\nname="原設定"' });
-    vi.mocked(api.updateMeeting).mockResolvedValue({ api_version: 1, id: "team", file: "team.toml", content: '[meeting]\nname="新設定"' });
+    vi.mocked(api.meetings).mockResolvedValueOnce([{ id: "team", file: "team.toml", name: "團隊" }])
+      .mockResolvedValue([{ id: "team", file: "team.toml", name: "團隊" }, { id: "設計", file: "設計.toml", name: "設計" }]);
+    vi.mocked(api.meeting).mockResolvedValue({ api_version: 1, id: "設計", file: "設計.toml", content: '[meeting]\nname="原設定"' });
+    vi.mocked(api.updateMeeting).mockResolvedValue({ api_version: 1, id: "設計", file: "設計.toml", content: '[meeting]\nname="新設定"' });
     render(<MeetingWorkbench view="meeting-settings" runtime={idle} />);
     fireEvent.change(screen.getByPlaceholderText("例如：系統設計討論"), { target: { value: "設計" } });
     fireEvent.click(screen.getByRole("button", { name: "建立會議設定" }));
@@ -79,9 +109,79 @@ describe("meeting workbench controls", () => {
     await screen.findByText("會議設定已建立。");
     fireEvent.click(screen.getByRole("button", { name: "載入設定內容" }));
     const editor = await screen.findByLabelText("會議 TOML 設定");
+    expect(api.meeting).toHaveBeenCalledWith("設計");
     fireEvent.change(editor, { target: { value: '[meeting]\nname="新設定"' } });
     fireEvent.click(screen.getByRole("button", { name: "儲存會議設定" }));
-    await waitFor(() => expect(api.updateMeeting).toHaveBeenCalledWith("team", '[meeting]\nname="新設定"'));
+    await waitFor(() => expect(api.updateMeeting).toHaveBeenCalledWith("設計", '[meeting]\nname="新設定"'));
+  });
+
+  it.each([
+    ["meeting-live", "會議設定"], ["meeting-settings", "要編輯的會議設定"],
+  ])("filters, selects and creates from %s without starting recording", async (view, label) => {
+    const configs = [{ id: "team", file: "team.toml", name: "團隊" }, { id: "DESIGN", file: "design.toml", name: "Design Review" },
+      { id: "broken", file: "broken.toml", name: "壞設定", error: "invalid" }];
+    vi.mocked(api.meetings).mockResolvedValue(configs);
+    let finish!: (value: Awaited<ReturnType<typeof api.createMeeting>>) => void;
+    vi.mocked(api.createMeeting).mockReturnValue(new Promise((resolve) => { finish = resolve; }));
+    const { rerender } = render(<MeetingWorkbench view={view} runtime={idle} />);
+    const input = screen.getByRole("combobox", { name: label }) as HTMLInputElement;
+    await waitFor(() => expect(input.value).toBe("團隊"));
+    fireEvent.focus(input);
+    expect(screen.getAllByRole("option").filter((option) => option.closest('[role="listbox"]'))).toHaveLength(3);
+    for (const query of ["design", "review"]) {
+      fireEvent.change(input, { target: { value: query } });
+      expect(screen.getByRole("option", { name: "Design Review" })).toBeTruthy();
+      expect(screen.queryByRole("option", { name: /建立/ })).toBeNull();
+    }
+    fireEvent.click(screen.getByRole("option", { name: "Design Review" }));
+    expect(input.value).toBe("Design Review");
+    fireEvent.change(input, { target: { value: "BROKEN" } });
+    expect(screen.getByRole("option", { name: "壞設定（設定有誤）" }).getAttribute("aria-disabled")).toBe("true");
+    expect(screen.queryByRole("option", { name: /建立/ })).toBeNull();
+    fireEvent.blur(input);
+    expect(input.value).toBe("Design Review");
+    fireEvent.change(input, { target: { value: "  新會議  " } });
+    fireEvent.click(screen.getByRole("option", { name: "建立「新會議」" }));
+    expect(api.createMeeting).toHaveBeenCalledExactlyOnceWith("新會議", '[meeting]\nname = "新會議"\n');
+    rerender(<MeetingWorkbench view="meeting-live" runtime={idle} />);
+    fireEvent.change(screen.getByLabelText("預計參與人數（必填）"), { target: { value: "3" } });
+    expect(screen.getByRole("button", { name: "開始錄音" }).hasAttribute("disabled")).toBe(true);
+    fireEvent.submit(screen.getByRole("button", { name: "開始錄音" }).closest("form")!);
+    expect(api.startMeeting).not.toHaveBeenCalled();
+    vi.mocked(api.meetings).mockResolvedValue([...configs, { id: "new-id", file: "new.toml", name: "新會議" }]);
+    await act(async () => finish({ api_version: 1, id: "new-id", file: "new.toml", content: "[meeting]" }));
+    await waitFor(() => expect((screen.getByRole("combobox", { name: "會議設定" }) as HTMLInputElement).value).toBe("新會議"));
+    expect(api.meetings).toHaveBeenCalledTimes(2);
+    expect(api.startMeeting).not.toHaveBeenCalled();
+    rerender(<MeetingWorkbench view="meeting-settings" runtime={idle} />);
+    expect((screen.getByRole("combobox", { name: "要編輯的會議設定" }) as HTMLInputElement).value).toBe("新會議");
+    rerender(<MeetingWorkbench view="meeting-live" runtime={idle} />);
+    fireEvent.click(screen.getByRole("button", { name: "開始錄音" }));
+    await waitFor(() => expect(api.startMeeting).toHaveBeenCalledExactlyOnceWith({ meeting_id: "new-id", speakers: 3 }));
+  });
+
+  it.each([
+    ["meeting-live", "會議設定", "名稱不合法"], ["meeting-settings", "要編輯的會議設定", "設定已存在"],
+  ])("preserves rejected creation text on %s and prevents IME Enter from acting", async (view, label, message) => {
+    vi.mocked(api.createMeeting).mockRejectedValue(new Error(message));
+    render(<MeetingWorkbench view={view} runtime={idle} />);
+    const input = screen.getByRole("combobox", { name: label }) as HTMLInputElement;
+    await waitFor(() => expect(input.value).toBe("團隊"));
+    fireEvent.change(screen.getByLabelText("預計參與人數（必填）"), { target: { value: "3" } });
+    for (const query of ["team", " invalid/name "]) {
+      fireEvent.change(input, { target: { value: query } });
+      fireEvent.keyDown(input, { key: "Enter", isComposing: true });
+      fireEvent.keyDown(input, { key: "Enter", keyCode: 229 });
+      expect(input.value).toBe(query);
+    }
+    expect(api.createMeeting).not.toHaveBeenCalled();
+    expect(api.startMeeting).not.toHaveBeenCalled();
+    fireEvent.keyDown(input, { key: "Enter" });
+    expect((await screen.findByRole("alert")).textContent).toBe(message);
+    expect(input.value).toBe(" invalid/name ");
+    expect(api.startMeeting).not.toHaveBeenCalled();
+    fireEvent.keyDown(input, { key: "Escape" });
+    expect(input.value).toBe("團隊");
   });
 
   it("shares configuration selection with recording and preserves TOML drafts across subpages", async () => {
@@ -89,18 +189,19 @@ describe("meeting workbench controls", () => {
     vi.mocked(api.meeting).mockImplementation(async (id) => ({ api_version: 1, id, file: `${id}.toml`, content: `[meeting]\nname="${id}"` }));
     vi.mocked(api.updateMeeting).mockResolvedValue({ api_version: 1, id: "design", file: "design.toml", content: '[meeting]\nname="已編輯"' });
     const { rerender } = render(<MeetingWorkbench view="meeting-settings" runtime={idle} />);
-    await screen.findByRole("option", { name: "團隊" });
+    await waitFor(() => expect((screen.getByRole("combobox", { name: "要編輯的會議設定" }) as HTMLInputElement).value).toBe("團隊"));
     expect(screen.queryByRole("button", { name: "開始錄音" })).toBeNull();
     expect(document.querySelector("#meeting-settings details")).toBeNull();
     fireEvent.click(screen.getByRole("button", { name: "載入設定內容" }));
     await waitFor(() => expect((screen.getByLabelText("會議 TOML 設定") as HTMLTextAreaElement).value).toContain('name="team"'));
     fireEvent.change(screen.getByLabelText("要編輯的會議設定"), { target: { value: "design" } });
+    fireEvent.click(screen.getByRole("option", { name: "設計" }));
     expect(screen.queryByLabelText("會議 TOML 設定")).toBeNull();
     fireEvent.click(screen.getByRole("button", { name: "載入設定內容" }));
     await waitFor(() => expect((screen.getByLabelText("會議 TOML 設定") as HTMLTextAreaElement).value).toContain('name="design"'));
     fireEvent.change(screen.getByLabelText("會議 TOML 設定"), { target: { value: '[meeting]\nname="已編輯"' } });
     rerender(<MeetingWorkbench view="meeting-live" runtime={idle} />);
-    expect((screen.getByLabelText("會議設定") as HTMLSelectElement).value).toBe("design");
+    expect((screen.getByLabelText("會議設定") as HTMLInputElement).value).toBe("設計");
     expect(screen.queryByRole("button", { name: "儲存會議設定" })).toBeNull();
     rerender(<MeetingWorkbench view="meeting-sharing" runtime={idle} />);
     expect(screen.getByRole("heading", { name: "分享會議逐字稿" })).toBeTruthy();
@@ -116,7 +217,7 @@ describe("meeting workbench controls", () => {
   it("reports startup rejection and never fabricates recording state", async () => {
     vi.mocked(api.startMeeting).mockRejectedValue(new Error("另一項工作已執行"));
     render(<MeetingWorkbench runtime={idle} />);
-    await screen.findByRole("option", { name: "團隊" });
+    await waitFor(() => expect((screen.getByRole("combobox", { name: "會議設定" }) as HTMLInputElement).value).toBe("團隊"));
     fireEvent.change(screen.getByLabelText("預計參與人數（必填）"), { target: { value: "2" } });
     fireEvent.click(screen.getByRole("button", { name: "開始錄音" }));
     await screen.findByRole("alert");

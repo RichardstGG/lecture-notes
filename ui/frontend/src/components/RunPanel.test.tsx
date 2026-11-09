@@ -1,7 +1,8 @@
-import { act, cleanup, fireEvent, render, screen, waitFor } from "@testing-library/react";
+import { useState } from "react";
+import { act, cleanup, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { api } from "../api";
-import type { DeviceInventory, ModelInventory, RuntimeStatus } from "../types";
+import type { Course, DeviceInventory, ModelInventory, RuntimeStatus, SessionSummary } from "../types";
 import { RunPanel } from "./RunPanel";
 
 vi.mock("../api", () => ({
@@ -9,6 +10,8 @@ vi.mock("../api", () => ({
     start: vi.fn(),
     stop: vi.fn(),
     uploadAudio: vi.fn(),
+    createCourse: vi.fn(),
+    courses: vi.fn(),
   },
 }));
 
@@ -45,6 +48,32 @@ describe("RunPanel", () => {
   beforeEach(() => vi.clearAllMocks());
   afterEach(cleanup);
 
+  it("orders courses by their latest start, keeps unused order and filtered order without changing the default", () => {
+    const courses = [
+      { id: "unused", name: "未使用" }, { id: "older", name: "週一課程" },
+      { id: "recent", name: "週二課程" }, { id: "empty", name: "空日期" }, { id: "invalid", name: "壞日期" },
+    ].map((item) => ({ ...item, file: `${item.id}.toml` }));
+    const session: SessionSummary = { id: "lecture/one", started_at: "", updated_at: "", has_transcript: false, has_notes: false, has_recording: false };
+    render(<RunPanel courses={courses} sessions={[
+      { ...session, id: "recent-new", course: "週二課程", started_at: "2026-11-09T00:00:00Z" },
+      { ...session, id: "older", course: "週一課程", started_at: "2026-11-08T00:00:00Z", updated_at: "2026-11-10T00:00:00Z" },
+      { ...session, id: "recent-old", course: "週二課程", started_at: "2026-11-01T00:00:00Z" },
+      { ...session, id: "empty", course: "空日期", updated_at: "2026-11-11T00:00:00Z" },
+      { ...session, id: "invalid", course: "壞日期", started_at: "invalid", updated_at: "2026-11-12T00:00:00Z" },
+    ]} status={{ schema_version: 1, running: false }} onChanged={vi.fn()} onError={vi.fn()} />);
+    const input = screen.getByRole("combobox", { name: "課程" }) as HTMLInputElement;
+    expect(input.value).toBe("未使用");
+    fireEvent.focus(input);
+    expect(within(screen.getByRole("listbox")).getAllByRole("option").map((option) => option.textContent))
+      .toEqual(["週二課程", "週一課程", "未使用", "空日期", "壞日期"]);
+    fireEvent.change(input, { target: { value: "課程" } });
+    expect(within(screen.getByRole("listbox")).getAllByRole("option").map((option) => option.textContent))
+      .toEqual(["週二課程", "週一課程"]);
+    fireEvent.keyDown(input, { key: "Escape" });
+    expect(input.value).toBe("未使用");
+    expect(api.start).not.toHaveBeenCalled();
+  });
+
   it("inherits course API and disabled defaults and resets an override on course change", async () => {
     render(<RunPanel courses={[
       { id: "api-course", file: "api.toml", upstream: "lab", summary_enabled: true },
@@ -62,9 +91,73 @@ describe("RunPanel", () => {
 
     fireEvent.change(selector, { target: { value: "local:qwen3-4b" } });
     fireEvent.change(screen.getByRole("combobox", { name: "課程" }), { target: { value: "raw-course" } });
+    fireEvent.click(screen.getByRole("option", { name: "raw-course" }));
     expect(selector.value).toBe("none");
     fireEvent.click(screen.getByRole("button", { name: "開始處理" }));
     await waitFor(() => expect(api.start).toHaveBeenCalledWith(expect.objectContaining({ course: "raw-course", model: undefined, overrides: undefined })));
+  });
+
+  it("creates a course, reloads the list and selects it without starting recording", async () => {
+    const initial: Course[] = [{ id: "old", file: "old.toml", name: "舊課程" }];
+    vi.mocked(api.courses).mockResolvedValue([...initial, { id: "new-id", file: "new-id.toml", name: "新課程" }]);
+    let finish!: (value: Awaited<ReturnType<typeof api.createCourse>>) => void;
+    vi.mocked(api.createCourse).mockReturnValue(new Promise((resolve) => { finish = resolve; }));
+    const changed = vi.fn();
+    function Panel() {
+      const [courses, setCourses] = useState(initial);
+      return <RunPanel courses={courses} status={{ schema_version: 1, running: false }} onError={vi.fn()}
+        onChanged={async () => { changed(); setCourses(await api.courses()); }} />;
+    }
+    render(<Panel />);
+    const input = screen.getByRole("combobox", { name: "課程" }) as HTMLInputElement;
+    fireEvent.focus(input);
+    fireEvent.change(input, { target: { value: "  新課程  " } });
+    fireEvent.keyDown(input, { key: "Enter" });
+    expect(api.createCourse).toHaveBeenCalledExactlyOnceWith("新課程");
+    expect(screen.getByRole("button", { name: "開始處理" }).hasAttribute("disabled")).toBe(true);
+    fireEvent.submit(input.closest("form")!);
+    expect(api.start).not.toHaveBeenCalled();
+    await act(async () => finish({ api_version: 1, id: "new-id", file: "new-id.toml", content: "[course]" }));
+    await waitFor(() => expect(input.value).toBe("新課程"));
+    expect(changed).toHaveBeenCalledOnce();
+    expect(api.courses).toHaveBeenCalledOnce();
+    expect(api.start).not.toHaveBeenCalled();
+    expect(screen.getByRole("button", { name: "開始處理" }).hasAttribute("disabled")).toBe(false);
+    fireEvent.focus(input);
+    expect(screen.getByRole("option", { name: "新課程" }).getAttribute("aria-selected")).toBe("true");
+    fireEvent.blur(input);
+    fireEvent.click(screen.getByRole("button", { name: "開始處理" }));
+    await waitFor(() => expect(api.start).toHaveBeenCalledWith(expect.objectContaining({ course: "new-id" })));
+  });
+
+  it.each(["名稱不合法", "設定已存在"])("reports creation error %s and preserves the typed name", async (message) => {
+    vi.mocked(api.createCourse).mockRejectedValue(new Error(message));
+    function Panel() {
+      const [error, setError] = useState<string>();
+      return <>{error && <p role="alert">{error}</p>}<RunPanel courses={[{ id: "old", file: "old.toml", name: "舊課程" }]}
+        status={{ schema_version: 1, running: false }} onChanged={vi.fn()} onError={setError} /></>;
+    }
+    render(<Panel />);
+    const input = screen.getByRole("combobox", { name: "課程" }) as HTMLInputElement;
+    fireEvent.change(input, { target: { value: " invalid/name " } });
+    fireEvent.click(screen.getByRole("option", { name: "建立「invalid/name」" }));
+    expect((await screen.findByRole("alert")).textContent).toBe(message);
+    expect(input.value).toBe(" invalid/name ");
+    expect(api.start).not.toHaveBeenCalled();
+  });
+
+  it("shows invalid courses as disabled matches and never offers to create them", () => {
+    render(<RunPanel courses={[{ id: "bad-id", file: "bad.toml", name: "壞設定", error: "invalid" }]}
+      status={{ schema_version: 1, running: false }} onChanged={vi.fn()} onError={vi.fn()} />);
+    const input = screen.getByRole("combobox", { name: "課程" });
+    fireEvent.change(input, { target: { value: "BAD-ID" } });
+    expect(screen.getByRole("option", { name: "壞設定（設定有誤）" }).getAttribute("aria-disabled")).toBe("true");
+    expect(screen.queryByRole("option", { name: /建立/ })).toBeNull();
+    fireEvent.keyDown(input, { key: "ArrowDown" });
+    fireEvent.keyDown(input, { key: "Enter" });
+    expect(api.createCourse).not.toHaveBeenCalled();
+    expect(api.start).not.toHaveBeenCalled();
+    expect(screen.getByRole("button", { name: "開始處理" }).hasAttribute("disabled")).toBe(true);
   });
 
   it("explicit local selection overrides an API or disabled course, and none drops stale choices", async () => {

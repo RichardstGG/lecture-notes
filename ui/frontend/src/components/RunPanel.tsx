@@ -1,10 +1,12 @@
 import { useEffect, useMemo, useRef, useState, type DragEvent, type FormEvent } from "react";
 import { api } from "../api";
-import type { AudioUpload, Course, DeviceInventory, ModelInventory, RuntimeStatus } from "../types";
+import type { AudioUpload, Course, DeviceInventory, ModelInventory, RuntimeStatus, SessionSummary } from "../types";
 import { Icon } from "./Icon";
+import { ConfigCombobox, sortConfigsByRecentUse } from "./ConfigCombobox";
 
 interface Props {
   courses: Course[];
+  sessions?: SessionSummary[];
   devices?: DeviceInventory;
   models?: ModelInventory;
   status: RuntimeStatus;
@@ -22,8 +24,9 @@ function formatFileSize(bytes: number): string {
   return `${(bytes / (1024 ** 2)).toFixed(bytes < 10 * 1024 ** 2 ? 1 : 0)} MB`;
 }
 
-export function RunPanel({ courses, devices, models, status, onChanged, onError }: Props) {
+export function RunPanel({ courses, sessions = [], devices, models, status, onChanged, onError }: Props) {
   const validCourses = useMemo(() => courses.filter((course) => !course.error), [courses]);
+  const sortedCourses = sortConfigsByRecentUse(courses, sessions);
   const [course, setCourse] = useState("");
   const [mode, setMode] = useState<"live" | "file">("live");
   const [inputFile, setInputFile] = useState("");
@@ -34,6 +37,7 @@ export function RunPanel({ courses, devices, models, status, onChanged, onError 
   const [summaryChoice, setSummaryChoice] = useState<string>();
   const [source, setSource] = useState("");
   const [starting, setStarting] = useState(false);
+  const [creating, setCreating] = useState(false);
   const [stopMode, setStopMode] = useState<"normal" | "force">();
   const [stopRequesting, setStopRequesting] = useState(false);
   const selectedCourse = validCourses.find((item) => item.id === course);
@@ -59,7 +63,7 @@ export function RunPanel({ courses, devices, models, status, onChanged, onError 
 
   async function submit(event: FormEvent) {
     event.preventDefault();
-    if (!course || (mode === "file" && !inputFile.trim())) return;
+    if (creating || starting || !selectedCourse || (mode === "file" && !inputFile.trim())) return;
     setStarting(true);
     onError(undefined);
     try {
@@ -76,6 +80,22 @@ export function RunPanel({ courses, devices, models, status, onChanged, onError 
       onError(reason instanceof Error ? reason.message : "無法開始課程");
     } finally {
       setStarting(false);
+    }
+  }
+
+  async function createCourse(name: string) {
+    setCreating(true);
+    onError(undefined);
+    try {
+      const result = await api.createCourse(name);
+      await onChanged();
+      setCourse(result.id); setSummaryChoice(undefined);
+      return true;
+    } catch (reason) {
+      onError(reason instanceof Error ? reason.message : "無法建立課程");
+      return false;
+    } finally {
+      setCreating(false);
     }
   }
 
@@ -142,10 +162,8 @@ export function RunPanel({ courses, devices, models, status, onChanged, onError 
   return <form className="run-form lecture-run-form" onSubmit={submit}>
     <label>
       <span>課程</span>
-      <select value={course} onChange={(event) => { setCourse(event.target.value); setSummaryChoice(undefined); }} required>
-        {validCourses.length === 0 && <option value="">尚無可用課程</option>}
-        {validCourses.map((item) => <option value={item.id} key={item.id}>{item.name || item.id}</option>)}
-      </select>
+      <ConfigCombobox label="課程" items={sortedCourses} value={course} disabled={creating || starting} placeholder="選擇或輸入課程"
+        onSelect={(id) => { setCourse(id); setSummaryChoice(undefined); }} onCreate={createCourse} />
     </label>
     <div className="mode-switch" role="group" aria-label="輸入方式">
       <button type="button" className={mode === "live" ? "active" : ""} onClick={() => setMode("live")}><Icon name="mic" />現場錄音</button>
@@ -223,6 +241,6 @@ export function RunPanel({ courses, devices, models, status, onChanged, onError 
         {selectedApi && `${summaryChoice !== undefined ? "；" : ""}逐字稿會傳送至所選 API。`}
       </small>}
     </label>
-    <button className="button primary" disabled={starting || uploading || !course || (mode === "file" && !inputFile.trim())} type="submit">{starting ? "處理中…" : "開始處理"}</button>
+    <button className="button primary" disabled={starting || creating || uploading || !selectedCourse || (mode === "file" && !inputFile.trim())} type="submit">{starting ? "處理中…" : "開始處理"}</button>
   </form>;
 }
