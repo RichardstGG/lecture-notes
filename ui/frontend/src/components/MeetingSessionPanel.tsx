@@ -6,6 +6,7 @@ import { MarkdownPane } from "./MarkdownPane";
 
 interface Props {
   active: boolean;
+  view: string;
   runtime: RuntimeStatus;
   sessions: SessionSummary[];
   selectedId?: string;
@@ -23,7 +24,7 @@ const stageLabels: Record<string, string> = {
   retranscription: "重新轉錄",
 };
 
-export function MeetingSessionPanel({ active, runtime, sessions, selectedId, onSelect, pending, stopMode, onStop, onDiarize }: Props) {
+export function MeetingSessionPanel({ active, view, runtime, sessions, selectedId, onSelect, pending, stopMode, onStop, onDiarize }: Props) {
   const [detail, setDetail] = useState<SessionDetail>();
   const [error, setError] = useState<string>();
   const [requested, setRequested] = useState<string>();
@@ -78,7 +79,7 @@ export function MeetingSessionPanel({ active, runtime, sessions, selectedId, onS
   }, [active, selectedId, runtime.running, selectedSummary?.updated_at]);
 
   return <>
-    {meetingRunning && <section className="meeting-card" aria-label="目前會議工作">
+    {meetingRunning && <section className="meeting-card" aria-label="目前會議工作" hidden={view !== "meeting-live"}>
       <div className="meeting-card-heading"><div><p className="eyebrow">LIVE WORK</p><h2>{runtime.course || "目前會議工作"}</h2></div></div>
       <p className="meeting-help">{runtime.mode === "diarize" || runtime.status?.phase === "diarizing"
         ? `${stageLabels[progress?.stage || ""] || "辨識發言者"}進行中` : "錄音或轉錄進行中"}。切換工作台不會停止背景工作。</p>
@@ -98,9 +99,13 @@ export function MeetingSessionPanel({ active, runtime, sessions, selectedId, onS
         <button className="button ghost-danger" disabled={pending || stopMode === "force"} aria-busy={stopMode === "force"} onClick={() => onStop(true)}>{stopMode === "force" ? "正在中止…" : "強制停止"}</button>
       </div>
       {runningId && runningId !== selectedId && <button className="meeting-short-toggle" type="button" onClick={() => onSelect(runningId)}>查看目前場次</button>}
+      {runningId && runningId === selectedId && <div className="meeting-transcript meeting-real-transcript">
+        {error && <p className="inline-error" role="alert">{error}</p>}
+        <MarkdownPane content={visibleDetail?.transcript.content} empty="原逐字稿尚未產生。" />
+      </div>}
     </section>}
 
-    <section className="meeting-card" id="meeting-history">
+    <section className="meeting-card" id="meeting-history" hidden={view !== "meeting-history"}>
       <div className="meeting-card-heading"><div><p className="eyebrow">MEETING LIBRARY</p><h2>會議結果與歷史</h2></div><span className="meeting-demo-tag">真實場次</span></div>
       {sessions.length === 0 ? <p className="meeting-help">尚無會議紀錄。建立會議設定後即可錄音或匯入音檔。</p> : <>
         <div className="meeting-history-list" aria-label="會議紀錄">

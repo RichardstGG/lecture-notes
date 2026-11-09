@@ -17,6 +17,7 @@
 }
 
 * { box-sizing: border-box; }
+[hidden] { display: none !important; }
 body { margin: 0; min-width: 320px; min-height: 100vh; }
 button, input, select, textarea { font: inherit; }
 button { cursor: pointer; }
@@ -173,6 +174,7 @@ input:focus, select:focus, textarea:focus { border-color: #5a806b; box-shadow: 0
 .run-actions p { margin: 0 0 0 6px; color: #9fb2a6; font-size: 11px; }
 
 .workspace-grid { display: grid; grid-template-columns: minmax(0, 1fr) 330px; gap: 24px; min-height: 500px; }
+.workspace-grid.workspace-grid-single { grid-template-columns: minmax(0, 1fr); }
 .content-card, .history-card { border: 1px solid var(--line); background: var(--paper); border-radius: 16px; overflow: hidden; }
 .card-header { height: 63px; border-bottom: 1px solid var(--line); padding: 0 22px; display: flex; align-items: center; justify-content: space-between; }
 .tabs { align-self: stretch; display: flex; gap: 22px; }

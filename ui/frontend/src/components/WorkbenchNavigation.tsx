@@ -6,9 +6,9 @@ export interface Navigation { page: Page; target: string }
 
 const groups = [
   { page: "lecture" as const, label: "課堂工作台", target: "live", icon: "wave" as const,
-    children: [{ label: "歷史紀錄", target: "history" }, { label: "內網共享", target: "lecture-sharing" }, { label: "課程設定", target: "courses" }] },
+    children: [{ label: "課堂錄音", target: "live" }, { label: "歷史紀錄", target: "history" }, { label: "內網共享", target: "lecture-sharing" }, { label: "課程設定", target: "courses" }] },
   { page: "meeting" as const, label: "會議工作台", target: "meeting-live", icon: "mic" as const,
-    children: [{ label: "歷史紀錄", target: "meeting-history" }, { label: "內網共享", target: "meeting-sharing" }, { label: "會議設定", target: "meeting-settings" }] },
+    children: [{ label: "會議錄音", target: "meeting-live" }, { label: "歷史紀錄", target: "meeting-history" }, { label: "內網共享", target: "meeting-sharing" }, { label: "會議設定", target: "meeting-settings" }] },
 ];
 
 export function navigationFromHash(hash: string): Navigation {

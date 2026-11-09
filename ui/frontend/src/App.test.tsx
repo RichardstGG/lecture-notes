@@ -18,6 +18,16 @@ vi.mock("./api", () => ({ api: {
 const oldLecture: SessionSummary = { id: "lecture/old", course: "原有課程", started_at: "", updated_at: "", has_transcript: true, has_notes: true, has_recording: false };
 const meeting: SessionSummary = { ...oldLecture, id: "meetings/one", course: "真實會議", work_type: "meeting", has_notes: false };
 const scroll = vi.fn();
+const views = ["live", "history", "lecture-sharing", "courses", "meeting-live", "meeting-history", "meeting-sharing", "meeting-settings", "local-settings"];
+
+function expectView(target: string) {
+  for (const view of views) {
+    expect(document.getElementById(view)!.closest("[hidden]") === null, view).toBe(view === target);
+  }
+  const grid = document.querySelector(".workspace-grid")!;
+  expect(grid.hasAttribute("hidden")).toBe(target !== "live" && target !== "history");
+  expect(grid.classList.contains("workspace-grid-single")).toBe(target === "live");
+}
 
 describe("workbench navigation", () => {
   beforeEach(() => {
@@ -39,7 +49,7 @@ describe("workbench navigation", () => {
   });
   afterEach(() => { cleanup(); vi.unstubAllGlobals(); });
 
-  it("keeps legacy lectures in the original document/history grid before sharing and courses", async () => {
+  it("shares one lecture document card between the full-width recording page and history", async () => {
     const { container } = render(<App />);
     await screen.findByText("舊逐字稿");
     expect(api.session).toHaveBeenCalledWith(oldLecture.id);
@@ -51,49 +61,142 @@ describe("workbench navigation", () => {
     expect(screen.getByRole("button", { name: "課堂筆記" })).toBeTruthy();
     expect(screen.getByRole("button", { name: /術語候選/ })).toBeTruthy();
     expect(screen.queryByRole("heading", { name: "本機裝置與診斷" })).toBeNull();
+    expectView("live");
+    expect(screen.queryByRole("button", { name: "執行課堂摘要" })).toBeNull();
+    const documentCard = container.querySelector(".content-card");
+    fireEvent.click(within(screen.getByRole("group", { name: "課堂工作台選單" })).getByRole("link", { name: "歷史紀錄" }));
+    expectView("history");
+    expect(container.querySelector(".content-card")).toBe(documentCard);
+    expect(screen.getByRole("button", { name: "執行課堂摘要" })).toBeTruthy();
   });
 
-  it("switches owner pages before scrolling and preserves lecture and meeting form state", async () => {
+  it("shows only the selected subpage and preserves lecture, history, course and meeting forms", async () => {
     const { container } = render(<App />);
     await screen.findByText("舊逐字稿");
     fireEvent.change(screen.getByRole("combobox", { name: "LLM總結方式" }), { target: { value: "none" } });
+    const lectureMenu = screen.getByRole("group", { name: "課堂工作台選單" });
+    fireEvent.click(within(lectureMenu).getByRole("link", { name: "歷史紀錄" }));
+    expectView("history");
+    fireEvent.change(screen.getByRole("combobox", { name: "補做或重做" }), { target: { value: "section" } });
+    fireEvent.change(screen.getByRole("textbox", { name: "段落時間" }), { target: { value: "00:05:00" } });
+    fireEvent.click(within(lectureMenu).getByRole("link", { name: "內網共享" }));
+    expectView("lecture-sharing");
+    fireEvent.click(within(lectureMenu).getByRole("link", { name: "課程設定" }));
+    expectView("courses");
+    fireEvent.change(screen.getByPlaceholderText("例如：資料結構"), { target: { value: "保留的課程名稱" } });
     const meetingMenu = screen.getByRole("group", { name: "會議工作台選單" });
     fireEvent.click(within(meetingMenu).getByRole("link", { name: "會議設定" }));
     expect(screen.getByRole("heading", { level: 1 }).textContent).toBe("會議工作台");
     expect(container.querySelector(".meeting-theme")).toBeTruthy();
     expect(window.location.hash).toBe("#meeting-settings");
-    expect(scroll.mock.instances.at(-1)).toBe(document.getElementById("meeting-settings"));
+    expectView("meeting-settings");
     fireEvent.change(screen.getByPlaceholderText("例如：系統設計討論"), { target: { value: "保留的會議名稱" } });
     fireEvent.click(screen.getByRole("link", { name: "本機設定" }));
+    expectView("local-settings");
     expect(screen.getByRole("heading", { level: 1 }).textContent).toBe("本機設定");
     expect(screen.getByRole("heading", { name: "本機裝置與診斷" })).toBeTruthy();
     expect(screen.queryByRole("button", { name: "逐字稿" })).toBeNull();
     fireEvent.click(screen.getByRole("link", { name: /^課堂工作台$/ }));
+    expectView("live");
     expect((screen.getByRole("combobox", { name: "LLM總結方式" }) as HTMLSelectElement).value).toBe("none");
     expect(container.querySelector(".meeting-theme")).toBeNull();
     fireEvent.click(within(meetingMenu).getByRole("link", { name: "內網共享" }));
-    expect(scroll.mock.instances.at(-1)).toBe(document.getElementById("meeting-sharing"));
+    expectView("meeting-sharing");
     expect((screen.getByPlaceholderText("例如：系統設計討論") as HTMLInputElement).value).toBe("保留的會議名稱");
+    fireEvent.click(within(meetingMenu).getByRole("link", { name: "歷史紀錄" }));
+    expectView("meeting-history");
+    fireEvent.click(within(meetingMenu).getByRole("link", { name: "會議錄音" }));
+    expectView("meeting-live");
+    fireEvent.change(screen.getByLabelText("預計參與人數（必填）"), { target: { value: "4" } });
+    fireEvent.click(within(meetingMenu).getByRole("link", { name: "會議設定" }));
+    expect((screen.getByPlaceholderText("例如：系統設計討論") as HTMLInputElement).value).toBe("保留的會議名稱");
+    fireEvent.click(screen.getByRole("link", { name: /^會議工作台$/ }));
+    expectView("meeting-live");
+    expect((screen.getByLabelText("預計參與人數（必填）") as HTMLInputElement).value).toBe("4");
+    fireEvent.click(within(lectureMenu).getByRole("link", { name: "課程設定" }));
+    expect((screen.getByPlaceholderText("例如：資料結構") as HTMLInputElement).value).toBe("保留的課程名稱");
+    fireEvent.click(within(lectureMenu).getByRole("link", { name: "歷史紀錄" }));
+    expect((screen.getByRole("textbox", { name: "段落時間" }) as HTMLInputElement).value).toBe("00:05:00");
+    fireEvent.click(within(lectureMenu).getByRole("link", { name: "課堂錄音" }));
+    expectView("live");
+    expect(window.scrollTo).toHaveBeenLastCalledWith({ top: 0 });
+    expect(scroll).not.toHaveBeenCalled();
     expect(api.start).not.toHaveBeenCalled();
     expect(api.stop).not.toHaveBeenCalled();
   });
 
-  it("restores deep links and browser history to the matching page", async () => {
-    window.history.replaceState(null, "", "#local-settings");
+  it.each(views)("opens the #%s deep link as an independent page", async (view) => {
+    window.history.replaceState(null, "", `#${view}`);
     render(<App />);
-    expect(screen.getByRole("heading", { level: 1 }).textContent).toBe("本機設定");
+    await waitFor(() => expect(api.session).toHaveBeenCalled());
+    expectView(view);
+    expect(window.scrollTo).toHaveBeenLastCalledWith({ top: 0 });
+    expect(scroll).not.toHaveBeenCalled();
+  });
+
+  it("restores subpages through browser back/forward, popstate and hashchange", async () => {
+    window.history.replaceState(null, "", "#meeting-history");
+    render(<App />);
+    await waitFor(() => expect(api.session).toHaveBeenCalled());
+    expectView("meeting-history");
+    fireEvent.click(within(screen.getByRole("group", { name: "課堂工作台選單" })).getByRole("link", { name: "內網共享" }));
+    expectView("lecture-sharing");
+    act(() => window.history.back());
+    await waitFor(() => expect(window.location.hash).toBe("#meeting-history"));
+    expectView("meeting-history");
+    act(() => window.history.forward());
+    await waitFor(() => expect(window.location.hash).toBe("#lecture-sharing"));
+    expectView("lecture-sharing");
     await act(async () => {
       window.history.replaceState(null, "", "#meeting-history");
       window.dispatchEvent(new PopStateEvent("popstate"));
     });
     expect(screen.getByRole("heading", { name: "會議結果與歷史" })).toBeTruthy();
-    expect(scroll.mock.instances.at(-1)).toBe(document.getElementById("meeting-history"));
+    expectView("meeting-history");
     await act(async () => {
       window.history.replaceState(null, "", "#history");
       window.dispatchEvent(new HashChangeEvent("hashchange"));
     });
     await waitFor(() => expect(screen.getByRole("heading", { level: 1 }).textContent).toBe("課堂工作台"));
-    expect(scroll.mock.instances.at(-1)).toBe(document.getElementById("history"));
+    expectView("history");
+    expect(scroll).not.toHaveBeenCalled();
+  });
+
+  it("reselects the running lecture when returning from an older history session", async () => {
+    const runningLecture = { ...oldLecture, id: "lecture/current", course: "目前課堂" };
+    vi.mocked(api.sessions).mockResolvedValue([oldLecture, runningLecture, meeting]);
+    vi.mocked(api.status).mockResolvedValue({ schema_version: 2, running: true, work_type: "lecture", session: "/outputs/lecture/current", status: { phase: "recording" } });
+    vi.mocked(api.session).mockImplementation(async (id) => ({ api_version: 1, session: id === runningLecture.id ? runningLecture : oldLecture,
+      transcript: { content: id === runningLecture.id ? "即時逐字稿" : "舊逐字稿", size_bytes: 12 }, notes: { content: "", size_bytes: 0 } }));
+    render(<App />);
+    await screen.findByText("即時逐字稿");
+    const menu = screen.getByRole("group", { name: "課堂工作台選單" });
+    fireEvent.click(within(menu).getByRole("link", { name: "歷史紀錄" }));
+    fireEvent.click(screen.getByRole("button", { name: /原有課程/ }));
+    await screen.findByText("舊逐字稿");
+    fireEvent.click(within(menu).getByRole("link", { name: "課堂錄音" }));
+    await screen.findByText("即時逐字稿");
+    expectView("live");
+    expect(api.session).toHaveBeenLastCalledWith(runningLecture.id);
+    expect(api.start).not.toHaveBeenCalled();
+    expect(api.stop).not.toHaveBeenCalled();
+  });
+
+  it("selects the lecture sharing target independently of the hidden history list", async () => {
+    const otherLecture = { ...oldLecture, id: "lecture/other", course: "另一堂課" };
+    vi.mocked(api.sessions).mockResolvedValue([meeting, oldLecture, otherLecture]);
+    window.history.replaceState(null, "", "#lecture-sharing");
+    render(<App />);
+    const selection = await screen.findByRole("combobox", { name: "分享場次" });
+    await screen.findByRole("option", { name: "另一堂課" });
+    expect((selection as HTMLSelectElement).value).toBe(oldLecture.id);
+    expect(within(selection).queryByRole("option", { name: "真實會議" })).toBeNull();
+    fireEvent.change(selection, { target: { value: otherLecture.id } });
+    await waitFor(() => expect(api.session).toHaveBeenLastCalledWith(otherLecture.id));
+    expect(api.termCandidates).toHaveBeenLastCalledWith(otherLecture.id);
+    expect(document.getElementById("history")!.hasAttribute("hidden")).toBe(true);
+    expect((selection as HTMLSelectElement).value).toBe(otherLecture.id);
+    expect(screen.getByText(`將分享目前選定場次：${otherLecture.id}`)).toBeTruthy();
   });
 
   it("keeps stop feedback and the background-work banner across pages without stopping twice", async () => {
@@ -117,6 +220,7 @@ describe("workbench navigation", () => {
     await screen.findByText("還沒有課堂紀錄。");
     expect(api.session).not.toHaveBeenCalled();
     expect(api.termCandidates).not.toHaveBeenCalled();
+    fireEvent.click(within(screen.getByRole("group", { name: "課堂工作台選單" })).getByRole("link", { name: "內網共享" }));
     expect(screen.getByRole("button", { name: "開啟分享" }).hasAttribute("disabled")).toBe(true);
   });
 
@@ -141,6 +245,7 @@ describe("workbench navigation", () => {
     expect(screen.getByText(/背景工作進行中：未知類型/)).toBeTruthy();
     expect(screen.queryByRole("button", { name: "回到工作台" })).toBeNull();
     fireEvent.click(screen.getByRole("link", { name: /^會議工作台$/ }));
+    fireEvent.click(within(screen.getByRole("group", { name: "會議工作台選單" })).getByRole("link", { name: "歷史紀錄" }));
     expect(screen.getByText(/尚無會議紀錄/)).toBeTruthy();
     expect(api.session).not.toHaveBeenCalled();
   });

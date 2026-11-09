@@ -54,12 +54,7 @@ export default function App() {
   }, []);
 
   useEffect(() => {
-    if (!window.location.hash) return;
-    if (navigation.target === "live" || navigation.target === "meeting-live") {
-      window.scrollTo({ top: 0 });
-      return;
-    }
-    document.getElementById(navigation.target)?.scrollIntoView({ block: "start" });
+    window.scrollTo({ top: 0 });
   }, [navigation]);
 
   useEffect(() => {
@@ -91,10 +86,10 @@ export default function App() {
   }, [data.status.running]);
 
   useEffect(() => {
-    if (runningId && lectureSessions.some((session) => session.id === runningId)) {
+    if (navigation.target === "live" && data.status.running && runningId && lectureSessions.some((session) => session.id === runningId)) {
       data.setSelectedId(runningId);
     }
-  }, [runningId, lectureSessions, data.setSelectedId]);
+  }, [runningId, lectureSessions, data.setSelectedId, navigation.target, data.status.running]);
 
   const stats = useMemo(() => [
     ["已處理音訊", formatDuration(data.status.status?.transcribed)],
@@ -132,12 +127,12 @@ export default function App() {
         {runningWorkbench && <button type="button" onClick={() => navigate(runningWorkbench === "meeting" ? { page: "meeting", target: "meeting-live" } : { page: "lecture", target: "live" })}>回到工作台</button>}
       </div>}
 
-      <div hidden={page !== "meeting"} id="meeting-live">
-        <MeetingWorkbench active={page === "meeting"} runtime={data.status} sessions={data.sessions} devices={data.devices} onChanged={data.refresh} />
+      <div hidden={page !== "meeting"}>
+        <MeetingWorkbench active={page === "meeting"} view={navigation.target} runtime={data.status} sessions={data.sessions} devices={data.devices} onChanged={data.refresh} />
       </div>
       <div hidden={page !== "lecture"}>
 
-      <section className={`hero ${data.status.running ? "running" : "idle"}`} id="live">
+      <section className={`hero ${data.status.running ? "running" : "idle"}`} id="live" hidden={navigation.target !== "live"}>
         <div className="hero-heading">
           <div className="live-orb"><span /><Icon name={data.status.mode === "file" ? "file" : "mic"} /></div>
           <div>
@@ -160,7 +155,7 @@ export default function App() {
         <RunPanel courses={data.courses} devices={data.devices} models={data.models} status={data.status} onChanged={data.refresh} onError={data.setError} />
       </section>
 
-      <div className="workspace-grid">
+      <div className={`workspace-grid${navigation.target === "live" ? " workspace-grid-single" : ""}`} hidden={navigation.target !== "live" && navigation.target !== "history"}>
         <section className="content-card">
           <div className="card-header">
             <div className="tabs">
@@ -178,7 +173,7 @@ export default function App() {
           </div>
         </section>
 
-        <aside className="history-card" id="history">
+        <aside className="history-card" id="history" hidden={navigation.target !== "history"}>
           <div className="card-title"><div><p className="eyebrow">LIBRARY</p><h2>{t.history}</h2></div><button title={t.refresh} onClick={() => void data.refreshSessions()}><Icon name="refresh" /></button></div>
           <div className="session-list">
             {data.loading && <p className="empty-list">正在載入…</p>}
@@ -196,14 +191,22 @@ export default function App() {
         </aside>
       </div>
 
-      <div id="lecture-sharing"><SharePanel selectedId={data.selectedId} /></div>
+      <div id="lecture-sharing" hidden={navigation.target !== "lecture-sharing"}>
+        <label className="meeting-share-selection"><span>分享場次</span><select value={data.selectedId || ""} onChange={(event) => data.setSelectedId(event.target.value)} disabled={!lectureSessions.length}>
+          {!lectureSessions.length && <option value="">目前沒有可分享的課堂場次</option>}
+          {lectureSessions.map((session) => <option key={session.id} value={session.id}>{session.course || session.id}</option>)}
+        </select></label>
+        <SharePanel selectedId={data.selectedId} />
+      </div>
 
+      <div hidden={navigation.target !== "courses"}>
       <CourseEditor
         courses={data.courses}
         onChanged={data.refresh}
         onError={data.setError}
         onMessage={setActionMessage}
       />
+      </div>
       </div>
       <div hidden={page !== "local-settings"}>
       <LocalSettings
