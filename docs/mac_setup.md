@@ -135,6 +135,8 @@ cd ~/lecture-notes
 git pull --ff-only
 ```
 
+想固定 `.venv` 的 Python 版本，這時先 `brew install uv`（沒裝也能升級）。有 uv 時第一次升級會重建一次 `.venv`；`.venv` 壞掉時也會自動重建。請先關閉 Web UI 再升級。
+
 之後只要：
 
 ```bash
