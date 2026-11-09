@@ -22,7 +22,7 @@ class Stream {
   listeners = new Map<string, (event: MessageEvent<string>) => void>();
   constructor() { Stream.current = this; }
   addEventListener(type: string, listener: (event: MessageEvent<string>) => void) { this.listeners.set(type, listener); }
-  close() {}
+  close = vi.fn();
   emit(type: string, value: unknown) { this.listeners.get(type)?.({ data: JSON.stringify(value) } as MessageEvent<string>); }
 }
 
@@ -72,17 +72,45 @@ describe("meeting workbench controls", () => {
     vi.mocked(api.createMeeting).mockResolvedValue({ api_version: 1, id: "設計", file: "設計.toml", content: "[meeting]" });
     vi.mocked(api.meeting).mockResolvedValue({ api_version: 1, id: "team", file: "team.toml", content: '[meeting]\nname="原設定"' });
     vi.mocked(api.updateMeeting).mockResolvedValue({ api_version: 1, id: "team", file: "team.toml", content: '[meeting]\nname="新設定"' });
-    render(<MeetingWorkbench runtime={idle} />);
+    render(<MeetingWorkbench view="meeting-settings" runtime={idle} />);
     fireEvent.change(screen.getByPlaceholderText("例如：系統設計討論"), { target: { value: "設計" } });
     fireEvent.click(screen.getByRole("button", { name: "建立會議設定" }));
     await waitFor(() => expect(api.createMeeting).toHaveBeenCalledWith("設計", '[meeting]\nname = "設計"\n'));
     await screen.findByText("會議設定已建立。");
-    fireEvent.click(screen.getByText("編輯會議設定"));
     fireEvent.click(screen.getByRole("button", { name: "載入設定內容" }));
     const editor = await screen.findByLabelText("會議 TOML 設定");
     fireEvent.change(editor, { target: { value: '[meeting]\nname="新設定"' } });
     fireEvent.click(screen.getByRole("button", { name: "儲存會議設定" }));
     await waitFor(() => expect(api.updateMeeting).toHaveBeenCalledWith("team", '[meeting]\nname="新設定"'));
+  });
+
+  it("shares configuration selection with recording and preserves TOML drafts across subpages", async () => {
+    vi.mocked(api.meetings).mockResolvedValue([{ id: "team", file: "team.toml", name: "團隊" }, { id: "design", file: "design.toml", name: "設計" }]);
+    vi.mocked(api.meeting).mockImplementation(async (id) => ({ api_version: 1, id, file: `${id}.toml`, content: `[meeting]\nname="${id}"` }));
+    vi.mocked(api.updateMeeting).mockResolvedValue({ api_version: 1, id: "design", file: "design.toml", content: '[meeting]\nname="已編輯"' });
+    const { rerender } = render(<MeetingWorkbench view="meeting-settings" runtime={idle} />);
+    await screen.findByRole("option", { name: "團隊" });
+    expect(screen.queryByRole("button", { name: "開始錄音" })).toBeNull();
+    expect(document.querySelector("#meeting-settings details")).toBeNull();
+    fireEvent.click(screen.getByRole("button", { name: "載入設定內容" }));
+    await waitFor(() => expect((screen.getByLabelText("會議 TOML 設定") as HTMLTextAreaElement).value).toContain('name="team"'));
+    fireEvent.change(screen.getByLabelText("要編輯的會議設定"), { target: { value: "design" } });
+    expect(screen.queryByLabelText("會議 TOML 設定")).toBeNull();
+    fireEvent.click(screen.getByRole("button", { name: "載入設定內容" }));
+    await waitFor(() => expect((screen.getByLabelText("會議 TOML 設定") as HTMLTextAreaElement).value).toContain('name="design"'));
+    fireEvent.change(screen.getByLabelText("會議 TOML 設定"), { target: { value: '[meeting]\nname="已編輯"' } });
+    rerender(<MeetingWorkbench view="meeting-live" runtime={idle} />);
+    expect((screen.getByLabelText("會議設定") as HTMLSelectElement).value).toBe("design");
+    expect(screen.queryByRole("button", { name: "儲存會議設定" })).toBeNull();
+    rerender(<MeetingWorkbench view="meeting-sharing" runtime={idle} />);
+    expect(screen.getByRole("heading", { name: "分享會議逐字稿" })).toBeTruthy();
+    rerender(<MeetingWorkbench view="meeting-settings" runtime={idle} />);
+    expect((screen.getByLabelText("會議 TOML 設定") as HTMLTextAreaElement).value).toBe('[meeting]\nname="已編輯"');
+    fireEvent.click(screen.getByRole("button", { name: "儲存會議設定" }));
+    await waitFor(() => expect(api.updateMeeting).toHaveBeenCalledExactlyOnceWith("design", '[meeting]\nname="已編輯"'));
+    await screen.findByText("會議設定已儲存。");
+    expect(api.startMeeting).not.toHaveBeenCalled();
+    expect(api.stop).not.toHaveBeenCalled();
   });
 
   it("reports startup rejection and never fabricates recording state", async () => {
@@ -97,7 +125,7 @@ describe("meeting workbench controls", () => {
   });
 
   it("shows the source, explicit empty result and starts then cancels diarization", async () => {
-    const { rerender } = render(<MeetingWorkbench runtime={idle} sessions={[summary]} />);
+    const { rerender } = render(<MeetingWorkbench view="meeting-history" runtime={idle} sessions={[summary]} />);
     await screen.findByText("真實原稿");
     expect(screen.getByText(/來源：匯入 · meeting.ogg · 2:00/)).toBeTruthy();
     expect(screen.getByText(/尚未辨識發言者；原逐字稿已保留/)).toBeTruthy();
@@ -110,12 +138,19 @@ describe("meeting workbench controls", () => {
     const live = screen.getByRole("region", { name: "目前會議工作" });
     expect(within(live).getByText("要求 3 位 · 已找到 2 個代號")).toBeTruthy();
     expect(within(live).queryByRole("progressbar")).toBeNull();
+    const retranscribing: RuntimeStatus = { ...running, status: { phase: "diarizing", diarization: { stage: "retranscription", processed_seconds: 60, total_seconds: 120, requested_speakers: 3, speakers_found: 2 } } };
+    rerender(<MeetingWorkbench runtime={retranscribing} sessions={[summary]} />);
+    expect(within(live).getByRole("progressbar", { name: "會議辨識進度" }).getAttribute("aria-valuenow")).toBe("50");
+    rerender(<MeetingWorkbench view="meeting-history" runtime={retranscribing} sessions={[summary]} />);
+    expect(screen.queryByRole("progressbar")).toBeNull();
+    expect(screen.queryByRole("button", { name: "正常取消" })).toBeNull();
+    rerender(<MeetingWorkbench runtime={retranscribing} sessions={[summary]} />);
     fireEvent.click(screen.getByRole("button", { name: "正常取消" }));
     await waitFor(() => expect(api.stop).toHaveBeenCalledExactlyOnceWith(false));
     await screen.findByRole("button", { name: "正在停止…" });
     fireEvent.click(screen.getByRole("button", { name: "強制停止" }));
     await waitFor(() => expect(api.stop).toHaveBeenLastCalledWith(true));
-    rerender(<MeetingWorkbench runtime={idle} sessions={[{ ...summary, diarization_status: { phase: "aborted", stop_reason: "user" } }]} />);
+    rerender(<MeetingWorkbench view="meeting-history" runtime={idle} sessions={[{ ...summary, diarization_status: { phase: "aborted", stop_reason: "user" } }]} />);
     await screen.findByRole("button", { name: "重跑辨識" });
     fireEvent.click(screen.getByRole("button", { name: "重跑辨識" }));
     await waitFor(() => expect(api.diarize).toHaveBeenCalledTimes(2));
@@ -125,11 +160,26 @@ describe("meeting workbench controls", () => {
   it("keeps stop state while hidden, allows force and follows live transcript SSE", async () => {
     const runtime: RuntimeStatus = { schema_version: 2, running: true, pid: 10, work_type: "meeting", mode: "live", session: "/output/meetings/one", status: { phase: "recording" } };
     const { rerender } = render(<MeetingWorkbench runtime={runtime} sessions={[summary]} />);
-    await screen.findByText("真實原稿");
+    const live = screen.getByRole("region", { name: "目前會議工作" });
+    await within(live).findByText("真實原稿");
+    expect(document.getElementById("meeting-history")!.hasAttribute("hidden")).toBe(true);
+    expect(screen.queryByRole("button", { name: "開始辨識" })).toBeNull();
+    const stream = Stream.current;
     act(() => Stream.current.emit("content", { target: "transcript", operation: "append", content: "持續發言", size_bytes: 30 }));
-    await screen.findByText("真實原稿持續發言");
+    await within(live).findByText("真實原稿持續發言");
     fireEvent.click(screen.getByRole("button", { name: "正常停止" }));
     await screen.findByRole("button", { name: "正在停止…" });
+    rerender(<MeetingWorkbench view="meeting-history" runtime={runtime} sessions={[summary]} />);
+    expect(live.hasAttribute("hidden")).toBe(true);
+    expect(screen.queryByRole("button", { name: "強制停止" })).toBeNull();
+    expect(screen.getByRole("button", { name: "開始辨識" }).hasAttribute("disabled")).toBe(true);
+    rerender(<MeetingWorkbench view="meeting-sharing" runtime={runtime} sessions={[summary]} />);
+    act(() => stream.emit("content", { target: "transcript", operation: "append", content: "跨頁更新", size_bytes: 45 }));
+    rerender(<MeetingWorkbench runtime={runtime} sessions={[summary]} />);
+    expect(Stream.current).toBe(stream);
+    expect(stream.close).not.toHaveBeenCalled();
+    await within(live).findByText("真實原稿持續發言跨頁更新");
+    expect(api.startMeeting).not.toHaveBeenCalled();
     rerender(<MeetingWorkbench active={false} runtime={runtime} sessions={[summary]} />);
     rerender(<MeetingWorkbench runtime={runtime} sessions={[summary]} />);
     await waitFor(() => expect(screen.getByRole("button", { name: "強制停止" }).hasAttribute("disabled")).toBe(false));
@@ -143,7 +193,7 @@ describe("meeting workbench controls", () => {
   it("renders real 10/4 speakers, collapses short speakers and replaces a generation through SSE", async () => {
     const speakers = Array.from({ length: 10 }, (_, index) => ({ id: `S${String(index + 1).padStart(2, "0")}`, speech_seconds: index < 4 ? 100 : 1, segment_count: 1 }));
     vi.mocked(api.session).mockResolvedValue({ ...detail, speaker_transcript: { content: "S01: 真實發言", size_bytes: 16 }, speakers: { actual_speakers: 10, speakers } });
-    render(<MeetingWorkbench runtime={idle} sessions={[summary]} />);
+    render(<MeetingWorkbench view="meeting-history" runtime={idle} sessions={[summary]} />);
     await screen.findByText("4 位主要發言者");
     expect(screen.queryByText("S05")).toBeNull();
     fireEvent.click(screen.getByText("其他短發言 · 6 位 展開"));
@@ -158,10 +208,31 @@ describe("meeting workbench controls", () => {
 
   it("never offers another work type for sharing and disables rerun without a source", async () => {
     vi.mocked(api.session).mockResolvedValue({ ...detail, source: undefined, session: { ...summary, has_recording: false } });
-    render(<MeetingWorkbench runtime={idle} sessions={[{ ...summary, has_recording: false }, { ...summary, id: "lecture/one", work_type: "lecture" }]} />);
+    const sessions = [{ ...summary, has_recording: false }, { ...summary, id: "lecture/one", course: "課堂紀錄", work_type: "lecture" }];
+    const { rerender } = render(<MeetingWorkbench view="meeting-history" runtime={idle} sessions={sessions} />);
     await screen.findByText("真實原稿");
-    expect(screen.getByText("分享目標：meetings/one")).toBeTruthy();
-    expect(screen.queryByRole("option", { name: "lecture/one" })).toBeNull();
     expect(screen.getByRole("button", { name: "開始辨識" }).hasAttribute("disabled")).toBe(true);
+    rerender(<MeetingWorkbench view="meeting-sharing" runtime={idle} sessions={sessions} />);
+    expect(screen.getByText("分享目標：meetings/one")).toBeTruthy();
+    expect(screen.getByRole("option", { name: "設計會議" })).toBeTruthy();
+    expect(screen.queryByRole("option", { name: "課堂紀錄" })).toBeNull();
+  });
+
+  it("offers the current session when returning to live after viewing an older meeting", async () => {
+    const old = { ...summary, id: "meetings/old", course: "舊會議" };
+    const sessions = [summary, old];
+    const runtime: RuntimeStatus = { schema_version: 2, running: true, work_type: "meeting", session: "/output/meetings/one", status: { phase: "recording" } };
+    vi.mocked(api.session).mockImplementation(async (id) => id === old.id ? { ...detail, session: old, transcript: { content: "舊會議原稿", size_bytes: 15 } } : detail);
+    const { rerender } = render(<MeetingWorkbench view="meeting-history" runtime={runtime} sessions={sessions} />);
+    await within(document.getElementById("meeting-history")!).findByText("真實原稿");
+    fireEvent.click(screen.getByRole("button", { name: /舊會議/ }));
+    await screen.findByText("舊會議原稿");
+    rerender(<MeetingWorkbench runtime={runtime} sessions={sessions} />);
+    const live = screen.getByRole("region", { name: "目前會議工作" });
+    expect(within(live).queryByText("舊會議原稿")).toBeNull();
+    fireEvent.click(within(live).getByRole("button", { name: "查看目前場次" }));
+    await within(live).findByText("真實原稿");
+    expect(api.startMeeting).not.toHaveBeenCalled();
+    expect(api.stop).not.toHaveBeenCalled();
   });
 });

@@ -7,13 +7,14 @@ import { MeetingSessionPanel } from "./MeetingSessionPanel";
 
 interface Props {
   active?: boolean;
+  view?: string;
   runtime: RuntimeStatus;
   sessions?: SessionSummary[];
   devices?: DeviceInventory;
   onChanged?: () => Promise<unknown>;
 }
 
-export function MeetingWorkbench({ active = true, runtime, sessions = [], devices, onChanged }: Props) {
+export function MeetingWorkbench({ active = true, view = "meeting-live", runtime, sessions = [], devices, onChanged }: Props) {
   const [meetings, setMeetings] = useState<Meeting[]>([]);
   const [meetingId, setMeetingId] = useState("");
   const [loading, setLoading] = useState(true);
@@ -89,13 +90,9 @@ export function MeetingWorkbench({ active = true, runtime, sessions = [], device
   return <div className="meeting-workbench">
     {error && <p className="notice error" role="alert">{error}</p>}
     {message && <p className="notice" role="status">{message}</p>}
-    <section className="meeting-card" id="meeting-settings">
+    <section className="meeting-card" id="meeting-live" hidden={view !== "meeting-live"}>
       <div className="meeting-card-heading"><div><p className="eyebrow">MEETING SETUP</p><h2>開始一場會議</h2></div></div>
       <p className="meeting-help">錄音或匯入後保留來源與原逐字稿；會後可另行辨識發言者。代號只在本場會議內有效。</p>
-      <form onSubmit={create} className="meeting-fields">
-        <label><span>新會議名稱</span><input value={name} onChange={(event) => setName(event.target.value)} placeholder="例如：系統設計討論" required maxLength={100} /></label>
-        <button className="button secondary" disabled={!!pending || !name.trim()} type="submit">建立會議設定</button>
-      </form>
       <form onSubmit={start}>
         <div className="meeting-fields">
           <label><span>會議設定</span><select value={selectedConfig?.id || ""} required disabled={loading || !!pending}
@@ -124,8 +121,20 @@ export function MeetingWorkbench({ active = true, runtime, sessions = [], device
         </button>
       </form>
       {runtime.running && <p className="meeting-help">目前已有工作進行中；兩個工作台共用單一工作限制。</p>}
-      {selectedConfig && <details>
-        <summary>編輯會議設定</summary>
+    </section>
+    <section className="meeting-card" id="meeting-settings" hidden={view !== "meeting-settings"}>
+      <div className="meeting-card-heading"><div><p className="eyebrow">MEETING SETTINGS</p><h2>會議設定</h2></div></div>
+      <form onSubmit={create} className="meeting-fields">
+        <label><span>新會議名稱</span><input value={name} onChange={(event) => setName(event.target.value)} placeholder="例如：系統設計討論" required maxLength={100} /></label>
+        <button className="button secondary" disabled={!!pending || !name.trim()} type="submit">建立會議設定</button>
+      </form>
+      <label className="meeting-share-selection"><span>要編輯的會議設定</span><select value={selectedConfig?.id || ""} disabled={loading || !!pending}
+        onChange={(event) => { setMeetingId(event.target.value); setContent(undefined); }}>
+        {!validMeetings.length && <option value="">{loading ? "載入中…" : "請先建立會議設定"}</option>}
+        {meetings.map((meeting) => <option key={meeting.id} value={meeting.id} disabled={!!meeting.error}>{meeting.name || meeting.id}{meeting.error ? "（設定有誤）" : ""}</option>)}
+      </select></label>
+      {selectedConfig && <div>
+        <h3>編輯會議設定</h3>
         <button className="button secondary" disabled={!!pending} onClick={() => void action("load-config", async () => { setContent((await api.meeting(selectedConfig.id)).content); })}>載入設定內容</button>
         {content !== undefined && <form onSubmit={(event) => {
           event.preventDefault();
@@ -136,12 +145,12 @@ export function MeetingWorkbench({ active = true, runtime, sessions = [], device
           <label><span>會議 TOML 設定</span><textarea rows={10} value={content} onChange={(event) => setContent(event.target.value)} /></label>
           <button type="submit" className="button secondary" disabled={!!pending}>儲存會議設定</button>
         </form>}
-      </details>}
+      </div>}
     </section>
-    <MeetingSessionPanel active={active} runtime={runtime} sessions={meetingSessions} selectedId={selectedMeeting?.id} onSelect={setSelectedMeetingId}
+    <MeetingSessionPanel active={active} view={view} runtime={runtime} sessions={meetingSessions} selectedId={selectedMeeting?.id} onSelect={setSelectedMeetingId}
       pending={!!pending} stopMode={stopMode} onStop={(force) => void stop(force)}
       onDiarize={(id, count) => void action("diarize", async () => { await api.diarize(id, count); setMessage("會後辨識已啟動。"); })} />
-    <section className="meeting-card" id="meeting-sharing">
+    <section className="meeting-card" id="meeting-sharing" hidden={view !== "meeting-sharing"}>
       <div className="meeting-card-heading"><div><p className="eyebrow">LAN SHARING</p><h2>分享會議逐字稿</h2></div></div>
       <p className="meeting-help">分享選定場次的原逐字稿與帶發言者逐字稿。</p>
       <label className="meeting-share-selection"><span>分享場次</span><select value={selectedMeeting?.id || ""} onChange={(event) => setSelectedMeetingId(event.target.value)} disabled={!meetingSessions.length}>
