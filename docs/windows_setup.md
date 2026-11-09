@@ -143,7 +143,7 @@ python lec new 計算機概論 --from example
 一鍵安裝已經建好 UI。手動安裝的話需要 Node.js 22.22+，第一次使用時：
 
 ```bat
-python upgrade.py --skip-engines
+upgrade --skip-engines
 ```
 
 啟動：
@@ -163,17 +163,17 @@ cd /d %USERPROFILE%\lecture-notes
 git pull --ff-only
 ```
 
-之後只要：
+之後只要（PowerShell 打 `./upgrade`）：
 
 ```bat
-python upgrade.py
+upgrade
 ```
 
 它會更新 Git checkout、依 `engines.lock` 編譯引擎、更新 `.venv` 與 Web UI，預設也會裝會議發言者辨識的依賴與模型（約 50MB）。
 
-- 只用逐字稿或會議功能、不裝 llama.cpp：`python upgrade.py --whisper-only`（只處理 whisper.cpp；它已編好時不需要 cmake 等編譯工具）
+- 只用逐字稿或會議功能、不裝 llama.cpp：`upgrade --whisper-only`（只處理 whisper.cpp；它已編好時不需要 cmake 等編譯工具）
 - 不需要會議功能：加 `--skip-diarization`（說明見 [diarize-install.md](diarize-install.md)）
-- 其他選項：`python upgrade.py --help`
+- 其他選項：`upgrade --help`
 
 只接受 fast-forward 更新；tracked 檔案有未提交修改、或還有課程在執行時會先停止。
 不會覆寫 `.gitignore` 保護的課程設定、本機設定、模型、錄音或輸出。

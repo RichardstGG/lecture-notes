@@ -16,6 +16,9 @@ import subprocess
 import sys
 from pathlib import Path
 
+from core import platform as P
+
+P.force_utf8()
 
 ROOT = Path(__file__).resolve().parent
 MIN_PYTHON = (3, 11)
@@ -59,8 +62,8 @@ def update_checkout():
         # 這時不該替使用者決定要拉哪個分支，把兩條路都講清楚。
         raise UpgradeError(
             "目前是 detached HEAD，不知道要更新哪個分支，所以沒有拉取程式碼。\n"
-            "  要更新到最新版：git switch main 後再執行 upgrade.py\n"
-            "  要固定在目前這個 commit、只更新引擎與依賴：python3 upgrade.py --skip-pull"
+            "  要更新到最新版：git switch main 後再執行 ./upgrade（Windows cmd：upgrade）\n"
+            "  要固定在目前這個 commit、只更新引擎與依賴：./upgrade --skip-pull"
         )
     changes = git_output("status", "--porcelain", "--untracked-files=no")
     if changes:

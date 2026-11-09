@@ -116,11 +116,11 @@ lec new 計算機概論 --from example
 
 ```bash
 cd ~/lecture-notes
-python3 upgrade.py --skip-engines
+./upgrade --skip-engines
 lec --start-ui
 ```
 
-然後開啟 <http://127.0.0.1:8765>。`--skip-engines` 是因為前面已編好引擎；之後日常升級直接 `python3 upgrade.py`。
+然後開啟 <http://127.0.0.1:8765>。`--skip-engines` 是因為前面已編好引擎；之後日常升級直接 `./upgrade`。
 UI 的操作說明見 README 的「[Web UI](../README.md#web-ui)」。
 
 ## 升級
@@ -135,14 +135,14 @@ git pull --ff-only
 之後只要：
 
 ```bash
-python3 upgrade.py
+./upgrade
 ```
 
 它會更新 Git checkout、依 `engines.lock` 編譯引擎、更新 `.venv` 與 Web UI，預設也會裝會議發言者辨識的依賴與模型（約 50MB）。
 
-- 只用逐字稿或會議功能、不裝 llama.cpp：`python3 upgrade.py --whisper-only`（只處理 whisper.cpp；它已編好時不需要 cmake 等編譯工具）
+- 只用逐字稿或會議功能、不裝 llama.cpp：`./upgrade --whisper-only`（只處理 whisper.cpp；它已編好時不需要 cmake 等編譯工具）
 - 不需要會議功能：加 `--skip-diarization`（說明見 [diarize-install.md](diarize-install.md)）
-- 其他選項：`python3 upgrade.py --help`
+- 其他選項：`./upgrade --help`
 
 只接受 fast-forward 更新；tracked 檔案有未提交修改、或還有課程在執行時會先停止。
 不會覆寫 `.gitignore` 保護的課程設定、本機設定、模型、錄音或輸出。

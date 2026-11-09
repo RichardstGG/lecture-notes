@@ -413,6 +413,7 @@ lec meeting diarize outputs/meetings/週會_20261015_140000 --speakers 4
 ├─ linux_setup.sh / mac_setup.command    setup.py 的平台入口
 ├─ windows_setup.bat                     全新 Windows：準備 Python 並 setup.py --provision
 ├─ setup_engines.py              取得與編譯引擎（含發言者辨識模型）
+├─ upgrade / upgrade.cmd         一個指令升級（upgrade.py 的平台入口）
 ├─ upgrade.py                    更新既有安裝並重新編譯
 ├─ requirements-diarize.txt      發言者辨識的 pip 依賴（裝進 .venv）
 ├─ samples/                      8 分鐘範例音檔、講稿與參考輸出

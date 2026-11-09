@@ -1,6 +1,8 @@
 """Tests for the cross-platform one-command upgrade workflow."""
 import contextlib
 import io
+import os
+import shutil
 import subprocess
 import sys
 import tempfile
@@ -154,6 +156,25 @@ class UpgradeTests(unittest.TestCase):
         run.assert_called_once_with([
             sys.executable, self.root / "upgrade.py", "--skip-pull", "--whisper-only",
         ])
+
+
+class LauncherTests(unittest.TestCase):
+    def test_launcher_forwards_arguments_and_exit_code(self):
+        name = "upgrade.cmd" if os.name == "nt" else "upgrade"
+        with tempfile.TemporaryDirectory() as tmp:
+            # 路徑含空白：Windows 使用者資料夾常見，入口要正確加引號。
+            folder = Path(tmp) / "a dir"
+            folder.mkdir()
+            shutil.copy2(Path(U.__file__).with_name(name), folder)
+            (folder / "upgrade.py").write_text(
+                "import sys\nprint(sys.argv[1:])\nsys.exit(7)\n", encoding="utf-8",
+            )
+            result = subprocess.run(
+                [str(folder / name), "--skip-ui", "a b"], capture_output=True, text=True,
+            )
+
+        self.assertEqual(result.returncode, 7, result.stderr)
+        self.assertIn("['--skip-ui', 'a b']", result.stdout)
 
 
 if __name__ == "__main__":
