@@ -41,6 +41,7 @@ RUNTIME_TOOLS = {
     "cmake": ("cmake", True, "編譯引擎"),
     "opencc": ("opencc", False, "轉成台灣繁體用語"),
     "pactl": ("pactl", False, "列出麥克風"),
+    "uv": ("uv", False, "固定 .venv 的 Python 與套件版本"),
 }
 
 # key → 各套件管理器的套件名稱。只寫有實際依據的（apt = Debian/Ubuntu，見 docs/linux_setup.md
@@ -55,6 +56,9 @@ PACKAGES = {
     "opencc": {"apt": ["opencc"], "brew": ["opencc"],
                "notes": {"winget": "Windows 沒有現成套件，可略過（只影響繁體用語轉換）"}},
     "pactl": {"apt": ["pulseaudio-utils"]},
+    "uv": {"brew": ["uv"], "winget": ["astral-sh.uv"],
+           "note": "安裝方式見 https://docs.astral.sh/uv/getting-started/installation/（可略過，"
+                   "但 .venv 會跟著系統 Python 變動）"},
     "cxx": {"apt": ["build-essential", "pkg-config"],
             "notes": {"brew": "執行 xcode-select --install（Command Line Tools，不是 brew 套件）"}},
     "glslc": {"apt": ["glslc"]},

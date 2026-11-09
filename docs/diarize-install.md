@@ -14,7 +14,7 @@ python3 upgrade.py
 | 步驟 | 內容 | 大小 |
 |---|---|---|
 | 1 | 確保專案 `.venv` 存在 | — |
-| 2 | `.venv/bin/python -m pip install -r requirements-diarize.txt` | 約 15 MB（`sherpa-onnx` 4.4 MB ＋ `sherpa-onnx-core` 10.6 MB） |
+| 2 | 依 `requirements.lock` 安裝 `requirements-diarize.txt`（有 uv 用 `uv pip install`，否則用 `.venv` 的 pip） | 約 15 MB（`sherpa-onnx` 4.4 MB ＋ `sherpa-onnx-core` 10.6 MB） |
 | 3 | `python3 setup_engines.py diarize` 取得兩個模型到 `models/` | 約 35 MB |
 
 只要模型、不碰 pip：`python3 setup_engines.py diarize`。

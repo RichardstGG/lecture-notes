@@ -11,6 +11,7 @@ itself before the project virtual environment exists.
 import argparse
 import json
 import os
+import re
 import shutil
 import subprocess
 import sys
@@ -22,6 +23,7 @@ P.force_utf8()
 
 ROOT = Path(__file__).resolve().parent
 MIN_PYTHON = (3, 11)
+UV_PYTHON = "3.13"   # .venv 用 uv 管理的這個版本，brew 等系統套件升級不會動到它
 
 
 class UpgradeError(Exception):
@@ -108,19 +110,52 @@ def ensure_no_active_run():
         raise UpgradeError(f"目前仍有課程在執行（{course}）；請先正常停止後再升級")
 
 
+def venv_ready(python, uv):
+    """直譯器要真的跑得起來；有 uv 時還要是 uv 建的固定版本，舊 venv 趁升級換掉。"""
+    try:
+        if subprocess.run([str(python), "-c", ""], capture_output=True).returncode != 0:
+            return False
+    except OSError:
+        return False
+    if not uv:
+        return True
+    try:
+        config = (ROOT / ".venv" / "pyvenv.cfg").read_text(encoding="utf-8")
+    except OSError:
+        return False
+    return (re.search(r"^uv = ", config, re.M) is not None and re.search(
+        rf"^version_info = {re.escape(UV_PYTHON)}(\.|$)", config, re.M) is not None)
+
+
 def ensure_venv():
     python = venv_python()
-    if not python.is_file():
-        step("建立 Python virtual environment")
-        run([sys.executable, "-m", "venv", ROOT / ".venv"])
+    uv = shutil.which("uv")
+    if venv_ready(python, uv):
+        return python
+    if (ROOT / ".venv").exists():
+        ensure_no_active_run()    # 重建會清掉工作中可能正在用的直譯器
+    step("建立 Python virtual environment")
+    # 一定要 --clear：python -m venv 不會修斷掉的符號連結，而且還回傳成功。
+    if uv:
+        run([uv, "venv", "--managed-python", "--python", UV_PYTHON,
+             "--seed", "--clear", ROOT / ".venv"])
+    else:
+        run([sys.executable, "-m", "venv", "--clear", ROOT / ".venv"])
     return python
+
+
+def pip_install(python, requirements):
+    """uv 與 pip 共用 requirements.lock，兩條路裝到的版本才會一樣。"""
+    uv = shutil.which("uv")
+    installer = [uv, "pip", "install", "--python", python] if uv else [python, "-m", "pip", "install"]
+    run([*installer, "-r", requirements, "-c", ROOT / "requirements.lock"])
 
 
 def install_diarization():
     """會議發言者辨識：sherpa-onnx 進專案 .venv，兩個模型進 models/（驗證 SHA-256）。"""
     python = ensure_venv()
     step("安裝發言者辨識依賴（sherpa-onnx）")
-    run([python, "-m", "pip", "install", "-r", ROOT / "requirements-diarize.txt"])
+    pip_install(python, ROOT / "requirements-diarize.txt")
     step("取得發言者辨識模型")
     run([sys.executable, ROOT / "setup_engines.py", "diarize"])
 
@@ -128,7 +163,7 @@ def install_diarization():
 def install_ui():
     python = ensure_venv()
     step("更新 UI backend dependencies")
-    run([python, "-m", "pip", "install", "-r", ROOT / "ui/backend/requirements.txt"])
+    pip_install(python, ROOT / "ui/backend/requirements.txt")
 
     npm = shutil.which("npm")
     if not npm:
