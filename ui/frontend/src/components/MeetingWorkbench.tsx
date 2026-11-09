@@ -4,6 +4,7 @@ import type { AudioUpload, DeviceInventory, Meeting, RuntimeStatus, SessionSumma
 import { sessionIdFromPath } from "../utils";
 import { SharePanel } from "./SharePanel";
 import { MeetingSessionPanel } from "./MeetingSessionPanel";
+import { ConfigCombobox } from "./ConfigCombobox";
 
 interface Props {
   active?: boolean;
@@ -55,16 +56,20 @@ export function MeetingWorkbench({ active = true, view = "meeting-live", runtime
 
   async function action(kind: string, run: () => Promise<unknown>) {
     setPending(kind); setError(undefined); setMessage(undefined);
-    try { await run(); await onChanged?.(); }
-    catch (reason) { setError(reason instanceof Error ? reason.message : "無法完成會議操作"); }
+    try { await run(); await onChanged?.(); return true; }
+    catch (reason) { setError(reason instanceof Error ? reason.message : "無法完成會議操作"); return false; }
     finally { setPending(undefined); }
   }
 
   async function create(event: FormEvent) {
     event.preventDefault();
     if (!name.trim()) return;
-    await action("create", async () => {
-      const result = await api.createMeeting(name.trim(), `[meeting]\nname = ${JSON.stringify(name.trim())}\n`);
+    await createMeeting(name.trim());
+  }
+
+  async function createMeeting(name: string) {
+    return action("create", async () => {
+      const result = await api.createMeeting(name, `[meeting]\nname = ${JSON.stringify(name)}\n`);
       setMeetings(await api.meetings()); setMeetingId(result.id); setContent(undefined); setName("");
       setMessage("會議設定已建立。");
     });
@@ -72,7 +77,7 @@ export function MeetingWorkbench({ active = true, view = "meeting-live", runtime
 
   async function start(event: FormEvent) {
     event.preventDefault();
-    if (!selectedConfig || !validSpeakers || runtime.running || (mode === "file" && !uploaded)) return;
+    if (pending || !selectedConfig || selectedConfig.error || !validSpeakers || runtime.running || (mode === "file" && !uploaded)) return;
     await action("start", async () => {
       await api.startMeeting({ meeting_id: selectedConfig.id, speakers: Number(speakers),
         ...(mode === "file" ? { input_file: uploaded!.path, original_name: uploaded!.name } : source ? { source } : {}),
@@ -95,11 +100,9 @@ export function MeetingWorkbench({ active = true, view = "meeting-live", runtime
       <p className="meeting-help">錄音或匯入後保留來源與原逐字稿；會後可另行辨識發言者。代號只在本場會議內有效。</p>
       <form onSubmit={start}>
         <div className="meeting-fields">
-          <label><span>會議設定</span><select value={selectedConfig?.id || ""} required disabled={loading || !!pending}
-            onChange={(event) => { setMeetingId(event.target.value); setContent(undefined); }}>
-            {!validMeetings.length && <option value="">{loading ? "載入中…" : "請先建立會議設定"}</option>}
-            {meetings.map((meeting) => <option key={meeting.id} value={meeting.id} disabled={!!meeting.error}>{meeting.name || meeting.id}{meeting.error ? "（設定有誤）" : ""}</option>)}
-          </select></label>
+          <label><span>會議設定</span><ConfigCombobox label="會議設定" items={meetings} value={selectedConfig?.id || ""} disabled={loading || !!pending}
+            placeholder={loading ? "載入中…" : "選擇或輸入會議設定"}
+            onSelect={(id) => { setMeetingId(id); setContent(undefined); }} onCreate={createMeeting} /></label>
           <label><span>預計參與人數（必填）</span><input type="number" min="1" max="30" step="1" required value={speakers} onChange={(event) => setSpeakers(event.target.value)} /></label>
           <label><span>輸入方式</span><select value={mode} onChange={(event) => setMode(event.target.value as "live" | "file")} disabled={!!pending}>
             <option value="live">現場錄音</option><option value="file">匯入音檔</option>
@@ -128,11 +131,9 @@ export function MeetingWorkbench({ active = true, view = "meeting-live", runtime
         <label><span>新會議名稱</span><input value={name} onChange={(event) => setName(event.target.value)} placeholder="例如：系統設計討論" required maxLength={100} /></label>
         <button className="button secondary" disabled={!!pending || !name.trim()} type="submit">建立會議設定</button>
       </form>
-      <label className="meeting-share-selection"><span>要編輯的會議設定</span><select value={selectedConfig?.id || ""} disabled={loading || !!pending}
-        onChange={(event) => { setMeetingId(event.target.value); setContent(undefined); }}>
-        {!validMeetings.length && <option value="">{loading ? "載入中…" : "請先建立會議設定"}</option>}
-        {meetings.map((meeting) => <option key={meeting.id} value={meeting.id} disabled={!!meeting.error}>{meeting.name || meeting.id}{meeting.error ? "（設定有誤）" : ""}</option>)}
-      </select></label>
+      <label className="meeting-share-selection"><span>要編輯的會議設定</span><ConfigCombobox label="要編輯的會議設定" items={meetings} value={selectedConfig?.id || ""} disabled={loading || !!pending}
+        placeholder={loading ? "載入中…" : "選擇或輸入會議設定"}
+        onSelect={(id) => { setMeetingId(id); setContent(undefined); }} onCreate={createMeeting} /></label>
       {selectedConfig && <div>
         <h3>編輯會議設定</h3>
         <button className="button secondary" disabled={!!pending} onClick={() => void action("load-config", async () => { setContent((await api.meeting(selectedConfig.id)).content); })}>載入設定內容</button>

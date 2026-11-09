@@ -44,7 +44,7 @@ nav button.active { box-shadow: inset 3px 0 #d8a055; }
 .privacy-note span { font: 500 10px ui-monospace, monospace; letter-spacing: .14em; color: var(--nav-accent); }
 .privacy-note p { margin: 8px 0 0; color: #aeb8b2; font-size: 12px; line-height: 1.65; }
 
-main { width: min(1440px, 100%); padding: 38px clamp(24px, 4vw, 64px) 56px; overflow: hidden; }
+main { width: min(1440px, 100%); min-width: 0; padding: 38px clamp(24px, 4vw, 64px) 56px; }
 .topbar { display: flex; align-items: center; justify-content: space-between; margin-bottom: 28px; }
 .eyebrow { margin: 0 0 6px; color: var(--green); font: 500 10px ui-monospace, monospace; letter-spacing: .16em; }
 h1, h2, h3, h4, p { margin-top: 0; }
@@ -131,7 +131,7 @@ h1 { margin-bottom: 0; font-size: clamp(28px, 3vw, 38px); letter-spacing: -.035e
 
 .run-form { display: grid; grid-template-columns: minmax(170px, 1fr) auto minmax(180px, 1fr) auto; gap: 14px; align-items: end; margin-top: 26px; }
 .lecture-run-form { align-items: start; }
-.run-form label { display: grid; gap: 7px; }
+.run-form label { display: grid; gap: 7px; min-width: 0; }
 .lecture-run-form > .mode-switch { margin-top: 18px; }
 .run-form.summary-actions { grid-template-columns: minmax(0, 1fr); }
 .summary-actions label { min-width: 0; }
@@ -157,6 +157,14 @@ input, select, textarea { min-width: 0; border: 1px solid #d6d7d0; background: #
 input, select { height: 42px; padding: 0 12px; }
 textarea { padding: 12px; }
 input:focus, select:focus, textarea:focus { border-color: #5a806b; box-shadow: 0 0 0 3px rgba(40,99,76,.1); }
+.config-combobox { position: relative; min-width: 0; }
+.config-combobox input { width: 100%; }
+.config-combobox-list { position: absolute; z-index: 10; top: 100%; left: 0; right: 0; max-height: 240px; overflow-y: auto; margin: 4px 0 0; padding: 4px; list-style: none; border: 1px solid var(--line); border-radius: 9px; background: var(--paper); box-shadow: 0 8px 24px rgba(39,48,43,.15); }
+.config-combobox-list:empty { display: none; }
+.config-combobox-list [role="option"] { padding: 10px 8px; border-radius: 5px; cursor: pointer; overflow-wrap: anywhere; }
+.config-combobox-list [role="option"]:hover, .config-combobox-list .active { background: var(--green-soft); }
+.config-combobox-list [aria-selected="true"] { font-weight: 600; }
+.config-combobox-list [aria-disabled="true"] { color: var(--muted); cursor: default; }
 .mode-switch { height: 42px; display: flex; padding: 3px; background: #eae9e3; border-radius: 9px; }
 .mode-switch button { border: 0; display: flex; align-items: center; gap: 6px; padding: 0 12px; border-radius: 7px; background: transparent; color: #707570; font-size: 12px; }
 .mode-switch svg { width: 16px; }
@@ -368,6 +376,7 @@ input:focus, select:focus, textarea:focus { border-color: #5a806b; box-shadow: 0
   .phase-timer strong { font-size: 18px; }
   .stats-row { gap: 8px; }
   .run-form { grid-template-columns: 1fr; }
+  .meeting-fields { grid-template-columns: minmax(0, 1fr); }
   .wide-field { grid-column: auto; }
   .file-picker { grid-template-columns: 24px minmax(0, 1fr); }
   .file-picker > .button { grid-column: 1 / -1; width: 100%; }

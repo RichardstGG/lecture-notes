@@ -12,7 +12,7 @@ vi.mock("./api", () => ({ api: {
   }),
   status: vi.fn(), courses: vi.fn(), models: vi.fn(), sessions: vi.fn(), session: vi.fn(),
   devices: vi.fn(), course: vi.fn(), termCandidates: vi.fn(), sharing: vi.fn(), sharingNetwork: vi.fn(),
-  start: vi.fn(), stop: vi.fn(), meetings: vi.fn().mockResolvedValue([]),
+  start: vi.fn(), stop: vi.fn(), meetings: vi.fn().mockResolvedValue([]), createCourse: vi.fn(), startMeeting: vi.fn(),
 } }));
 
 const oldLecture: SessionSummary = { id: "lecture/old", course: "原有課程", started_at: "", updated_at: "", has_transcript: true, has_notes: true, has_recording: false };
@@ -48,6 +48,23 @@ describe("workbench navigation", () => {
     vi.mocked(api.sharingNetwork).mockResolvedValue({ api_version: 1, advertise_host: "192.168.1.2", interface: "eth0" });
   });
   afterEach(() => { cleanup(); vi.unstubAllGlobals(); });
+
+  it("refreshes and selects a course created from the recording page without starting work", async () => {
+    vi.mocked(api.createCourse).mockResolvedValue({ api_version: 1, id: "new", file: "new.toml", content: "[course]" });
+    render(<App />);
+    const input = screen.getByRole("combobox", { name: "課程" }) as HTMLInputElement;
+    await waitFor(() => expect(input.value).toBe("課程"));
+    vi.mocked(api.courses).mockResolvedValue([{ id: "course", file: "course.toml", name: "課程" }, { id: "new", file: "new.toml", name: "新課程" }]);
+    fireEvent.change(input, { target: { value: "新課程" } });
+    fireEvent.keyDown(input, { key: "Enter" });
+    await waitFor(() => expect(input.value).toBe("新課程"));
+    expect(api.createCourse).toHaveBeenCalledExactlyOnceWith("新課程");
+    expect(api.courses).toHaveBeenCalledTimes(2);
+    fireEvent.focus(input);
+    expect(screen.getByRole("option", { name: "新課程" }).getAttribute("aria-selected")).toBe("true");
+    expect(api.start).not.toHaveBeenCalled();
+    expect(api.startMeeting).not.toHaveBeenCalled();
+  });
 
   it("shares one lecture document card between the full-width recording page and history", async () => {
     const { container } = render(<App />);
