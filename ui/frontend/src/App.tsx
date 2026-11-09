@@ -152,7 +152,7 @@ export default function App() {
           {data.status.status?.last_error && <p className="inline-error">{data.status.status.last_error}</p>}
         </>}
 
-        <RunPanel courses={data.courses} devices={data.devices} models={data.models} status={data.status} onChanged={data.refresh} onError={data.setError} />
+        <RunPanel courses={data.courses} sessions={lectureSessions} devices={data.devices} models={data.models} status={data.status} onChanged={data.refresh} onError={data.setError} />
       </section>
 
       <div className={`workspace-grid${navigation.target === "live" ? " workspace-grid-single" : ""}`} hidden={navigation.target !== "live" && navigation.target !== "history"}>

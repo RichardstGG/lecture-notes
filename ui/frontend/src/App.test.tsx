@@ -49,6 +49,26 @@ describe("workbench navigation", () => {
   });
   afterEach(() => { cleanup(); vi.unstubAllGlobals(); });
 
+  it("passes only lecture sessions to course recency ordering while preserving the default course", async () => {
+    vi.mocked(api.courses).mockResolvedValue([
+      { id: "course", file: "course.toml", name: "課程" }, { id: "stats", file: "stats.toml", name: "統計學" },
+    ]);
+    vi.mocked(api.sessions).mockResolvedValue([
+      { ...meeting, course: "課程", started_at: "2026-11-10T00:00:00Z" },
+      { ...oldLecture, course: "統計學", started_at: "2026-11-09T00:00:00Z" },
+      { ...oldLecture, id: "lecture/older", course: "課程", work_type: "lecture", started_at: "2026-11-08T00:00:00Z" },
+      { ...oldLecture, id: "unknown", course: "課程", work_type: "future-type", started_at: "2026-11-11T00:00:00Z" },
+    ]);
+    render(<App />);
+    const input = screen.getByRole("combobox", { name: "課程" }) as HTMLInputElement;
+    await waitFor(() => expect(input.value).toBe("課程"));
+    fireEvent.focus(input);
+    expect(within(screen.getByRole("listbox")).getAllByRole("option").map((option) => option.textContent)).toEqual(["統計學", "課程"]);
+    expect(input.value).toBe("課程");
+    expect(api.start).not.toHaveBeenCalled();
+    expect(api.startMeeting).not.toHaveBeenCalled();
+  });
+
   it("refreshes and selects a course created from the recording page without starting work", async () => {
     vi.mocked(api.createCourse).mockResolvedValue({ api_version: 1, id: "new", file: "new.toml", content: "[course]" });
     render(<App />);

@@ -1,11 +1,12 @@
 import { useEffect, useMemo, useRef, useState, type DragEvent, type FormEvent } from "react";
 import { api } from "../api";
-import type { AudioUpload, Course, DeviceInventory, ModelInventory, RuntimeStatus } from "../types";
+import type { AudioUpload, Course, DeviceInventory, ModelInventory, RuntimeStatus, SessionSummary } from "../types";
 import { Icon } from "./Icon";
-import { ConfigCombobox } from "./ConfigCombobox";
+import { ConfigCombobox, sortConfigsByRecentUse } from "./ConfigCombobox";
 
 interface Props {
   courses: Course[];
+  sessions?: SessionSummary[];
   devices?: DeviceInventory;
   models?: ModelInventory;
   status: RuntimeStatus;
@@ -23,8 +24,9 @@ function formatFileSize(bytes: number): string {
   return `${(bytes / (1024 ** 2)).toFixed(bytes < 10 * 1024 ** 2 ? 1 : 0)} MB`;
 }
 
-export function RunPanel({ courses, devices, models, status, onChanged, onError }: Props) {
+export function RunPanel({ courses, sessions = [], devices, models, status, onChanged, onError }: Props) {
   const validCourses = useMemo(() => courses.filter((course) => !course.error), [courses]);
+  const sortedCourses = sortConfigsByRecentUse(courses, sessions);
   const [course, setCourse] = useState("");
   const [mode, setMode] = useState<"live" | "file">("live");
   const [inputFile, setInputFile] = useState("");
@@ -160,7 +162,7 @@ export function RunPanel({ courses, devices, models, status, onChanged, onError 
   return <form className="run-form lecture-run-form" onSubmit={submit}>
     <label>
       <span>課程</span>
-      <ConfigCombobox label="課程" items={courses} value={course} disabled={creating || starting} placeholder="選擇或輸入課程"
+      <ConfigCombobox label="課程" items={sortedCourses} value={course} disabled={creating || starting} placeholder="選擇或輸入課程"
         onSelect={(id) => { setCourse(id); setSummaryChoice(undefined); }} onCreate={createCourse} />
     </label>
     <div className="mode-switch" role="group" aria-label="輸入方式">

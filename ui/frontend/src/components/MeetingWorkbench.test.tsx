@@ -38,6 +38,34 @@ describe("meeting workbench controls", () => {
   });
   afterEach(() => { cleanup(); vi.unstubAllGlobals(); });
 
+  it.each([
+    ["meeting-live", "會議設定"], ["meeting-settings", "要編輯的會議設定"],
+  ])("orders %s by the latest meeting start and preserves filtered and unused order without changing selection", async (view, label) => {
+    vi.mocked(api.meetings).mockResolvedValue([
+      { id: "unused", name: "未使用" }, { id: "older", name: "週一會議" },
+      { id: "recent", name: "週二會議" }, { id: "empty", name: "空日期" }, { id: "invalid", name: "壞日期" },
+    ].map((item) => ({ ...item, file: `${item.id}.toml` })));
+    render(<MeetingWorkbench view={view} runtime={idle} sessions={[
+      { ...summary, id: "recent-new", course: "週二會議", started_at: "2026-11-09T00:00:00Z" },
+      { ...summary, id: "older", course: "週一會議", started_at: "2026-11-08T00:00:00Z", updated_at: "2026-11-10T00:00:00Z" },
+      { ...summary, id: "recent-old", course: "週二會議", started_at: "2026-11-01T00:00:00Z" },
+      { ...summary, id: "empty", course: "空日期", updated_at: "2026-11-11T00:00:00Z" },
+      { ...summary, id: "invalid", course: "壞日期", started_at: "invalid", updated_at: "2026-11-12T00:00:00Z" },
+      { ...summary, id: "lecture", course: "未使用", work_type: "lecture", started_at: "2026-11-13T00:00:00Z" },
+    ]} />);
+    const input = screen.getByRole("combobox", { name: label }) as HTMLInputElement;
+    await waitFor(() => expect(input.value).toBe("未使用"));
+    fireEvent.focus(input);
+    expect(within(screen.getByRole("listbox")).getAllByRole("option").map((option) => option.textContent))
+      .toEqual(["週二會議", "週一會議", "未使用", "空日期", "壞日期"]);
+    fireEvent.change(input, { target: { value: "會議" } });
+    expect(within(screen.getByRole("listbox")).getAllByRole("option").map((option) => option.textContent))
+      .toEqual(["週二會議", "週一會議"]);
+    fireEvent.blur(input);
+    expect(input.value).toBe("未使用");
+    expect(api.startMeeting).not.toHaveBeenCalled();
+  });
+
   it("requires a speaker count, keeps dual disabled and starts the selected real configuration", async () => {
     const changed = vi.fn().mockResolvedValue(undefined);
     render(<MeetingWorkbench runtime={idle} onChanged={changed} devices={{ api_version: 1, current: "default", sources: [{ id: "mic", name: "麥克風" }] }} />);

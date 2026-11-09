@@ -1,7 +1,7 @@
 import { useState } from "react";
 import { act, cleanup, createEvent, fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { ConfigCombobox } from "./ConfigCombobox";
+import { ConfigCombobox, sortConfigsByRecentUse } from "./ConfigCombobox";
 
 const items = [
   { id: "cs-101", name: "Algorithms" },
@@ -25,6 +25,37 @@ function setup() {
 }
 
 afterEach(cleanup);
+
+describe("sortConfigsByRecentUse", () => {
+  it("matches display names or fallback ids, compares parsed dates and keeps ties stable without mutating items", () => {
+    const configs = [
+      { id: "unused", name: "Unused" }, { id: "a", name: "Alpha" },
+      { id: "fallback", name: "" }, { id: "b", name: "Beta" }, { id: "pre-epoch" },
+    ];
+    const original = [...configs];
+    const sorted = sortConfigsByRecentUse(configs, [
+      { course: "Alpha", started_at: "2026-11-09T12:00:00+08:00" },
+      { course: "Alpha", started_at: "2026-11-01T00:00:00Z" },
+      { course: "fallback", started_at: "2026-11-09T05:00:00Z" },
+      { course: "Beta", started_at: "2026-11-09T04:00:00Z" },
+      { course: "unused", started_at: "2099-01-01T00:00:00Z" },
+      { course: "pre-epoch", started_at: "1960-01-01T00:00:00Z" },
+      { started_at: "2099-01-01T00:00:00Z" },
+    ]);
+    expect(sorted.map((item) => item.id)).toEqual(["fallback", "a", "b", "pre-epoch", "unused"]);
+    expect(configs).toEqual(original);
+    expect(sortConfigsByRecentUse(configs, [])).toEqual(original);
+  });
+
+  it.each(["", undefined, null, "not-a-date"])("treats started_at %s as unused without losing valid usage", (started_at) => {
+    const configs = [{ id: "unused" }, { id: "invalid" }, { id: "used" }];
+    expect(sortConfigsByRecentUse(configs, [
+      { course: "invalid", started_at },
+      { course: "used", started_at: "2026-11-09T00:00:00Z" },
+      { course: "used", started_at },
+    ]).map((item) => item.id)).toEqual(["used", "unused", "invalid"]);
+  });
+});
 
 describe("ConfigCombobox", () => {
   it("lists all configurations on focus and filters names and ids without case sensitivity", () => {

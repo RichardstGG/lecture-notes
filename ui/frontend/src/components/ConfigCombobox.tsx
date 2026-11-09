@@ -6,6 +6,23 @@ interface ConfigOption {
   error?: string;
 }
 
+export function sortConfigsByRecentUse<T extends ConfigOption>(
+  items: T[], sessions: { course?: string; started_at?: string | null }[],
+): T[] {
+  const latest = new Map<string, number>();
+  for (const session of sessions) {
+    const time = Date.parse(session.started_at || "");
+    if (session.course && Number.isFinite(time)) {
+      latest.set(session.course, Math.max(latest.get(session.course) ?? -Infinity, time));
+    }
+  }
+  return [...items].sort((a, b) => {
+    const aTime = latest.get(a.name || a.id) ?? -Infinity;
+    const bTime = latest.get(b.name || b.id) ?? -Infinity;
+    return aTime === bTime ? 0 : bTime - aTime;
+  });
+}
+
 interface Props {
   label: string;
   items: ConfigOption[];

@@ -1,8 +1,8 @@
 import { useState } from "react";
-import { act, cleanup, fireEvent, render, screen, waitFor } from "@testing-library/react";
+import { act, cleanup, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { api } from "../api";
-import type { Course, DeviceInventory, ModelInventory, RuntimeStatus } from "../types";
+import type { Course, DeviceInventory, ModelInventory, RuntimeStatus, SessionSummary } from "../types";
 import { RunPanel } from "./RunPanel";
 
 vi.mock("../api", () => ({
@@ -47,6 +47,32 @@ const devices: DeviceInventory = {
 describe("RunPanel", () => {
   beforeEach(() => vi.clearAllMocks());
   afterEach(cleanup);
+
+  it("orders courses by their latest start, keeps unused order and filtered order without changing the default", () => {
+    const courses = [
+      { id: "unused", name: "未使用" }, { id: "older", name: "週一課程" },
+      { id: "recent", name: "週二課程" }, { id: "empty", name: "空日期" }, { id: "invalid", name: "壞日期" },
+    ].map((item) => ({ ...item, file: `${item.id}.toml` }));
+    const session: SessionSummary = { id: "lecture/one", started_at: "", updated_at: "", has_transcript: false, has_notes: false, has_recording: false };
+    render(<RunPanel courses={courses} sessions={[
+      { ...session, id: "recent-new", course: "週二課程", started_at: "2026-11-09T00:00:00Z" },
+      { ...session, id: "older", course: "週一課程", started_at: "2026-11-08T00:00:00Z", updated_at: "2026-11-10T00:00:00Z" },
+      { ...session, id: "recent-old", course: "週二課程", started_at: "2026-11-01T00:00:00Z" },
+      { ...session, id: "empty", course: "空日期", updated_at: "2026-11-11T00:00:00Z" },
+      { ...session, id: "invalid", course: "壞日期", started_at: "invalid", updated_at: "2026-11-12T00:00:00Z" },
+    ]} status={{ schema_version: 1, running: false }} onChanged={vi.fn()} onError={vi.fn()} />);
+    const input = screen.getByRole("combobox", { name: "課程" }) as HTMLInputElement;
+    expect(input.value).toBe("未使用");
+    fireEvent.focus(input);
+    expect(within(screen.getByRole("listbox")).getAllByRole("option").map((option) => option.textContent))
+      .toEqual(["週二課程", "週一課程", "未使用", "空日期", "壞日期"]);
+    fireEvent.change(input, { target: { value: "課程" } });
+    expect(within(screen.getByRole("listbox")).getAllByRole("option").map((option) => option.textContent))
+      .toEqual(["週二課程", "週一課程"]);
+    fireEvent.keyDown(input, { key: "Escape" });
+    expect(input.value).toBe("未使用");
+    expect(api.start).not.toHaveBeenCalled();
+  });
 
   it("inherits course API and disabled defaults and resets an override on course change", async () => {
     render(<RunPanel courses={[

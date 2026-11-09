@@ -4,7 +4,7 @@ import type { AudioUpload, DeviceInventory, Meeting, RuntimeStatus, SessionSumma
 import { sessionIdFromPath } from "../utils";
 import { SharePanel } from "./SharePanel";
 import { MeetingSessionPanel } from "./MeetingSessionPanel";
-import { ConfigCombobox } from "./ConfigCombobox";
+import { ConfigCombobox, sortConfigsByRecentUse } from "./ConfigCombobox";
 
 interface Props {
   active?: boolean;
@@ -31,6 +31,7 @@ export function MeetingWorkbench({ active = true, view = "meeting-live", runtime
   const [content, setContent] = useState<string>();
   const [selectedMeetingId, setSelectedMeetingId] = useState("");
   const meetingSessions = sessions.filter((session) => session.work_type === "meeting");
+  const sortedMeetings = sortConfigsByRecentUse(meetings, meetingSessions);
   const selectedMeeting = meetingSessions.find((session) => session.id === selectedMeetingId) || meetingSessions[0];
   const validMeetings = meetings.filter((meeting) => !meeting.error);
   const selectedConfig = meetings.find((meeting) => meeting.id === meetingId) || validMeetings[0];
@@ -100,7 +101,7 @@ export function MeetingWorkbench({ active = true, view = "meeting-live", runtime
       <p className="meeting-help">錄音或匯入後保留來源與原逐字稿；會後可另行辨識發言者。代號只在本場會議內有效。</p>
       <form onSubmit={start}>
         <div className="meeting-fields">
-          <label><span>會議設定</span><ConfigCombobox label="會議設定" items={meetings} value={selectedConfig?.id || ""} disabled={loading || !!pending}
+          <label><span>會議設定</span><ConfigCombobox label="會議設定" items={sortedMeetings} value={selectedConfig?.id || ""} disabled={loading || !!pending}
             placeholder={loading ? "載入中…" : "選擇或輸入會議設定"}
             onSelect={(id) => { setMeetingId(id); setContent(undefined); }} onCreate={createMeeting} /></label>
           <label><span>預計參與人數（必填）</span><input type="number" min="1" max="30" step="1" required value={speakers} onChange={(event) => setSpeakers(event.target.value)} /></label>
@@ -131,7 +132,7 @@ export function MeetingWorkbench({ active = true, view = "meeting-live", runtime
         <label><span>新會議名稱</span><input value={name} onChange={(event) => setName(event.target.value)} placeholder="例如：系統設計討論" required maxLength={100} /></label>
         <button className="button secondary" disabled={!!pending || !name.trim()} type="submit">建立會議設定</button>
       </form>
-      <label className="meeting-share-selection"><span>要編輯的會議設定</span><ConfigCombobox label="要編輯的會議設定" items={meetings} value={selectedConfig?.id || ""} disabled={loading || !!pending}
+      <label className="meeting-share-selection"><span>要編輯的會議設定</span><ConfigCombobox label="要編輯的會議設定" items={sortedMeetings} value={selectedConfig?.id || ""} disabled={loading || !!pending}
         placeholder={loading ? "載入中…" : "選擇或輸入會議設定"}
         onSelect={(id) => { setMeetingId(id); setContent(undefined); }} onCreate={createMeeting} /></label>
       {selectedConfig && <div>
