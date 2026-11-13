@@ -101,6 +101,12 @@ def normalize_punct(t):
     return t
 
 
+def ascii_whisper_prompt(prompt):
+    """避免 whisper 以位元組拼出全形 ASCII 區字元時選錯位元組。"""
+    return "".join(" " if c == "\u3000" else chr(ord(c) - 0xFEE0)
+                   if "\uff01" <= c <= "\uff5e" else c for c in prompt)
+
+
 def frame_rms(frame):
     a = array.array("h", frame)
     if sys.byteorder == "big":
@@ -449,7 +455,7 @@ def transcribe_request(server, wav_path, prompt):
     重試用盡仍失敗就丟 TranscribeError。以前這裡回傳空字串，呼叫端分不出
     「這段真的沒人說話」與「這段轉錄失敗」，整段音訊會無聲消失。"""
     body, ctype = _multipart({"response_format": "srt", "temperature": "0.0",
-                              "prompt": prompt}, "file", wav_path)
+                              "prompt": ascii_whisper_prompt(prompt)}, "file", wav_path)
     req = urllib.request.Request(f"{server}/inference", data=body,
                                  headers={"Content-Type": ctype})
     for attempt in range(3):

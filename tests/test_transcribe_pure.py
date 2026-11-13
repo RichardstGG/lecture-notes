@@ -15,6 +15,7 @@ import struct
 import tempfile
 import unittest
 from pathlib import Path
+from unittest.mock import patch
 
 from . import _pathfix  # noqa: F401
 from core import transcribe as T
@@ -137,6 +138,20 @@ class NormalizePunctTests(unittest.TestCase):
 
     def test_whitespace_around_punctuation_is_removed(self):
         self.assertEqual(T.normalize_punct("好 ， 對"), "好，對")
+
+
+class WhisperPromptTests(unittest.TestCase):
+    def test_only_fullwidth_ascii_and_ideographic_space_change(self):
+        self.assertEqual(T.ascii_whisper_prompt("，？！：；（）Ａｚ４Ｂ　。、「」…中文 ASCII"),
+                         ",?!:;()Az4B 。、「」…中文 ASCII")
+        self.assertEqual(T.ascii_whisper_prompt(""), "")
+
+    def test_transcribe_request_sends_ascii_prompt(self):
+        with patch.object(T, "_multipart", return_value=(b"body", "multipart/form-data")) as multipart, \
+             patch.object(T.urllib.request, "urlopen") as urlopen:
+            urlopen.return_value.__enter__.return_value.read.return_value = b""
+            T.transcribe_request("http://localhost", "unused.wav", "課堂，前文：４。")
+        self.assertEqual(multipart.call_args.args[0]["prompt"], "課堂,前文:4。")
 
 
 class FrameRmsTests(unittest.TestCase):

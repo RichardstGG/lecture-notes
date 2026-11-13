@@ -14,6 +14,7 @@ import tempfile
 import unittest
 import wave
 from pathlib import Path
+from unittest.mock import patch
 
 from . import _pathfix  # noqa: F401
 from core import diarize as D
@@ -115,6 +116,15 @@ class Base(unittest.TestCase):
 
 # ---------------------------------------------------------------- 純函式
 class TestPure(unittest.TestCase):
+    def test_default_asr_sends_ascii_prompt(self):
+        with tempfile.TemporaryDirectory() as tmp, \
+             patch.object(D, "_multipart", return_value=(b"body", "multipart/form-data")) as multipart, \
+             patch.object(D.urllib.request, "urlopen") as urlopen:
+            urlopen.return_value.__enter__.return_value.read.return_value = b'{"segments": []}'
+            req = type("Request", (), {"staging_dir": tmp, "whisper_server": "http://localhost"})()
+            self.assertEqual(D._default_asr(req, b"", "會議，前文Ｂ。"), [])
+        self.assertEqual(multipart.call_args.args[0]["prompt"], "會議,前文B。")
+
     def test_split_pcm_keeps_short_audio_whole(self):
         pcm = tone_pcm(27.9)
         self.assertEqual(D._split_pcm(pcm, 28.0), [0, len(pcm)])
