@@ -38,7 +38,8 @@ from pathlib import Path
 from typing import NamedTuple
 
 from . import platform as P
-from .transcribe import FRAME_BYTES, HALLUCINATIONS, _multipart, frame_rms, normalize_punct
+from .transcribe import (FRAME_BYTES, HALLUCINATIONS, _multipart, ascii_whisper_prompt,
+                         frame_rms, normalize_punct)
 from .util import opencc_available, opencc_convert
 
 SR = 16000
@@ -394,7 +395,7 @@ def _default_asr(req, pcm, prompt):
             w.writeframes(pcm)
         body, ctype = _multipart(
             {"response_format": "verbose_json", "temperature": "0.0",
-             "no_language_probabilities": "true", "prompt": prompt},
+             "no_language_probabilities": "true", "prompt": ascii_whisper_prompt(prompt)},
             "file", tmp)
         rq = urllib.request.Request(f"{req.whisper_server}/inference", data=body,
                                     headers={"Content-Type": ctype})
